@@ -90,7 +90,8 @@ jobs:
           AS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           exp=$(cat /tmp/expected_sha1); echo "attendu: $exp"
           for a in rider driver; do
-            got=$("$AS" verify --print-certs apk/$a/app-debug.apk | awk -F': ' '/certificate SHA-1 digest/{print toupper($2)}' | head -1 | sed 's/../&:/g;s/:$//')
+            "$AS" verify --print-certs apk/$a/app-debug.apk | grep -E "Signer|SHA-1|DN"
+            got=$("$AS" verify --print-certs apk/$a/app-debug.apk | awk '/SHA-1 digest/{print toupper($NF)}' | head -1 | sed 's/../&:/g;s/:$//')
             echo "$a SHA-1 APK: $got"
             [ "$got" = "$exp" ] || { echo "::error::$a signé avec un autre certificat"; ls -la ~/.android; keytool -list -v -keystore ~/.android/debug.keystore -storepass android 2>&1 | grep -E "SHA1:|Alias|type"; exit 1; }
           done
