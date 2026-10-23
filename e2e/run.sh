@@ -25,8 +25,26 @@ declare -a RESULTS=()
 log() { printf '[e2e %s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$OUT/run.log"; }
 mark() { RESULTS+=("$1|$2|$3"); log "RESULT $1 = $2 ($3)"; }
 
+clear_anr() {
+  # Ferme les dialogues système / ANR ("isn't responding") en cliquant "Wait"
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+  adb shell uiautomator dump /sdcard/anr.xml >/dev/null 2>&1 || return 0
+  local b
+  b=$(adb shell cat /sdcard/anr.xml 2>/dev/null | grep -o "text=\"Wait\"[^>]*bounds=\"\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]\"" | grep -o "\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]" | head -1)
+  if [ -n "$b" ]; then
+    local x1 y1 x2 y2; read -r x1 y1 x2 y2 <<<"$(echo "$b" | tr -c '0-9' ' ')"
+    adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 )) >/dev/null 2>&1
+    log "ANR dialog dismissed (Wait)"; sleep 2
+  fi
+}
+
 shot() {
-  local name="$1"
+  local name="$1" pkg=""
+  case "$name" in *rider*) pkg="$RIDER_PKG";; *driver*) pkg="$DRIVER_PKG";; esac
+  clear_anr
+  if [ -n "$pkg" ] && ! adb shell dumpsys activity activities 2>/dev/null | grep -m1 "mResumedActivity\|topResumedActivity" | grep -q "$pkg"; then
+    launch "$pkg"; sleep 4; clear_anr
+  fi
   adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null
   local sz
   sz=$(wc -c < "$OUT/screens/$name.png" 2>/dev/null || echo 0)
