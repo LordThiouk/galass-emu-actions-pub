@@ -253,11 +253,13 @@ else
   mark ride-exists FAIL "no ride created"
 fi
 
-shot 03-rider-ride-created
+# Capture rapide (pas de relance d'app): l'offre chauffeur expire vite
+adb exec-out screencap -p > "$OUT/screens/03-rider-ride-created.png" 2>/dev/null; log "screenshot 03 (fast)"
 
 # Driver offer: Artemis attempts the acceptance, API accept is the fallback.
 launch "$DRIVER_PKG"
 sleep 6
+adb exec-out screencap -p > "$OUT/screens/03b-driver-offer.png" 2>/dev/null; log "screenshot 03b (fast)"
 artemis_run driver-accept \
   "Open the Galass Driver app. If a ride offer is shown, accept it. Then open the active ride details screen showing the two stops." \
   150 "$DRIVER_PKG"

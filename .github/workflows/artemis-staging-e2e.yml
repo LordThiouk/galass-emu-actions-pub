@@ -72,6 +72,8 @@ jobs:
             mkdir -p apk/$a && cp src/$a/build/app/outputs/flutter-apk/app-debug.apk apk/$a/
           done
           rm -rf src
+          # Libérer la RAM: les daemons Gradle (Xmx6g) restent vivants et étouffent l'émulateur (ANR / QEMU hang)
+          pkill -f GradleDaemon || true; pkill -f KotlinCompileDaemon || true; sleep 3; free -m
       - name: Activer KVM (règle udev officielle)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
