@@ -218,7 +218,7 @@ cands = [want] + [i for i in vis if i != want][:8]
 log = open(f"{out}/vision-preflight.txt", "w")
 chosen = ""
 for m in cands:
-    body = {"model": m, "max_tokens": 5, "messages": [{"role": "user", "content": [
+    body = {"model": m, "max_tokens": 300, "messages": [{"role": "user", "content": [
         {"type": "text", "text": "color?"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}}]}]}
     req = urllib.request.Request(b + "/chat/completions", data=json.dumps(body).encode(), method="POST", headers=H)
@@ -391,6 +391,7 @@ adb logcat -d -v threadtime 2>/dev/null | grep -aiE "artemis|accessib|ANR in|not
 adb shell top -bn1 -m 15 > "$D/emu-top.txt" 2>/dev/null || true
 adb shell uptime > "$D/emu-uptime.txt" 2>/dev/null || true
 { uptime; nproc; free -m; } > "$D/host-load.txt" 2>/dev/null || true
+pkill -f artemis-admin >/dev/null 2>&1 || true  # sinon le runner émulateur ne rend jamais la main
 printf '%s\n' "${RESULTS[@]}" > "$OUT/results.txt"
 "$PY" - "$OUT" <<'PY'
 import json, os, sys
