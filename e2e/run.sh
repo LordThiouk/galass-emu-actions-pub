@@ -177,6 +177,7 @@ adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1
 adb shell input keyevent 82 >/dev/null 2>&1
 adb shell svc power stayon true >/dev/null 2>&1
+adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1  # pas de dialogues ANR (Pixel Launcher) qui bloquent les taps
 adb emu geo fix -17.4677 14.7167 >/dev/null 2>&1 || true  # GPS Dakar (sinon position Californie par défaut -> pas de dispatch)
 adb logcat -c >/dev/null 2>&1 || true
 

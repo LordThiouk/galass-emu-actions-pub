@@ -10,7 +10,7 @@ ensure_fg() { [ "$(fg_pkg)" = "$1" ] || { adb shell monkey -p "$1" -c android.in
 # ferme "X isn't responding" (tap Wait) si présent dans /tmp/w.xml
 clear_sys() {
   grep -q "isn't responding" /tmp/w.xml 2>/dev/null || return 0
-  tap_exact "Wait" >/dev/null 2>&1 || tap_exact "Close app" >/dev/null 2>&1
+  tap_exact "Close app" >/dev/null 2>&1 || tap_exact "Wait" >/dev/null 2>&1
   _ulog "dialogue système fermé"; sleep 2; ui_xml > /tmp/w.xml
 }
 # wait_ui pkg regex timeout -> 0 si le texte apparaît (app au premier plan)
