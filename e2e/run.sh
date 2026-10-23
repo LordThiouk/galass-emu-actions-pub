@@ -193,7 +193,7 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ----------------------------------------------------- rider home + driver
-snap 01-rider-home "$RIDER_PKG" 'content-desc="[^"]+"|text="[^"]+"' 60 || true
+snap 01-rider-home "$RIDER_PKG" 'Où allez-vous|Partons pour une course' 90 || true
 snap 02-driver-home "$DRIVER_PKG" 'En ligne' 60 || true
 
 # Préflight vision: le modèle demandé d'abord, puis les modèles vision gratuits listés par freellmapi.

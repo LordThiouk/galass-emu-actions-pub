@@ -75,7 +75,9 @@ for m in re.finditer(r'<node [^>]*>', xml):
             if not bb: continue
             x1, y1, x2, y2 = map(int, bb.groups())
             k, cnt = lines.index(lab), len(lines)
-            best = ((x1 + x2) // 2, y1 + (2 * k + 1) * (y2 - y1) // (2 * cnt), k + 1, cnt)
+            # boutons empilés en bas de la zone (feuille du bas Flutter): chaque bouton ~ 140 px, le dernier au fond
+            step = 150
+            best = ((x1 + x2) // 2, y2 - 130 - (cnt - 1 - k) * 200 if cnt > 1 or (y2 - y1) > 400 else (y1 + y2) // 2, k + 1, cnt)
 print("" if best is None else "%d %d %d/%d" % best)
 PY
 )

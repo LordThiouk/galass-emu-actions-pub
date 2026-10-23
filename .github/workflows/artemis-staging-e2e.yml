@@ -65,6 +65,12 @@ jobs:
           [ -x "$SDKM" ] || SDKM="$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -1)"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "ndk;29.0.14033849" "ndk;28.2.13676358" > /dev/null
+      - name: Keystore debug fixe (SHA-1 stable pour la clé Maps)
+        env: {KS: "${{ secrets.DEBUG_KEYSTORE_B64 }}"}
+        run: |
+          mkdir -p ~/.android && umask 077
+          printf '%s' "$KS" | base64 -d > ~/.android/debug.keystore
+          test -s ~/.android/debug.keystore && echo "debug keystore installé"
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
