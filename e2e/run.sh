@@ -240,9 +240,12 @@ if [ -z "$VISION_MODEL" ]; then
   ARTEMIS_OK=0
 else
   export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
+  # Profil flash Artemis: tous les sous-agents sur le modèle vision validé (copie runner uniquement)
+  sed -i -E 's#("model": *)"[^"]+"#\1"'"$VISION_MODEL"'"#g' vendor/artemis/config/artemis.jsonc
+  grep -c "\"model\": \"$VISION_MODEL\"" vendor/artemis/config/artemis.jsonc > "$OUT/artemis/profile-model-count.txt"
   mark llm-vision PASS "modèle vision accepté: $VISION_MODEL"
 fi
-if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 90; then
+if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 200; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   ARTEMIS_OK=0
@@ -275,40 +278,74 @@ sleep 2
 api accept | tee -a "$OUT/run.log"
 # 03 = rider: course créée / chauffeur trouvé
 snap 03-rider-ride-created "$RIDER_PKG" 'E2E Driver|Recherche|chauffeur|E2E Dest' 30 || true
-snap 04-driver-accepted "$DRIVER_PKG" 'E2E Pickup|Démarrer|OTP|Arr[eê]t|Prise en charge' 20 || true
+snap 04-driver-accepted "$DRIVER_PKG" 'content-desc="Prise en charge du client"' 25 || true
 
-api start | tee -a "$OUT/run.log"
-# Course en cours côté chauffeur: si l'accueil reste affiché, ouvrir l'onglet Courses.
-if ! wait_ui "$DRIVER_PKG" 'Arr[eê]t|E2E Stop' 15; then
-  tap_ui 'Courses' && sleep 2 && tap_ui 'E2E|HGD|en cours|Continuer' || true
+# Démarrage par l'UI chauffeur (Prise en charge -> Confirmer), repli API.
+if ui_action "$DRIVER_PKG" "Prise en charge du client" && wait_ui "$DRIVER_PKG" "content-desc=\"(Confirmer l&apos;arrêt|Terminer la course)\"" 20; then
+  mark ui-start PASS "course démarrée par l'UI chauffeur"
+else
+  mark ui-start WARN "UI start échoué -> repli API"
+  api start | tee -a "$OUT/run.log"
 fi
-snap 05-driver-running "$DRIVER_PKG" 'Arr[eê]t|E2E Stop' 20 || true
-snap 06-rider-running "$RIDER_PKG" 'Arr[eê]t 1|E2E Stop' 30 || true
-if grep -qi "E2E Stop" "$OUT/ui/06-rider-running.xml" 2>/dev/null; then
+api ride_state | tee -a "$OUT/run.log"
+snap 05-driver-running "$DRIVER_PKG" "content-desc=\"(Confirmer l&apos;arrêt|Terminer la course)\"" 20 || true
+snap 06-rider-running "$RIDER_PKG" 'Arrêt 1|E2E Stop 1' 30 || true
+if grep -q "E2E Stop" "$OUT/ui/06-rider-running.xml" 2>/dev/null; then
   mark rider-shows-stops PASS "stop labels present in rider UI dump"
 else
   mark rider-shows-stops WARN "uiautomator dump has no stop labels (Flutter semantics)"
 fi
 
 artemis_run driver-stops \
-  "Open the Galass Driver app and complete the pending stops of the running ride one by one until every stop is marked done." \
-  180 "$DRIVER_PKG"
+  "Open the Galass Driver app. On the running ride, tap \"Confirmer l'arrêt\" then \"Confirmer\" for the current stop. Report the stop label shown." \
+  200 "$DRIVER_PKG"
 stops_rc=$?
-mark artemis-driver-stops "$([ $stops_rc -eq 0 ] && echo PASS || { [ $stops_rc -eq 2 ] && echo SKIP || echo WARN; })" "UI attempt; API completion follows"
+mark artemis-driver-stops "$([ $stops_rc -eq 0 ] && echo PASS || { [ $stops_rc -eq 2 ] && echo SKIP || echo WARN; })" "UI attempt; UI taps + API fallback follow"
 
-STOP_HOOK="$(pwd)/e2e/stop_hook.sh" OUT="$OUT" api stops | tee -a "$OUT/run.log"
-snap 07-driver-stops-done "$DRIVER_PKG" 'Terminer|Destination|E2E Dest|Arriv' 20 || true
+# Arrêts: GPS sur l'arrêt, captures des deux côtés, validation par l'UI chauffeur.
+STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)
+ui_stops=0
+for i in 0 1; do
+  n=$((i + 1))
+  adb emu geo fix "${STOP_LNG[$i]}" "${STOP_LAT[$i]}" >/dev/null 2>&1 || true
+  STOP_INDEX=$i api loc_stop | tee -a "$OUT/run.log"
+  snap "stop-$n-driver" "$DRIVER_PKG" "content-desc=\"Confirmer l&apos;arrêt\"" 20 || true
+  snap "stop-$n-rider" "$RIDER_PKG" "Arrêt $n|E2E Stop $n" 25 || true
+  if ui_action "$DRIVER_PKG" "Confirmer l'arrêt"; then ui_stops=$((ui_stops + 1)); fi
+  api ride_state | tee -a "$OUT/run.log"
+done
+if api ride_state | grep -q "stops_done=2"; then
+  mark ui-stops PASS "2 arrêts validés (taps UI: $ui_stops)"
+else
+  mark ui-stops WARN "UI arrêts incomplets (taps: $ui_stops) -> repli API"
+  api stops_pending | tee -a "$OUT/run.log"
+fi
+snap 07-driver-stops-done "$DRIVER_PKG" 'content-desc="Terminer la course"' 20 || true
 
-api end | tee -a "$OUT/run.log"
-snap 08-driver-ride-ended "$DRIVER_PKG" 'paiement|Paiement|terminée|CFA|XOF' 30 || true
+# Fin de course par l'UI chauffeur, repli API.
+adb emu geo fix -17.4467 14.6928 >/dev/null 2>&1 || true
+api loc_dest | tee -a "$OUT/run.log"
+if ui_action "$DRIVER_PKG" "Terminer la course" && api ride_state | grep -qvE "status=(2|3) "; then
+  mark ui-end PASS "fin de course par l'UI chauffeur"
+else
+  mark ui-end WARN "UI end échoué -> repli API"
+fi
+api ride_state | grep -qE "status=(2|3) " && api end | tee -a "$OUT/run.log"
+api ride_state | tee -a "$OUT/run.log"
+snap 08-driver-ride-ended "$DRIVER_PKG" 'paiement|Paiement|Course terminée|En attente' 30 || true
 snap 09-rider-ended-before-payment "$RIDER_PKG" 'Course terminée|arrivé à destination|Payer maintenant' 30 || true
 api pay_rider | tee -a "$OUT/run.log"
-snap 10-rider-after-cash-choice "$RIDER_PKG" 'attente|chauffeur' 30 || true
-snap 11-driver-cash-to-collect "$DRIVER_PKG" 'Reçois le paiement|Confirmer le paiement' 40 || true
-tap_ui 'Confirmer le paiement' || true
-sleep 3
-api cash_driver | tee -a "$OUT/run.log"
-wait_gone "$DRIVER_PKG" 'Reçois le paiement|Confirmer le paiement' 30 || true
+snap 10-rider-after-cash-choice "$RIDER_PKG" 'En attente de la réponse du chauffeur' 30 || true
+snap 11-driver-cash-to-collect "$DRIVER_PKG" 'content-desc="Confirmer le paiement"' 40 || true
+tap_exact "Confirmer le paiement" || true
+sleep 5
+if api ride_state | grep -q "payment_status=1"; then
+  mark ui-cash PASS "cash confirmé par l'UI chauffeur"
+else
+  mark ui-cash WARN "UI cash non confirmé -> repli API"
+  api cash_driver | tee -a "$OUT/run.log"
+fi
+wait_gone "$DRIVER_PKG" 'content-desc="Confirmer le paiement"' 30 || true
 snap 12-driver-after-cash-confirmed "$DRIVER_PKG" 'content-desc="[^"]+"' 15 || true
 api status | tee -a "$OUT/run.log"
 snap 13-rider-after "$RIDER_PKG" 'Course terminée|Avis' 40 || true

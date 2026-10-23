@@ -301,6 +301,28 @@ elif step == "start":
     start_ride()
 elif step == "stops":
     complete_stops()
+elif step == "loc_stop":
+    i = int(os.environ.get("STOP_INDEX", "0"))
+    driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
+elif step == "loc_dest":
+    driver_loc(*DEST)
+elif step == "ride_state":
+    # état compact (statut, arrêts faits, paiement) pour décider du repli API
+    d = driver_details()
+    done = sum(1 for x in (d.get("stops") or []) if x.get("completed_at"))
+    print(f"status={d.get('status')} stops_done={done} payment_status={d.get('payment_status')}", flush=True)
+elif step == "stops_pending":
+    d = driver_details()
+    rid = ride_id()
+    for i, x in enumerate(d.get("stops") or []):
+        if x.get("completed_at"):
+            continue
+        driver_loc(x["latitude"], x["longitude"])
+        c, r = call("POST", f"driver/rides/complete-stop/{rid}", DT)
+        st.setdefault("stops_resp", []).append(r)
+        save()
+    st["stops"] = (driver_details().get("stops") or [])
+    save()
 elif step == "end":
     end_ride()
 elif step == "pay":
