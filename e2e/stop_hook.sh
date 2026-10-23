@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Called by api_flow.py before each complete-stop: freeze the driver screen.
+# Appelé par api_flow.py avant chaque complete-stop: capture l'arrêt côté chauffeur puis rider.
 set -uo pipefail
-i="${1:-0}"
+i="${1:-0}"; n=$((i + 1))
 OUT="${OUT:-e2e-out}"
-mkdir -p "$OUT/screens" "$OUT/logcat"
-name="stop-$((i + 1))-before"
-adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null || true
-adb shell uiautomator dump /sdcard/ui-stop.xml >/dev/null 2>&1 || true
-adb pull /sdcard/ui-stop.xml "$OUT/$name.xml" >/dev/null 2>&1 || true
+. "$(dirname "$0")/ui.sh"
+mkdir -p "$OUT/logcat"
+snap "stop-$n-driver" "$DRIVER_PKG" "Arr[eê]t $n|E2E Stop $n" 25 || true
+snap "stop-$n-rider" "$RIDER_PKG" "Arr[eê]t $n|E2E Stop $n" 25 || true
 adb logcat -d -v threadtime 2>/dev/null | grep -a -iE "galassapp\.com|${STAGING_HOST//./\\.}" \
-  | tail -50 > "$OUT/logcat/stop-$((i + 1)).log" || true
+  | tail -50 > "$OUT/logcat/stop-$n.log" || true

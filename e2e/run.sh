@@ -21,6 +21,8 @@ mkdir -p "$OUT/screens" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
 
 declare -a RESULTS=()
+. "$(dirname "$0")/ui.sh"
+: > "$OUT/captures.txt"
 
 log() { printf '[e2e %s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$OUT/run.log"; }
 mark() { RESULTS+=("$1|$2|$3"); log "RESULT $1 = $2 ($3)"; }
@@ -191,40 +193,54 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ----------------------------------------------------- rider home + driver
-launch "$RIDER_PKG"
-sleep 15
-shot 01-rider-home
-dump_ui 01-rider-home
+snap 01-rider-home "$RIDER_PKG" 'content-desc="[^"]+"|text="[^"]+"' 60 || true
+snap 02-driver-home "$DRIVER_PKG" 'En ligne' 60 || true
 
-launch "$DRIVER_PKG"
-sleep 15
-shot 02-driver-home
-dump_ui 02-driver-home
-
-# Artemis smoke: if the free LLM endpoint cannot drive one trivial goal, skip
-# all later UI attempts instead of burning a timeout on each one.
-# Préflight vision: Artemis envoie des captures; si le endpoint LLM refuse les images, inutile de lancer le smoke
-vision_rc=$("$PY" - <<'PY'
-import json, os, urllib.request
+# Préflight vision: le modèle demandé d'abord, puis les modèles vision gratuits listés par freellmapi.
+"$PY" - "$OUT/artemis" <<'PY' > "$OUT/artemis/vision-model.txt"
+import json, os, re, sys, urllib.request
+out = sys.argv[1]
 b = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
+H = {"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", ""), "Content-Type": "application/json"}
+key = os.environ.get("OPENAI_API_KEY", "")
+def clean(t): return t.replace(key, "***") if key else t
 png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-body = {"model": os.environ.get("ARTEMIS_DEFAULT_MODEL", "auto"), "max_tokens": 5,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "color?"},
-                     {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}}]}]}
-req = urllib.request.Request(b + "/chat/completions", data=json.dumps(body).encode(), method="POST",
-      headers={"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", ""), "Content-Type": "application/json"})
+ids = []
 try:
-    with urllib.request.urlopen(req, timeout=60) as r: print(r.status)
-except urllib.error.HTTPError as e: print(e.code)
-except Exception: print(0)
+    with urllib.request.urlopen(urllib.request.Request(b + "/models", headers=H), timeout=30) as r:
+        ids = [m.get("id") for m in json.load(r).get("data", []) if m.get("id")]
+except Exception as e:
+    ids = []
+open(f"{out}/models.txt", "w").write("\n".join(ids) + "\n")
+want = os.environ.get("ARTEMIS_DEFAULT_MODEL") or "auto"
+vis = [i for i in ids if re.search(r"vl|vision|gemini|gpt-4o|gpt-4\.1|llama-4|pixtral|gemma-3|qwen.*vl|omni|scout|maverick", i, re.I)]
+cands = [want] + [i for i in vis if i != want][:8]
+log = open(f"{out}/vision-preflight.txt", "w")
+chosen = ""
+for m in cands:
+    body = {"model": m, "max_tokens": 5, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "color?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}}]}]}
+    req = urllib.request.Request(b + "/chat/completions", data=json.dumps(body).encode(), method="POST", headers=H)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            code, txt = r.status, r.read().decode()[:300]
+    except urllib.error.HTTPError as e:
+        code, txt = e.code, e.read().decode(errors="replace")[:300]
+    except Exception as e:
+        code, txt = 0, repr(e)[:200]
+    log.write(f"model={m} http={code} body={clean(txt)}\n"); log.flush()
+    if code == 200:
+        chosen = m; break
+print(chosen)
 PY
-)
-echo "vision preflight http=$vision_rc" > "$OUT/artemis/vision-preflight.txt"
-if [ "$vision_rc" != "200" ]; then
-  mark llm-vision FAIL "endpoint LLM refuse les images (HTTP $vision_rc) -> Artemis ne peut pas voir l'écran"
+VISION_MODEL=$(tr -d '\n' < "$OUT/artemis/vision-model.txt")
+if [ -z "$VISION_MODEL" ]; then
+  mark llm-vision FAIL "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
 else
-  mark llm-vision PASS "endpoint LLM accepte les images"
+  export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
+  mark llm-vision PASS "modèle vision accepté: $VISION_MODEL"
 fi
 if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 90; then
   mark artemis-smoke PASS "LLM + device loop operational"
@@ -233,7 +249,6 @@ else
   mark artemis-smoke WARN "Artemis unavailable, API fallback only (see artemis/smoke.log)"
 fi
 
-# Artemis observes the rider create form (UI action attempt, API fallback after)
 artemis_run rider-create \
   "Open the Galass Rider app. From the home screen, select a destination, add two intermediate stops, choose cash payment, then confirm the ride request. Stay on the ride screen." \
   210 "$RIDER_PKG"
@@ -244,7 +259,8 @@ case $artemis_rc in
   *) mark artemis-rider-create WARN "rc=$artemis_rc (API fallback next)" ;;
 esac
 
-# Adopt the ride Artemis may have created, otherwise create it via API.
+# Driver app au premier plan AVANT la création: l'offre arrive en direct.
+ensure_fg "$DRIVER_PKG"
 api pick | tee -a "$OUT/run.log"
 RIDE_ID=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_id') or '')" 2>/dev/null)
 if [ -n "$RIDE_ID" ]; then
@@ -253,39 +269,27 @@ else
   mark ride-exists FAIL "no ride created"
 fi
 
-# Capture rapide (pas de relance d'app): l'offre chauffeur expire vite
-adb exec-out screencap -p > "$OUT/screens/03-rider-ride-created.png" 2>/dev/null; log "screenshot 03 (fast)"
-
-# Driver offer: Artemis attempts the acceptance, API accept is the fallback.
-launch "$DRIVER_PKG"
-sleep 6
-adb exec-out screencap -p > "$OUT/screens/03b-driver-offer.png" 2>/dev/null; log "screenshot 03b (fast)"
-artemis_run driver-accept \
-  "Open the Galass Driver app. If a ride offer is shown, accept it. Then open the active ride details screen showing the two stops." \
-  150 "$DRIVER_PKG"
-driver_artemis_rc=$?
+# Offre chauffeur: capture puis acceptation UI immédiate (évite le 409 offer_expired).
+snap 03b-driver-offer "$DRIVER_PKG" 'Accepter la course' 20 && tap_ui 'Accepter la course' || true
+sleep 2
 api accept | tee -a "$OUT/run.log"
-sleep 3
-shot 04-driver-accepted
+# 03 = rider: course créée / chauffeur trouvé
+snap 03-rider-ride-created "$RIDER_PKG" 'E2E Driver|Recherche|chauffeur|E2E Dest' 30 || true
+snap 04-driver-accepted "$DRIVER_PKG" 'E2E Pickup|Démarrer|OTP|Arr[eê]t|Prise en charge' 20 || true
 
-# Start the ride (OTP belongs to the rider and is only available server-side).
 api start | tee -a "$OUT/run.log"
-sleep 5
-shot 05-driver-running
-dump_ui 05-driver-running
-
-# Rider must show the running ride with both stops before they are completed.
-launch "$RIDER_PKG"
-sleep 10
-shot 06-rider-running
-dump_ui 06-rider-running
-if grep -qi "E2E Stop" "$OUT/06-rider-running.xml" 2>/dev/null; then
+# Course en cours côté chauffeur: si l'accueil reste affiché, ouvrir l'onglet Courses.
+if ! wait_ui "$DRIVER_PKG" 'Arr[eê]t|E2E Stop' 15; then
+  tap_ui 'Courses' && sleep 2 && tap_ui 'E2E|HGD|en cours|Continuer' || true
+fi
+snap 05-driver-running "$DRIVER_PKG" 'Arr[eê]t|E2E Stop' 20 || true
+snap 06-rider-running "$RIDER_PKG" 'Arr[eê]t 1|E2E Stop' 30 || true
+if grep -qi "E2E Stop" "$OUT/ui/06-rider-running.xml" 2>/dev/null; then
   mark rider-shows-stops PASS "stop labels present in rider UI dump"
 else
   mark rider-shows-stops WARN "uiautomator dump has no stop labels (Flutter semantics)"
 fi
 
-# Stops: Artemis tries one stop in the UI, API completes the sequence.
 artemis_run driver-stops \
   "Open the Galass Driver app and complete the pending stops of the running ride one by one until every stop is marked done." \
   180 "$DRIVER_PKG"
@@ -293,23 +297,22 @@ stops_rc=$?
 mark artemis-driver-stops "$([ $stops_rc -eq 0 ] && echo PASS || { [ $stops_rc -eq 2 ] && echo SKIP || echo WARN; })" "UI attempt; API completion follows"
 
 STOP_HOOK="$(pwd)/e2e/stop_hook.sh" OUT="$OUT" api stops | tee -a "$OUT/run.log"
-shot 07-driver-stops-done
+snap 07-driver-stops-done "$DRIVER_PKG" 'Terminer|Destination|E2E Dest|Arriv' 20 || true
 
 api end | tee -a "$OUT/run.log"
-sleep 3; shot 09-driver-after-end-before-cash; dump_ui 09-driver-after-end-before-cash
-shot 10-rider-payment-before; dump_ui 10-rider-payment-before
+snap 08-driver-ride-ended "$DRIVER_PKG" 'paiement|Paiement|terminée|CFA|XOF' 30 || true
+snap 09-rider-ended-before-payment "$RIDER_PKG" 'Course terminée|arrivé à destination|Payer maintenant' 30 || true
 api pay_rider | tee -a "$OUT/run.log"
-sleep 3; shot 11-rider-after-cash-payment
-shot 12-driver-cash-to-collect; dump_ui 12-driver-cash-to-collect
+snap 10-rider-after-cash-choice "$RIDER_PKG" 'attente|chauffeur' 30 || true
+snap 11-driver-cash-to-collect "$DRIVER_PKG" 'Reçois le paiement|Confirmer le paiement' 40 || true
+tap_ui 'Confirmer le paiement' || true
+sleep 3
 api cash_driver | tee -a "$OUT/run.log"
-sleep 3; shot 13-driver-after-cash-received
+wait_gone "$DRIVER_PKG" 'Reçois le paiement|Confirmer le paiement' 30 || true
+snap 12-driver-after-cash-confirmed "$DRIVER_PKG" 'content-desc="[^"]+"' 15 || true
 api status | tee -a "$OUT/run.log"
-
-# Rider panel must be closed once the ride is over.
-launch "$RIDER_PKG"
-sleep 12
-shot 08-rider-after
-dump_ui 08-rider-after
+snap 13-rider-after "$RIDER_PKG" 'Course terminée|Avis' 40 || true
+cp "$OUT/ui/13-rider-after.xml" "$OUT/08-rider-after.xml" 2>/dev/null || true
 
 artemis_run rider-closed \
   "Open the Galass Rider app and return to its home screen. Report whether an active-ride panel is still open." \
@@ -344,9 +347,9 @@ else
   mark backend-flow FAIL "see $OUT/state.json (status/stops/payment)"
 fi
 
-if [ -s "$OUT/screens/08-rider-after.png" ] && [ -s "$OUT/screens/06-rider-running.png" ] \
-   && ! cmp -s "$OUT/screens/06-rider-running.png" "$OUT/screens/08-rider-after.png"; then
-  mark rider-panel-closed PASS "rider screen changed after ride end (see 06 vs 08)"
+if [ -s "$OUT/screens/13-rider-after.png" ] && [ -s "$OUT/screens/06-rider-running.png" ] \
+   && ! cmp -s "$OUT/screens/06-rider-running.png" "$OUT/screens/13-rider-after.png"; then
+  mark rider-panel-closed PASS "rider screen changed after ride end (see 06 vs 13)"
 else
   mark rider-panel-closed FAIL "rider screen identical or missing"
 fi
@@ -372,6 +375,13 @@ fi
 # --- Diagnostic Artemis / émulateur (archive chiffrée uniquement) ---
 D="$OUT/diag"; mkdir -p "$D"
 find "$HOME" vendor/artemis -name "daemon-*.log" -o -name "mcp_server.log" 2>/dev/null | head -10 | while read -r f; do cp "$f" "$D/" 2>/dev/null; done
+if ! curl -s -m 3 http://127.0.0.1:8000/ >/dev/null 2>&1; then
+  ( cd vendor/artemis && nohup ./.venv/bin/artemis-admin > "$(pwd)/../../$D/artemis-admin.log" 2>&1 & )
+  for _ in $(seq 1 30); do curl -s -m 2 http://127.0.0.1:8000/ >/dev/null 2>&1 && break; sleep 2; done
+fi
+echo "artemis service http=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:8000/)" > "$D/daemon-status.txt"
+cp -r vendor/artemis/logs "$D/artemis-logs" 2>/dev/null || true
+find "$HOME/.artemis" vendor/artemis -name "*.log" -newer "$OUT/run.log" 2>/dev/null | head -20 | while read -r f; do cp "$f" "$D/" 2>/dev/null; done
 for ep in /api/sessions /api/system/readiness /api/devices /api/system/adb/server; do
   curl -s -m 10 "http://127.0.0.1:8000$ep" > "$D/daemon$(echo "$ep" | tr '/' '_').json" 2>/dev/null || true
 done
