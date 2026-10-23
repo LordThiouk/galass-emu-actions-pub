@@ -92,7 +92,7 @@ jobs:
           for a in rider driver; do
             got=$("$AS" verify --print-certs apk/$a/app-debug.apk | awk -F': ' '/certificate SHA-1 digest/{print toupper($2)}' | head -1 | sed 's/../&:/g;s/:$//')
             echo "$a SHA-1 APK: $got"
-            [ "$got" = "$exp" ] || { echo "::error::$a signé avec un autre certificat"; exit 1; }
+            [ "$got" = "$exp" ] || { echo "::error::$a signé avec un autre certificat"; ls -la ~/.android; keytool -list -v -keystore ~/.android/debug.keystore -storepass android 2>&1 | grep -E "SHA1:|Alias|type"; exit 1; }
           done
           # Libérer la RAM: les daemons Gradle (Xmx6g) restent vivants et étouffent l'émulateur (ANR / QEMU hang)
           pkill -f GradleDaemon || true; pkill -f KotlinCompileDaemon || true; sleep 3; free -m
