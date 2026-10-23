@@ -54,22 +54,44 @@ tap_ui() {
   adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 )) >/dev/null 2>&1
   _ulog "tap_ui $re @ $(( (x1 + x2) / 2 )),$(( (y1 + y2) / 2 ))"
 }
-# tap_exact label : noeud dont text/content-desc vaut exactement label (évite les descriptions qui le contiennent)
+# tap_exact label : noeud dont text/content-desc contient label comme LIGNE entière
+# (Flutter fusionne des boutons empilés dans un seul noeud "A&#10;B": on tape la bonne tranche)
 tap_exact() {
-  local lab="${1//\'/\&apos;}" b x1 y1 x2 y2
   [ -s /tmp/w.xml ] || ui_xml > /tmp/w.xml
-  b=$(tr '>' '\n' < /tmp/w.xml | grep -F -e "text=\"$lab\"" -e "content-desc=\"$lab\"" | grep -oE 'bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' | tail -1)
-  [ -z "$b" ] && { _ulog "tap_exact miss: $lab"; return 1; }
-  read -r x1 y1 x2 y2 <<<"$(echo "$b" | tr -c '0-9' ' ')"
-  adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 )) >/dev/null 2>&1
-  _ulog "tap_exact $lab @ $(( (x1 + x2) / 2 )),$(( (y1 + y2) / 2 ))"
+  local res
+  res=$(python3 - "$1" <<'PY'
+import re, sys, html
+lab = sys.argv[1]
+xml = open("/tmp/w.xml", encoding="utf-8", errors="replace").read()
+best = None
+for m in re.finditer(r'<node [^>]*>', xml):
+    n = m.group(0)
+    for attr in ("text", "content-desc"):
+        a = re.search(attr + r'="([^"]*)"', n)
+        if not a: continue
+        lines = html.unescape(a.group(1)).split("\n")
+        if lab in lines:
+            bb = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n)
+            if not bb: continue
+            x1, y1, x2, y2 = map(int, bb.groups())
+            k, cnt = lines.index(lab), len(lines)
+            best = ((x1 + x2) // 2, y1 + (2 * k + 1) * (y2 - y1) // (2 * cnt), k + 1, cnt)
+print("" if best is None else "%d %d %d/%d" % best)
+PY
+)
+  [ -z "$res" ] && { _ulog "tap_exact miss: $1"; return 1; }
+  set -- "$1" $res
+  adb shell input tap "$2" "$3" >/dev/null 2>&1
+  _ulog "tap_exact $1 @ $2,$3 (ligne $4)"
 }
 # ui_action pkg bouton : attend le bouton visible, le tape, puis tape "Confirmer" du dialogue
 ui_action() {
-  local pkg="$1" lab="$2" xl="${2//\'/\&apos;}"
-  wait_ui "$pkg" "(text|content-desc)=\"$xl\"" 20 || return 1
+  local pkg="$1" lab="$2"
+  wait_ui "$pkg" "(text|content-desc)=\"([^\"]*&#10;)?$lab(&#10;[^\"]*)?\"" 20 || return 1
   tap_exact "$lab" || return 1
   sleep 2
-  if wait_ui "$pkg" '(text|content-desc)="Confirmer"' 8; then tap_exact "Confirmer"; fi
+  local tag; tag=$(echo "$lab" | tr -c 'a-zA-Z' '_')
+  if wait_ui "$pkg" '(text|content-desc)="([^"]*&#10;)?Confirmer(&#10;[^"]*)?"' 8; then tap_exact "Confirmer"
+  else adb exec-out screencap -p > "$OUT/screens/dbg-after-$tag.png"; cp /tmp/w.xml "$OUT/ui/dbg-after-$tag.xml"; _ulog "pas de dialogue Confirmer après $lab"; fi
   sleep 3
 }

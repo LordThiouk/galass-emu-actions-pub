@@ -281,14 +281,14 @@ snap 03-rider-ride-created "$RIDER_PKG" 'E2E Driver|Recherche|chauffeur|E2E Dest
 snap 04-driver-accepted "$DRIVER_PKG" 'content-desc="Prise en charge du client"' 25 || true
 
 # Démarrage par l'UI chauffeur (Prise en charge -> Confirmer), repli API.
-if ui_action "$DRIVER_PKG" "Prise en charge du client" && wait_ui "$DRIVER_PKG" "content-desc=\"(Confirmer l&apos;arrêt|Terminer la course)\"" 20; then
+if ui_action "$DRIVER_PKG" "Prise en charge du client" && api ride_state | grep -q "status=3 " && wait_ui "$DRIVER_PKG" "content-desc=\"[^\"]*(Confirmer l'arrêt|Terminer la course)" 20; then
   mark ui-start PASS "course démarrée par l'UI chauffeur"
 else
-  mark ui-start WARN "UI start échoué -> repli API"
-  api start | tee -a "$OUT/run.log"
+  mark ui-start WARN "UI start échoué -> repli API (signalé)"
+  api ride_state | grep -q "status=3 " || api start | tee -a "$OUT/run.log"
 fi
 api ride_state | tee -a "$OUT/run.log"
-snap 05-driver-running "$DRIVER_PKG" "content-desc=\"(Confirmer l&apos;arrêt|Terminer la course)\"" 20 || true
+snap 05-driver-running "$DRIVER_PKG" "content-desc=\"[^\"]*(Confirmer l'arrêt|Terminer la course)" 20 || true
 snap 06-rider-running "$RIDER_PKG" 'Arrêt 1|E2E Stop 1' 30 || true
 if grep -q "E2E Stop" "$OUT/ui/06-rider-running.xml" 2>/dev/null; then
   mark rider-shows-stops PASS "stop labels present in rider UI dump"
@@ -296,6 +296,7 @@ else
   mark rider-shows-stops WARN "uiautomator dump has no stop labels (Flutter semantics)"
 fi
 
+adb emu geo fix -17.462 14.71 >/dev/null 2>&1 || true; STOP_INDEX=0 api loc_stop | tee -a "$OUT/run.log"
 artemis_run driver-stops \
   "Open the Galass Driver app. On the running ride, tap \"Confirmer l'arrêt\" then \"Confirmer\" for the current stop. Report the stop label shown." \
   200 "$DRIVER_PKG"
@@ -309,7 +310,7 @@ for i in 0 1; do
   n=$((i + 1))
   adb emu geo fix "${STOP_LNG[$i]}" "${STOP_LAT[$i]}" >/dev/null 2>&1 || true
   STOP_INDEX=$i api loc_stop | tee -a "$OUT/run.log"
-  snap "stop-$n-driver" "$DRIVER_PKG" "content-desc=\"Confirmer l&apos;arrêt\"" 20 || true
+  snap "stop-$n-driver" "$DRIVER_PKG" "content-desc=\"[^\"]*Confirmer l'arrêt" 20 || true
   snap "stop-$n-rider" "$RIDER_PKG" "Arrêt $n|E2E Stop $n" 25 || true
   if ui_action "$DRIVER_PKG" "Confirmer l'arrêt"; then ui_stops=$((ui_stops + 1)); fi
   api ride_state | tee -a "$OUT/run.log"
@@ -320,12 +321,13 @@ else
   mark ui-stops WARN "UI arrêts incomplets (taps: $ui_stops) -> repli API"
   api stops_pending | tee -a "$OUT/run.log"
 fi
-snap 07-driver-stops-done "$DRIVER_PKG" 'content-desc="Terminer la course"' 20 || true
+snap 07-driver-stops-done "$DRIVER_PKG" 'content-desc="[^"]*Terminer la course' 20 || true
 
 # Fin de course par l'UI chauffeur, repli API.
 adb emu geo fix -17.4467 14.6928 >/dev/null 2>&1 || true
 api loc_dest | tee -a "$OUT/run.log"
-if ui_action "$DRIVER_PKG" "Terminer la course" && api ride_state | grep -qvE "status=(2|3) "; then
+ui_action "$DRIVER_PKG" "Terminer la course"; sleep 3
+if api ride_state | grep -q "status=4 "; then
   mark ui-end PASS "fin de course par l'UI chauffeur"
 else
   mark ui-end WARN "UI end échoué -> repli API"
