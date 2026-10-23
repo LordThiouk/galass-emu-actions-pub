@@ -52,15 +52,23 @@ jobs:
       - uses: actions/checkout@v4
         with: {repository: LordThiouk/Galass_Driver, ref: "${{ inputs.driver_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/driver}
       - name: Libérer disque
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules /opt/microsoft /opt/google/chrome /usr/local/share/powershell || true
+          sudo docker image prune --all --force >/dev/null || true
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: "17"}
       - uses: subosito/flutter-action@v2
         with: {flutter-version: "3.44.8", channel: stable, cache: true}
+      - name: Licences Android + NDK
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKM" ] || SDKM="$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "ndk;29.0.14033849" "ndk;28.2.13676358" > /dev/null
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
-            (cd src/$a && flutter pub get >/dev/null && flutter build apk --debug --dart-define=API_BASE_URL="$BASE" 2>&1 | tail -n 15)
+            (cd src/$a && flutter pub get >/dev/null && flutter build apk --debug --dart-define=API_BASE_URL="$BASE" 2>&1 | tail -n 15; test -f build/app/outputs/flutter-apk/app-debug.apk)
             mkdir -p apk/$a && cp src/$a/build/app/outputs/flutter-apk/app-debug.apk apk/$a/
           done
           rm -rf src
