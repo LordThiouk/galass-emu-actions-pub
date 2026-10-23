@@ -157,6 +157,7 @@ adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1
 adb shell input keyevent 82 >/dev/null 2>&1
 adb shell svc power stayon true >/dev/null 2>&1
+adb emu geo fix -17.4677 14.7167 >/dev/null 2>&1 || true  # GPS Dakar (sinon position Californie par défaut -> pas de dispatch)
 adb logcat -c >/dev/null 2>&1 || true
 
 # ------------------------------------------------------------------ install
@@ -184,7 +185,7 @@ dump_ui 02-driver-home
 
 # Artemis smoke: if the free LLM endpoint cannot drive one trivial goal, skip
 # all later UI attempts instead of burning a timeout on each one.
-if artemis_run smoke "Open the Settings app and report the Android version shown on screen." 180; then
+if artemis_run smoke "Open the Settings app and report the Android version shown on screen." 420; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   ARTEMIS_OK=0
