@@ -135,6 +135,11 @@ def open_rides():
 def pick_ride():
     """Adopt the newest pending/active rider ride, else create one."""
     rides = open_rides()
+    # Courses E2E pendantes sans chauffeur d'un run précédent: les annuler (staging, compte E2E)
+    for r in [r for r in rides if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0)]:
+        c, j = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E stale ride"})
+        print("CANCEL_STALE", r["id"], c, flush=True)
+    rides = [r for r in open_rides() if int(r.get("driver_id") or 0)]
     if rides:
         rid = int(rides[0]["id"])
         st["ride_id"] = rid
