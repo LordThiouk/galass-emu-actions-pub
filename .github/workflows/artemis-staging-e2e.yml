@@ -65,15 +65,19 @@ jobs:
           [ -x "$SDKM" ] || SDKM="$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -1)"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "ndk;29.0.14033849" "ndk;28.2.13676358" > /dev/null
-      - name: Keystore debug fixe (SHA-1 stable pour la clé Maps)
+      - name: Keystore debug fixe (JKS, SHA-1 stable pour la clé Maps)
         env: {KS: "${{ secrets.DEBUG_KEYSTORE_B64 }}"}
         run: |
-          mkdir -p ~/.android && umask 077
-          for d in "$HOME/.android" "${ANDROID_USER_HOME:-}" "${ANDROID_SDK_HOME:+$ANDROID_SDK_HOME/.android}" "${ANDROID_PREFS_ROOT:+$ANDROID_PREFS_ROOT/.android}"; do
-            [ -n "$d" ] || continue; mkdir -p "$d"; printf '%s' "$KS" | base64 -d > "$d/debug.keystore"; echo "debug keystore -> $d"
-          done
-          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-unset} ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-unset}"
-          openssl pkcs12 -in ~/.android/debug.keystore -passin pass:android -nokeys 2>/dev/null | openssl x509 -noout -fingerprint -sha1
+          umask 077; mkdir -p ~/.android
+          printf '%s' "$KS" | base64 -d > /tmp/dbg.p12
+          rm -f ~/.android/debug.keystore
+          keytool -importkeystore -noprompt -srckeystore /tmp/dbg.p12 -srcstoretype PKCS12 -srcstorepass android \
+            -srcalias androiddebugkey -destkeystore ~/.android/debug.keystore -deststoretype JKS \
+            -deststorepass android -destkeypass android -destalias androiddebugkey 2>&1 | grep -v -i warning || true
+          rm -f /tmp/dbg.p12
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E "Store type|Keystore type|SHA1:"
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | awk '/SHA1:/{print $2}' > /tmp/expected_sha1
+          test -s /tmp/expected_sha1
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
@@ -81,6 +85,15 @@ jobs:
             mkdir -p apk/$a && cp src/$a/build/app/outputs/flutter-apk/app-debug.apk apk/$a/
           done
           rm -rf src
+      - name: Vérifier la signature des APK (apksigner)
+        run: |
+          AS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          exp=$(cat /tmp/expected_sha1); echo "attendu: $exp"
+          for a in rider driver; do
+            got=$("$AS" verify --print-certs apk/$a/app-debug.apk | awk -F': ' '/certificate SHA-1 digest/{print toupper($2)}' | head -1 | sed 's/../&:/g;s/:$//')
+            echo "$a SHA-1 APK: $got"
+            [ "$got" = "$exp" ] || { echo "::error::$a signé avec un autre certificat"; exit 1; }
+          done
           # Libérer la RAM: les daemons Gradle (Xmx6g) restent vivants et étouffent l'émulateur (ANR / QEMU hang)
           pkill -f GradleDaemon || true; pkill -f KotlinCompileDaemon || true; sleep 3; free -m
       - name: Activer KVM (règle udev officielle)

@@ -237,7 +237,7 @@ print(chosen)
 PY
 VISION_MODEL=$(tr -d '\n' < "$OUT/artemis/vision-model.txt")
 if [ -z "$VISION_MODEL" ]; then
-  mark llm-vision FAIL "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
+  mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
 else
   export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
