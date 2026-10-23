@@ -83,8 +83,12 @@ def driver_loc(lat, lng):
 
 def go_online():
     driver_loc(*PICK)
-    call("POST", "driver/online-status", DT,
-         {"online_status": 1, "lat": PICK[0], "long": PICK[1]})
+    # online-status est un TOGGLE côté backend: rebasculer si on est passé offline
+    for _ in range(2):
+        c, j = call("POST", "driver/online-status", DT,
+                    {"online_status": 1, "lat": PICK[0], "long": PICK[1]})
+        if ((j or {}).get("data") or {}).get("online"):
+            break
 
 
 def create_ride():
