@@ -1,0 +1,110 @@
+name: artemis-staging-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      rider_ref:
+        description: "Branche Galass_Rider"
+        default: "fix/multistop-close"
+        type: string
+      driver_ref:
+        description: "Branche Galass_Driver"
+        default: "fix/multistop-close"
+        type: string
+      model:
+        description: "Modèle Artemis (freellmapi)"
+        default: "auto"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artemis-staging-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      BASE: ${{ secrets.GALASS_STAGING_URL }}
+      RIDER_ID: "106"
+      DRIVER_ID: "23"
+      OUT: e2e-out
+      APK_RIDER: apk/rider/app-debug.apk
+      APK_DRIVER: apk/driver/app-debug.apk
+      RIDER_TOKEN: ${{ secrets.GALASS_E2E_RIDER_TOKEN }}
+      DRIVER_TOKEN: ${{ secrets.GALASS_E2E_DRIVER_TOKEN }}
+      DEV_TOKEN: ${{ secrets.GALASS_E2E_DEV_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.FREELLMAPI_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.FREELLMAPI_BASE_URL }}
+      ARTEMIS_DEFAULT_MODEL: ${{ inputs.model }}
+      ARTEMIS_USE_USER_DIR: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Garde staging
+        run: |
+          case "$BASE" in *galassapp.com*|"") echo "BASE invalide"; exit 1;; esac
+          h="${BASE#*://}"; h="${h%%[:/]*}"; echo "::add-mask::$h"; echo "STAGING_HOST=$h" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider}
+      - uses: actions/checkout@v4
+        with: {repository: LordThiouk/Galass_Driver, ref: "${{ inputs.driver_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/driver}
+      - name: Libérer disque
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "17"}
+      - uses: subosito/flutter-action@v2
+        with: {flutter-version: "3.44.8", channel: stable, cache: true}
+      - name: Build APK (staging, debug, même job, pas d'upload)
+        run: |
+          for a in rider driver; do
+            (cd src/$a && flutter pub get >/dev/null && flutter build apk --debug --dart-define=API_BASE_URL="$BASE" 2>&1 | tail -n 15)
+            mkdir -p apk/$a && cp src/$a/build/app/outputs/flutter-apk/app-debug.apk apk/$a/
+          done
+          rm -rf src
+      - name: Activer KVM (règle udev officielle)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          echo "Runner: $(nproc) vCPU, $(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo) Mo RAM"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Installer Artemis (vendor)
+        run: |
+          cd vendor/artemis
+          uv sync --no-dev
+          .venv/bin/artemis --version
+
+      - name: E2E multistop (Artemis + API fallback)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096
+          cores: 2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash e2e/run.sh
+
+      - name: Chiffrer les preuves
+        if: always()
+        env: {PASS: "${{ secrets.E2E_ARCHIVE_PASS }}"}
+        run: |
+          mkdir -p e2e-out; tar czf ev.tgz e2e-out
+          printf '%s' "$PASS" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 -o evidence.tgz.gpg ev.tgz
+          rm -f ev.tgz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: staging-e2e-evidence-encrypted, path: evidence.tgz.gpg, retention-days: 7}
+      - name: Résumé (PASS/FAIL seulement)
+        if: always()
+        run: |
+          echo "| étape | résultat |" >> "$GITHUB_STEP_SUMMARY"; echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f e2e-out/results.txt ]; then awk -F'|' '{print "| "$1" | "$2" |"}' e2e-out/results.txt >> "$GITHUB_STEP_SUMMARY"; else echo "| run | no results |" >> "$GITHUB_STEP_SUMMARY"; fi
