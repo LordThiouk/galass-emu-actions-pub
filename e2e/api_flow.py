@@ -248,14 +248,24 @@ def end_ride():
     return e.get("status") == "success"
 
 
-def pay():
+def pay_rider():
     rid = ride_id()
     c, p = call("POST", f"ride/payment/{rid}", RT,
                 {"payment_type": 2, "tips_amount": 0})
     st["payment"] = p
+    save()
+
+
+def cash_driver():
+    rid = ride_id()
     c, r = call("POST", f"driver/rides/received-cash-payment/{rid}", DT)
     st["cash_received"] = r
     save()
+
+
+def pay():
+    pay_rider()
+    cash_driver()
     return True
 
 
@@ -295,6 +305,10 @@ elif step == "end":
     end_ride()
 elif step == "pay":
     pay()
+elif step == "pay_rider":
+    pay_rider()
+elif step == "cash_driver":
+    cash_driver()
 elif step == "finish":
     if not ride_id():
         pick_ride()

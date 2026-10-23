@@ -203,7 +203,30 @@ dump_ui 02-driver-home
 
 # Artemis smoke: if the free LLM endpoint cannot drive one trivial goal, skip
 # all later UI attempts instead of burning a timeout on each one.
-if artemis_run smoke "Open the Settings app and report the Android version shown on screen." 420; then
+# Préflight vision: Artemis envoie des captures; si le endpoint LLM refuse les images, inutile de lancer le smoke
+vision_rc=$("$PY" - <<'PY'
+import json, os, urllib.request
+b = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
+png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+body = {"model": os.environ.get("ARTEMIS_DEFAULT_MODEL", "auto"), "max_tokens": 5,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "color?"},
+                     {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}}]}]}
+req = urllib.request.Request(b + "/chat/completions", data=json.dumps(body).encode(), method="POST",
+      headers={"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", ""), "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=60) as r: print(r.status)
+except urllib.error.HTTPError as e: print(e.code)
+except Exception: print(0)
+PY
+)
+echo "vision preflight http=$vision_rc" > "$OUT/artemis/vision-preflight.txt"
+if [ "$vision_rc" != "200" ]; then
+  mark llm-vision FAIL "endpoint LLM refuse les images (HTTP $vision_rc) -> Artemis ne peut pas voir l'écran"
+  ARTEMIS_OK=0
+else
+  mark llm-vision PASS "endpoint LLM accepte les images"
+fi
+if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 90; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   ARTEMIS_OK=0
@@ -271,7 +294,13 @@ STOP_HOOK="$(pwd)/e2e/stop_hook.sh" OUT="$OUT" api stops | tee -a "$OUT/run.log"
 shot 07-driver-stops-done
 
 api end | tee -a "$OUT/run.log"
-api pay | tee -a "$OUT/run.log"
+sleep 3; shot 09-driver-after-end-before-cash; dump_ui 09-driver-after-end-before-cash
+shot 10-rider-payment-before; dump_ui 10-rider-payment-before
+api pay_rider | tee -a "$OUT/run.log"
+sleep 3; shot 11-rider-after-cash-payment
+shot 12-driver-cash-to-collect; dump_ui 12-driver-cash-to-collect
+api cash_driver | tee -a "$OUT/run.log"
+sleep 3; shot 13-driver-after-cash-received
 api status | tee -a "$OUT/run.log"
 
 # Rider panel must be closed once the ride is over.
@@ -338,6 +367,18 @@ else
 fi
 
 # --------------------------------------------------------------- report
+# --- Diagnostic Artemis / émulateur (archive chiffrée uniquement) ---
+D="$OUT/diag"; mkdir -p "$D"
+find "$HOME" vendor/artemis -name "daemon-*.log" -o -name "mcp_server.log" 2>/dev/null | head -10 | while read -r f; do cp "$f" "$D/" 2>/dev/null; done
+for ep in /api/sessions /api/system/readiness /api/devices /api/system/adb/server; do
+  curl -s -m 10 "http://127.0.0.1:8000$ep" > "$D/daemon$(echo "$ep" | tr '/' '_').json" 2>/dev/null || true
+done
+adb shell dumpsys accessibility > "$D/dumpsys-accessibility.txt" 2>/dev/null || true
+adb shell pm list packages 2>/dev/null | grep -i artemis > "$D/artemis-packages.txt" || true
+adb logcat -d -v threadtime 2>/dev/null | grep -aiE "artemis|accessib|ANR in|not responding" | tail -n 2000 > "$D/logcat-artemis-anr.txt" || true
+adb shell top -bn1 -m 15 > "$D/emu-top.txt" 2>/dev/null || true
+adb shell uptime > "$D/emu-uptime.txt" 2>/dev/null || true
+{ uptime; nproc; free -m; } > "$D/host-load.txt" 2>/dev/null || true
 printf '%s\n' "${RESULTS[@]}" > "$OUT/results.txt"
 "$PY" - "$OUT" <<'PY'
 import json, os, sys
