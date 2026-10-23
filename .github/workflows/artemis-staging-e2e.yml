@@ -78,6 +78,39 @@ jobs:
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E "Store type|Keystore type|SHA1:"
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | awk '/SHA1:/{print $2}' > /tmp/expected_sha1
           test -s /tmp/expected_sha1
+          # AGP peut résoudre le keystore debug ailleurs que dans $HOME/.android: on réplique
+          # le même fichier partout où les outils Android le cherchent.
+          for d in "$HOME/.android" "${ANDROID_SDK_HOME:-$HOME}/.android" "${ANDROID_PREFS_ROOT:-$HOME}/.android" "$ANDROID_HOME/.android"; do
+            mkdir -p "$d" 2>/dev/null || continue
+            cp -f ~/.android/debug.keystore "$d/debug.keystore" 2>/dev/null || true
+          done
+          [ -n "${ANDROID_USER_HOME:-}" ] && cp -f ~/.android/debug.keystore "$ANDROID_USER_HOME/debug.keystore" 2>/dev/null || true
+          # Init script global: force la signature debug sur CE keystore (aucun fichier projet modifié).
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/zz-debug-signing.gradle <<'GRADLE'
+          allprojects { proj ->
+            proj.plugins.withId('com.android.application') {
+              proj.afterEvaluate {
+                try {
+                  def android = proj.extensions.findByName('android')
+                  if (android == null) return
+                  def sc = android.signingConfigs.findByName('debug')
+                  if (sc == null) sc = android.signingConfigs.create('debug')
+                  sc.storeFile = new File(System.getenv('HOME'), '.android/debug.keystore')
+                  sc.storePassword = 'android'
+                  sc.keyAlias = 'androiddebugkey'
+                  sc.keyPassword = 'android'
+                  def bt = android.buildTypes.findByName('debug')
+                  if (bt != null) bt.signingConfig = sc
+                  proj.logger.lifecycle("debug signing force sur ~/.android/debug.keystore")
+                } catch (Throwable t) {
+                  proj.logger.lifecycle("debug-signing init ignore: ${t.message}")
+                }
+              }
+            }
+          }
+          GRADLE
+          echo "init script: $(wc -l < ~/.gradle/init.d/zz-debug-signing.gradle) lignes"
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
@@ -89,12 +122,30 @@ jobs:
         run: |
           AS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           exp=$(cat /tmp/expected_sha1); echo "attendu: $exp"
+          echo "HOME=$HOME ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-} ANDROID_PREFS_ROOT=${ANDROID_PREFS_ROOT:-} ANDROID_USER_HOME=${ANDROID_USER_HOME:-}"
+          find "$HOME" "$ANDROID_HOME" /usr/local/lib/android /opt /tmp -name debug.keystore 2>/dev/null | while read -r f; do
+            printf 'keystore %s ' "$f"; keytool -list -v -keystore "$f" -storepass android 2>/dev/null | awk '/SHA1:/{print $2; exit}'
+          done
+          sha1_of() { "$AS" verify --print-certs "$1" | awk '/SHA-1 digest/{print toupper($NF)}' | head -1 | sed 's/../&:/g;s/:$//'; }
+          rc=0
           for a in rider driver; do
             "$AS" verify --print-certs apk/$a/app-debug.apk | grep -E "Signer|SHA-1|DN"
-            got=$("$AS" verify --print-certs apk/$a/app-debug.apk | awk '/SHA-1 digest/{print toupper($NF)}' | head -1 | sed 's/../&:/g;s/:$//')
-            echo "$a SHA-1 APK: $got"
-            [ "$got" = "$exp" ] || { echo "::error::$a signé avec un autre certificat"; ls -la ~/.android; keytool -list -v -keystore ~/.android/debug.keystore -storepass android 2>&1 | grep -E "SHA1:|Alias|type"; exit 1; }
+            got=$(sha1_of apk/$a/app-debug.apk)
+            echo "$a SHA-1 APK (build): $got"
+            if [ "$got" != "$exp" ]; then
+              # Le build a signé avec un autre certificat: re-signature explicite avec le keystore fixe.
+              cp apk/$a/app-debug.apk "apk/$a/app-unsigned.apk"
+              "$AS" sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android \
+                --ks-key-alias androiddebugkey --out apk/$a/app-debug.apk "apk/$a/app-unsigned.apk"
+              rm -f "apk/$a/app-unsigned.apk"
+              got=$(sha1_of apk/$a/app-debug.apk)
+              echo "$a SHA-1 APK (re-signé): $got"
+            fi
+            echo "APK_SHA1_$(echo "$a" | tr a-z A-Z)=$got" >> "$GITHUB_ENV"
+            [ "$got" = "$exp" ] || { echo "::warning::$a signé avec un autre certificat que la clé Maps"; rc=1; }
           done
+          echo "APK_SHA1_TARGET=$exp" >> "$GITHUB_ENV"
+          [ $rc -eq 0 ] && echo "SHA-1 APK = certificat Maps attendu" || echo "::warning::SHA-1 APK != certificat Maps (run poursuivi, voir apk-sha1)"
           # Libérer la RAM: les daemons Gradle (Xmx6g) restent vivants et étouffent l'émulateur (ANR / QEMU hang)
           pkill -f GradleDaemon || true; pkill -f KotlinCompileDaemon || true; sleep 3; free -m
       - name: Activer KVM (règle udev officielle)

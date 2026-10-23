@@ -160,6 +160,15 @@ else
   mark apk-base-url FAIL "APK Rider does not embed the staging base URL"
 fi
 
+# SHA-1 des APK, calculé à l'étape de build et transmis par GITHUB_ENV
+if [ -n "${APK_SHA1_RIDER:-}" ] || [ -n "${APK_SHA1_DRIVER:-}" ]; then
+  if [ "${APK_SHA1_RIDER:-x}" = "${APK_SHA1_TARGET:-y}" ] && [ "${APK_SHA1_DRIVER:-x}" = "${APK_SHA1_TARGET:-y}" ]; then
+    mark apk-sha1 PASS "rider=${APK_SHA1_RIDER:-?} driver=${APK_SHA1_DRIVER:-?}"
+  else
+    mark apk-sha1 WARN "rider=${APK_SHA1_RIDER:-?} driver=${APK_SHA1_DRIVER:-?} attendu=${APK_SHA1_TARGET:-?}"
+  fi
+fi
+
 # ------------------------------------------------------------------- device
 adb wait-for-device
 for _ in $(seq 1 90); do
@@ -409,6 +418,14 @@ if [ "$prod_hits" -eq 0 ]; then
   mark no-prod-calls PASS "0 galassapp.com occurrences in logcat"
 else
   mark no-prod-calls FAIL "$prod_hits galassapp.com occurrences in logcat"
+fi
+
+# Google Maps: la clé est restreinte par paquet + SHA-1; un certificat différent => "Authorization failure"
+maps_auth=$(grep -a -c "Authorization failure" "$OUT/logcat/full.log" 2>/dev/null || true); maps_auth=${maps_auth:-0}
+if [ "$maps_auth" -eq 0 ]; then
+  mark maps-auth PASS "0 'Authorization failure' (Google Maps)"
+else
+  mark maps-auth WARN "$maps_auth 'Authorization failure' (Google Maps)"
 fi
 
 # --------------------------------------------------------------- report
