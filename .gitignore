@@ -1,0 +1,26 @@
+# Python bytecode (jamais versionné : généré par py_compile / imports)
+__pycache__/
+*.py[cod]
+
+# Artefacts de run E2E — captures, dumps, états, logs
+e2e-out/
+e2e-out-*/
+e2e/out/
+
+# APK/AAB et matériel de signature : jamais dans le repo
+apk/
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+
+# Environnement Artemis vendorisé (code suivi, venv non)
+vendor/artemis/.venv/
+
+# Preuves E2E : archives chiffrées et dumps locaux, jamais versionnés
+ev.tgz
+*.tgz
+*.gpg
+evidence/
