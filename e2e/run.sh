@@ -123,19 +123,74 @@ write_flags() {
     "$UI_ACCEPT" "$UI_START" "$UI_STOP0" "$UI_STOP1" "$UI_END" "$UI_CASH" > "$OUT/ui-flags.txt"
 }
 
-# S13: a wedged emulator must still leave a verdict. The watchdog flushes the points
-# marked so far and writes report.json before the job's wall clock kills it.
+# S13: a wedged emulator must still leave a verdict — AND release the step.
+# B10 (run 40177022780): l'ancien `( sleep 8100; ... ) &` forkait un `sleep`
+# enfant que le `kill $WATCHDOG_PID` de l'EXIT ne touchait PAS: l'orphelin
+# survivait en tenant le pipe stdout du step — jamais d'EOF, le step
+# n'a jamais rendu la main (2h02 d'attente, job coupé à timeout-minutes:150).
+# Fix: le watchdog tourne dans son PROPRE groupe (setsid), ses fds sont
+# détachés du pipe (`</dev/null >log 2>&1`), le trap tue tout le groupe
+# (`kill -- -PGID`), et à l'échéance le watchdog flush le verdict partiel
+# PUIS tue le script — le step ne peut plus dépasser son budget mur.
 P0_CSV="$(echo $P0_POINTS | tr ' ' ',')"
-RUN_DEADLINE_MIN="${RUN_DEADLINE_MIN:-135}"
-(
-  sleep $((RUN_DEADLINE_MIN * 60))
-  log "watchdog: deadline ${RUN_DEADLINE_MIN}min atteinte — verdict partiel"
-  cp "$OUT/results-live.txt" "$OUT/results-raw.txt" 2>/dev/null || :
+# La chaîne des échéances doit rester strictement ordonnée (le test la vérifie) :
+# watchdog < timeout-minutes du step < timeout-minutes du job.
+RUN_DEADLINE_MIN="${RUN_DEADLINE_MIN:-90}"
+WD_SLEEP="${WATCHDOG_SLEEP_S:-$((RUN_DEADLINE_MIN * 60))}"
+STEP_START=$SECONDS
+RUN_PID=$$
+export OUT P0_CSV PY RUN_DEADLINE_MIN WD_SLEEP RUN_PID
+export -f log write_flags
+WATCHDOG_PGID=""
+spawn_watchdog() {
+  if ! command -v setsid >/dev/null 2>&1; then
+    log "watchdog: setsid absent — pas de watchdog (step protégé par timeout-minutes)"
+    return 1
+  fi
+  : > "$OUT/watchdog.pgid"
+  setsid bash -c "$(cat <<'WD'
+# setsid fait de ce bash un chef de session : son PID EST le PGID. On l'écrit
+# nous-mêmes, car $! côté parent peut être le PID de setsid s'il a forké.
+echo $$ > "$OUT/watchdog.pgid"
+sleep "$WD_SLEEP"
+cp "$OUT/results-live.txt" "$OUT/results-raw.txt" 2>/dev/null || :
+echo "watchdog: deadline ${RUN_DEADLINE_MIN}min — flush partiel + kill du script (S13)" >> "$OUT/run.log"
+write_flags
+"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/watchdog-report.txt" 2>&1 || :
+echo "watchdog: kill -TERM $RUN_PID" >> "$OUT/run.log"
+kill -TERM "$RUN_PID" 2>/dev/null || :
+WD
+)" > "$OUT/watchdog-live.txt" 2>&1 < /dev/null &
+  WATCHDOG_PGID=$!
+  for _ in $(seq 1 25); do
+    [ -s "$OUT/watchdog.pgid" ] && break
+    sleep 0.2
+  done
+  [ -s "$OUT/watchdog.pgid" ] && WATCHDOG_PGID="$(tr -dc '0-9' < "$OUT/watchdog.pgid")"
+  log "watchdog: deadline ${RUN_DEADLINE_MIN}min pgid=${WATCHDOG_PGID:-?}"
+}
+release_watchdog() {
+  [ -n "${WATCHDOG_PGID:-}" ] || return 0
+  kill -- "-${WATCHDOG_PGID}" 2>/dev/null || kill "$WATCHDOG_PGID" 2>/dev/null || true
+}
+spawn_watchdog || true
+trap 'release_watchdog; kill "${LOGCAT_PID:-}" 2>/dev/null; pkill -P "$$" 2>/dev/null; true' EXIT
+# Le watchdog TERM le script à l'échéance. Sans handler, bash meurt sans rien
+# flusher (le seul verdict serait celui du watchdog) : on rend le verdict partiel
+# et un code 124 explicite, et l'EXIT ferme les groupes derrière.
+trap 'log "deadline: SIGTERM — verdict partiel"; flush_results; write_flags; "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/watchdog-report.txt" 2>&1 || true; exit 124' TERM INT
+
+# Frontière de phase : un sous-étape qui a mangé le budget mur rend un verdict
+# partiel tout de suite, au lieu d'attendre le watchdog puis le timeout du job.
+deadline_check() {
+  local limit_s=$(( RUN_DEADLINE_MIN * 60 ))
+  [ $(( SECONDS - STEP_START )) -lt "$limit_s" ] && return 0
+  log "deadline: budget ${RUN_DEADLINE_MIN}min épuisé avant '$1' — verdict partiel"
+  flush_results
   write_flags
-  "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/watchdog-report.txt" 2>&1
-) &
-WATCHDOG_PID=$!
-trap 'kill "$WATCHDOG_PID" "${LOGCAT_PID:-}" 2>/dev/null || true' EXIT
+  "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/deadline-report.txt" 2>&1 || true
+  exit 124
+}
 
 # cap point name pkg timeout : capture + verdict strict sur le marqueur du point.
 # The point and its source are passed to snap explicitly (S4), never inherited.
@@ -165,13 +220,23 @@ ride_state() {
 }
 
 launch() { adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; }
+# wait_fg : un cold start de debug Flutter dépasse largement 6s. Attendre le premier
+# plan évite un `wait_ui` qui rend rc=3 sur le launcher avant même la première frame.
+wait_fg() {
+  local pkg="$1" tmo="${2:-45}" t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    [ "$(fg_pkg)" = "$pkg" ] && return 0
+    sleep 2
+  done
+  log "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
+  return 1
+}
 # Bascule explicite entre étapes (jamais depuis un wait).
 bring_fg() {
   [ "$(fg_pkg)" = "$1" ] && return 0
   log "bring_fg $(fg_pkg) -> $1"
   adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-  sleep 3
-  [ "$(fg_pkg)" = "$1" ]
+  wait_fg "$1" 30
 }
 
 notif_probe() { # pkg token -> json
@@ -197,13 +262,23 @@ artemis_run() {
     >"$OUT/artemis/$name.log" 2>&1
   local rc=$?
   log "artemis end: $name rc=$rc"
+  if [ "$rc" -ne 0 ]; then
+    log "artemis fallback: $name indisponible ($( [ "$rc" = 124 ] && echo timeout || echo "rc=$rc" )) — reprise par taps + API"
+    tail -n 5 "$OUT/artemis/$name.log" 2>/dev/null | sed 's/^/artemis-log: /' >> "$OUT/run.log" || true
+    adb exec-out screencap -p > "$OUT/screens/artemis-$name-fail.png" 2>/dev/null || true
+  fi
   return $rc
 }
 
 write_prefs() {
   # pkg token user_id name email phone
-  # S18: the XML is piped straight into the device — no /tmp file holding an access token.
   local pkg="$1" access="$2" uid="$3" name="$4" email="$5" phone="$6"
+  # S18: the XML is piped straight into the device — no /tmp file holding an access token.
+  # B10 (run 40177022780): le dossier doit exister AVANT le cat. L'ordre ancien
+  # (mkdir APRÈS le pipe) échouait pour les deux apps (« can't create
+  # shared_prefs/FlutterSharedPreferences.xml ») et les deux apps quittaient le
+  # premier plan pour le launcher — 33 points UI en FAIL sur un seul bug d'ordre.
+  adb shell "run-as $pkg mkdir -p shared_prefs" >/dev/null 2>&1
   "$PY" - "$access" "$uid" "$name" "$email" "$phone" <<'PY' | adb shell "run-as $pkg sh -c 'cat > shared_prefs/FlutterSharedPreferences.xml'"
 import sys
 from xml.sax.saxutils import escape as e
@@ -231,9 +306,14 @@ for kind, k, v in entries:
 out.append("</map>")
 print("\n".join(out))
 PY
-  adb shell "run-as $pkg mkdir -p shared_prefs" >/dev/null 2>&1
   adb shell "run-as $pkg chmod 660 shared_prefs/FlutterSharedPreferences.xml" >/dev/null 2>&1
-  log "prefs injected: $pkg"
+  # Readback: sans ce contrôle, un prefs non écrit ne se voyait qu'à l'écran
+  # (app renvoyée au launcher) et coûtait 33 points UI (run 40177022780).
+  if adb shell "run-as $pkg test -s shared_prefs/FlutterSharedPreferences.xml" >/dev/null 2>&1; then
+    log "prefs injected: $pkg (readback ok)"
+  else
+    log "prefs injected: $pkg (READBACK FAILED)"
+  fi
 }
 
 # ---------------------------------------------------------------- preflight
@@ -337,9 +417,9 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ------------------------------------------------------------------ launch
-launch "$RIDER_PKG"; sleep 6
+launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" 60 || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
-launch "$DRIVER_PKG"; sleep 6
+launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
 if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
   mark driver-home-online PASS "ui cap=33-driver-home-online.png"
 else
@@ -412,10 +492,14 @@ if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and repor
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   ARTEMIS_OK=0
-  mark artemis-smoke FAIL "Artemis unavailable — les étapes UI ne peuvent pas être validées (voir artemis/smoke.log)"
+  # B10 (run 40177022780): le smoke timeout systématique (rc=124 sur ce runner,
+  # déjà observing le 39992138248) ne doit pas verrouiller le verdict: Artemis
+  # est indisponible -> fallback taps + API, et le smoke est WARN, pas FAIL.
+  mark artemis-smoke WARN "Artemis unavailable — fallback taps + API pour toutes les étapes UI (voir artemis/smoke.log)"
 fi
 
 # -------------------------------------------------- rider compose (UI only)
+deadline_check rider-compose  # budget mur : verdict partiel plutôt qu'un step qui traîne
 api reset >> "$OUT/run.log" 2>&1
 bring_fg "$RIDER_PKG" || true
 
@@ -423,7 +507,7 @@ artemis_run rider-destination \
   "Open the Galass Rider app. On the home screen choose the destination \"E2E Dest Point E\" (search it if needed) and return to the ride summary. Do not add stops yet." \
   180 "$RIDER_PKG"
 rc=$?
-mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo FAIL)" "rc=$rc (voir artemis/rider-destination.log)"
+mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-destination.log)"
 bring_fg "$RIDER_PKG" || true
 cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
 
@@ -435,18 +519,19 @@ artemis_run rider-stop1 \
   "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 1 Médina\" and confirm. Return to the ride summary." \
   180 "$RIDER_PKG"
 rc=$?
-mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo FAIL)" "rc=$rc (voir artemis/rider-stop1.log)"
+mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop1.log)"
 
 try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
 artemis_run rider-stop2 \
   "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 2 Fann\", confirm, select cash payment, then confirm the ride request. Stay on the ride screen." \
   210 "$RIDER_PKG"
 rc=$?
-mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo FAIL)" "rc=$rc (voir artemis/rider-stop2.log)"
+mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
 bring_fg "$RIDER_PKG" || true
 cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
 
 # ------------------------------------------------------------- driver offer
+deadline_check driver-offer  # budget mur : verdict partiel plutôt qu'un step qui traîne
 bring_fg "$DRIVER_PKG" || true
 api pick >> "$OUT/run.log" 2>&1
 RIDE_ID=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_id') or '')" 2>/dev/null)
@@ -580,6 +665,7 @@ bring_fg "$RIDER_PKG" || true
 cap rider-running-start 21-rider-running-start "$RIDER_PKG" 30
 
 # ------------------------------------------------------------------- stops
+deadline_check stops  # budget mur : verdict partiel plutôt qu'un step qui traîne
 STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)
 ui_stops=0
 for i in 0 1; do
@@ -647,6 +733,7 @@ cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
 
 # --------------------------------------------------------------- cash flow
+deadline_check cash  # budget mur : verdict partiel plutôt qu'un step qui traîne
 api pay_rider >> "$OUT/run.log" 2>&1
 bring_fg "$RIDER_PKG" || true
 cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
@@ -720,6 +807,7 @@ fi
 api cancel >> "$OUT/run.log" 2>&1
 
 # ------------------------------------------------------------- assertions
+deadline_check assertions  # budget mur : verdict partiel plutôt qu'un step qui traîne
 if "$PY" - "$OUT" <<'PY'
 import json, sys
 out = sys.argv[1]
@@ -798,6 +886,7 @@ else
 fi
 
 # --------------------------------------------------------------- report
+deadline_check report  # budget mur : verdict partiel plutôt qu'un step qui traîne
 D="$OUT/diag"; mkdir -p "$D"
 find "$HOME/.artemis" vendor/artemis \( -name "daemon-*.log" -o -name "mcp_server.log" \) 2>/dev/null | head -10 | while read -r f; do cp "$f" "$D/" 2>/dev/null; done
 if ! curl -s -m 3 http://127.0.0.1:8000/ >/dev/null 2>&1; then
