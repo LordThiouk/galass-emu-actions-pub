@@ -18,8 +18,11 @@ import urllib.request
 BASE = os.environ.get("BASE", "").rstrip("/")
 # S19: refuse anything that is not the exact staging origin over https. A substring
 # check on "galassapp.com" missed http:// and every lookalike host.
-if not BASE.startswith("https://"):
-    sys.exit(f"refusing non-https BASE={BASE!r}")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from base_guard import check_base  # noqa: E402
+_reason = check_base(BASE)
+if _reason:
+    sys.exit(f"refusing BASE: {_reason}")
 EXPECTED = os.environ.get("GALASS_STAGING_URL", "").rstrip("/")
 if EXPECTED and BASE != EXPECTED:
     sys.exit(f"refusing BASE={BASE!r}: it is not GALASS_STAGING_URL")

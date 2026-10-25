@@ -632,7 +632,13 @@ def test_adb_calls_are_timeout_wrapped():
 @case
 def test_api_flow_rejects_non_https_and_wrong_base():
     body = open(os.path.join(ROOT, "api_flow.py"), encoding="utf-8").read()
-    assert 'startswith("https://")' in body, body
+    assert "check_base(BASE)" in body, body
+    sys.path.insert(0, ROOT)
+    from base_guard import check_base
+    assert check_base("http://example.com") is not None
+    assert check_base("http://192.162.69.113") is not None
+    assert check_base("https://staging.galassapp.com") is not None
+    assert check_base("http://192.162.69.113:8080") is None
     assert "GALASS_STAGING_URL" in body, body
     assert "sys.exit(" in body, body
 
