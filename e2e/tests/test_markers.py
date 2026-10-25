@@ -4,6 +4,7 @@
 Run with `python3 e2e/tests/test_markers.py`. No emulator, no network: every
 device call is either a fixture (UI_XML_SRC) or a stub `adb` on PATH.
 """
+import glob
 import json
 import os
 import re
@@ -610,7 +611,31 @@ def test_workflow_hardens_checkouts_and_runs_tests():
     body = open(WORKFLOW, encoding="utf-8").read()
     assert body.count("persist-credentials: false") >= 2, body
     assert "bash -n e2e/*.sh" in body, body
-    assert "test_report.py" in body and "test_markers.py" in body, body
+    assert "for t in e2e/tests/test_*.py" in body, body
+
+
+@case
+def test_every_harness_test_runs_in_ci():
+    body = open(WORKFLOW, encoding="utf-8").read()
+    tests = sorted(os.path.basename(p) for p in
+                   glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
+    assert tests, "aucune spec dans e2e/tests"
+    loop = "for t in e2e/tests/test_*.py" in body
+    for name in tests:
+        assert loop or name in body, f"{name} n'est exécuté par aucun step du workflow"
+
+
+@case
+def test_deadlines_are_ordered_watchdog_step_job():
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    m = re.search(r"- name: E2E multistop \(Artemis \+ API fallback\)\n\s+timeout-minutes: (\d+)", wf)
+    assert m, "le step E2E doit porter son propre timeout-minutes"
+    step = int(m.group(1))
+    job = int(re.search(r"^  e2e:\n(?:.*\n)*?    timeout-minutes: (\d+)", wf, re.M).group(1))
+    env_deadline = int(re.search(r'RUN_DEADLINE_MIN: "(\d+)"', wf).group(1))
+    default = int(re.search(r'RUN_DEADLINE_MIN="\$\{RUN_DEADLINE_MIN:-(\d+)\}', run_text()).group(1))
+    assert env_deadline == default, (env_deadline, default)
+    assert env_deadline < step < job, (env_deadline, step, job)
 
 
 @case

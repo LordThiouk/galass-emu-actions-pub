@@ -32,6 +32,10 @@ jobs:
       RIDER_ID: "106"
       DRIVER_ID: "23"
       OUT: e2e-out
+      # Chaîne des échéances (vérifiée par e2e/tests) : watchdog 90 < step 100 < job 150.
+      # Le harnais rend son verdict partiel AVANT que le step soit coupé, et le step
+      # coupe AVANT que le job meure — les étapes `if: always()` (preuves) survivent.
+      RUN_DEADLINE_MIN: "90"
       APK_RIDER: apk/rider/app-debug.apk
       APK_DRIVER: apk/driver/app-debug.apk
       RIDER_TOKEN: ${{ secrets.GALASS_E2E_RIDER_TOKEN }}
@@ -172,11 +176,11 @@ jobs:
         run: |
           bash -n e2e/*.sh
           python3 -m py_compile e2e/*.py
-          python3 e2e/tests/test_report.py
-          python3 e2e/tests/test_markers.py
-          python3 e2e/tests/test_base_guard.py
+          # Toute nouvelle spec e2e/tests/test_*.py tourne ici sans édition du workflow.
+          for t in e2e/tests/test_*.py; do echo "== $t"; python3 "$t"; done
 
       - name: E2E multistop (Artemis + API fallback)
+        timeout-minutes: 100
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
