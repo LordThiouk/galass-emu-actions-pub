@@ -43,14 +43,18 @@ jobs:
       ARTEMIS_USE_USER_DIR: "false"
     steps:
       - uses: actions/checkout@v4
+        with: {persist-credentials: false}
       - name: Garde staging
         run: |
-          case "$BASE" in *galassapp.com*|"") echo "BASE invalide"; exit 1;; esac
-          h="${BASE#*://}"; h="${h%%[:/]*}"; echo "::add-mask::$h"; echo "STAGING_HOST=$h" >> "$GITHUB_ENV"
+          case "$BASE" in https://*) ;; *) echo "BASE doit être https:// (reçu: invalide)"; exit 1;; esac
+          case "$BASE" in *galassapp.com*) echo "BASE ne doit pas être la prod"; exit 1;; esac
+          h="${BASE#*://}"; h="${h%%[:/]*}"; echo "::add-mask::$h"
+          echo "STAGING_HOST=$h" >> "$GITHUB_ENV"
+          echo "GALASS_STAGING_URL=$BASE" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
-        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider}
+        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider, persist-credentials: false}
       - uses: actions/checkout@v4
-        with: {repository: LordThiouk/Galass_Driver, ref: "${{ inputs.driver_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/driver}
+        with: {repository: LordThiouk/Galass_Driver, ref: "${{ inputs.driver_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/driver, persist-credentials: false}
       - name: Libérer disque
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules /opt/microsoft /opt/google/chrome /usr/local/share/powershell || true
@@ -163,6 +167,13 @@ jobs:
           cd vendor/artemis
           uv sync --no-dev
           .venv/bin/artemis --version
+
+      - name: Tests du harnais (syntaxe + contrats)
+        run: |
+          bash -n e2e/*.sh
+          python3 -m py_compile e2e/*.py
+          python3 e2e/tests/test_report.py
+          python3 e2e/tests/test_markers.py
 
       - name: E2E multistop (Artemis + API fallback)
         uses: reactivecircus/android-emulator-runner@v2

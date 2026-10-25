@@ -9,13 +9,22 @@ The script is idempotent enough to be called step by step from run.sh: state
 """
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 
-BASE = os.environ["BASE"].rstrip("/")
-assert "galassapp.com" not in BASE, "staging only: BASE must not be prod"
+BASE = os.environ.get("BASE", "").rstrip("/")
+# S19: refuse anything that is not the exact staging origin over https. A substring
+# check on "galassapp.com" missed http:// and every lookalike host.
+if not BASE.startswith("https://"):
+    sys.exit(f"refusing non-https BASE={BASE!r}")
+EXPECTED = os.environ.get("GALASS_STAGING_URL", "").rstrip("/")
+if EXPECTED and BASE != EXPECTED:
+    sys.exit(f"refusing BASE={BASE!r}: it is not GALASS_STAGING_URL")
+if "galassapp.com" in BASE:
+    sys.exit("staging only: BASE must not be prod")
 
 OUT = os.environ.get("OUT", "e2e-out")
 os.makedirs(OUT, exist_ok=True)
@@ -136,22 +145,38 @@ def open_rides():
     return out
 
 
+def reset_rides():
+    """Cancel pending no-driver rides left by an earlier run (called BEFORE composition)."""
+    for r in open_rides():
+        if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0):
+            c, _ = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E reset"})
+            print("CANCEL_STALE", r["id"], c, flush=True)
+
+
 def pick_ride():
-    """Adopt the newest pending/active rider ride, else create one."""
+    """Adopt the newest pending/active rider ride (created by the UI), else create one.
+
+    A ride just composed in the app has status 0 and no driver yet: it must be adopted,
+    never cancelled. Only OLDER pending no-driver rides are treated as stale.
+    """
     rides = open_rides()
-    # Courses E2E pendantes sans chauffeur d'un run précédent: les annuler (staging, compte E2E)
-    for r in [r for r in rides if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0)]:
-        c, j = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E stale ride"})
-        print("CANCEL_STALE", r["id"], c, flush=True)
-    rides = [r for r in open_rides() if int(r.get("driver_id") or 0)]
     if rides:
-        rid = int(rides[0]["id"])
+        keep = rides[0]
+        for r in rides[1:]:
+            if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0):
+                c, _ = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E stale ride"})
+                print("CANCEL_STALE", r["id"], c, flush=True)
+        rid = int(keep["id"])
         st["ride_id"] = rid
-        st["ride_picked"] = rides[0]
+        st["ride_picked"] = keep
+        # B8: an adopted ride was composed in the app; a created one was not.
+        st["ride_source"] = "ui"
         save()
-        print("PICKED_RIDE", rid, "status", rides[0].get("status"), flush=True)
+        print("PICKED_RIDE", rid, "status", keep.get("status"), flush=True)
         return rid
     rid = create_ride()
+    st["ride_source"] = "api"
+    save()
     print("CREATED_RIDE", rid, flush=True)
     return rid
 
@@ -218,7 +243,8 @@ def complete_stops():
         driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
         hook = os.environ.get("STOP_HOOK")
         if hook:
-            os.system(f"{hook} {i}")
+            # S20: argv, never a shell string — the hook path is configuration, not code.
+            subprocess.run([hook, str(i)], check=False)
         c, s = call("POST", f"driver/rides/complete-stop/{rid}", DT)
         st.setdefault("stops_resp", []).append(s)
         save()
@@ -291,8 +317,19 @@ step = os.environ.get("STEP", "all")
 
 if step == "ping":
     call("GET", "general-setting", RT)
+elif step == "reset":
+    reset_rides()
 elif step == "pick":
     pick_ride()
+elif step == "cancel":
+    if ride_id():
+        c, j = call("POST", f"ride/cancel/{ride_id()}", RT, {"cancel_reason": "E2E cleanup"})
+        print("CANCEL", ride_id(), c, flush=True)
+elif step == "push_count":
+    c, pn = call("GET", "push-notifications", RT)
+    data = pn.get("data") or {}
+    total = data.get("total") if isinstance(data, dict) else None
+    print("PUSH_TOTAL", total, flush=True)
 elif step == "create":
     create_ride()
 elif step == "accept":
@@ -311,6 +348,22 @@ elif step == "ride_state":
     d = driver_details()
     done = sum(1 for x in (d.get("stops") or []) if x.get("completed_at"))
     print(f"status={d.get('status')} stops_done={done} payment_status={d.get('payment_status')}", flush=True)
+elif step == "stop_one":
+    # Repli API borné à UN arrêt (celui que l'UI a raté), jamais tous d'un coup.
+    rid = ride_id()
+    # S5: the fallback always completes the first PENDING stop, whatever index the
+    # UI loop was on; indexing into `pending` skipped a stop after one UI success.
+    pending = [x for x in (driver_details().get("stops") or []) if not x.get("completed_at")]
+    if not rid:
+        sys.exit("stop_one: no ride")
+    if not pending:
+        print("STOP_ONE none", "no_pending_stop", flush=True)
+        sys.exit(1)
+    driver_loc(pending[0]["latitude"], pending[0]["longitude"])
+    c, resp = call("POST", f"driver/rides/complete-stop/{rid}", DT)
+    st.setdefault("stops_resp", []).append(resp)
+    save()
+    print("STOP_ONE", pending[0].get("id"), resp.get("remark"), flush=True)
 elif step == "stops_pending":
     d = driver_details()
     rid = ride_id()
