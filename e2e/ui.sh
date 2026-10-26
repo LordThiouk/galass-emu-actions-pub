@@ -8,6 +8,9 @@ DRIVER_PKG="${DRIVER_PKG:-sn.galass.galassdriver}"
 OUT="${OUT:-e2e-out}"
 UI_XML_PATH="${UI_XML:-/tmp/w.xml}"
 ADB_TMO="${ADB_TMO:-60}"
+# Attente ACTIVE du premier plan : un cold start Flutter debug dépasse largement
+# 60 s, d'où la borne haute (surchargeable) au lieu d'un sleep fixe.
+WAIT_FG_SEC="${WAIT_FG_SEC:-600}"
 mkdir -p "$OUT/screens" "$OUT/ui"
 
 . "$(dirname "${BASH_SOURCE[0]}")/smoke_log.sh"
@@ -55,6 +58,21 @@ ensure_fg() {
   adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   sleep 3
   [ "$(fg_pkg)" = "$pkg" ]
+}
+
+# wait_fg pkg [timeout_s] : attente ACTIVE du premier plan. Sonde `fg_pkg` en
+# boucle et rend 0 DÈS QUE le paquet est au premier plan — jamais un sleep fixe.
+# Défaut `WAIT_FG_SEC` (600 s) : un cold start de debug Flutter peut dépasser 60 s,
+# et une app absente du premier plan ne doit pas coûter le reste du parcours.
+wait_fg() {
+  local pkg="$1" tmo="${2:-$WAIT_FG_SEC}" t0=$SECONDS cur
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    cur=$(fg_pkg)
+    [ "$cur" = "$pkg" ] && return 0
+    sleep 2
+  done
+  _ulog "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
+  return 1
 }
 
 # ui_xml : dump FRAIS et validé. 0 = ok, 4 = DUMP_UNAVAILABLE. Aucun /tmp/w.xml périmé.

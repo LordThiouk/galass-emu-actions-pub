@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Staging-only multistop E2E on a GitHub-hosted Android emulator.
-# Artemis may drive the UI; api_flow.py only PREPARES data and unblocks the flow after a
-# UI failure — each fallback leaves an explicit FAIL mark next to it, so no API call can
-# ever turn a failed UI step into a PASS. Every P0 step owns one capture + one explicit
-# screen marker; WARN/SKIP on a P0 point makes the run FAIL. Nothing here touches prod.
+# Artemis may drive the UI; api_flow.py only PREPARES data and unblocks the flow after a UI
+# failure. Fallbacks stay explicit and provable: accept publishes accept-via + capture 35,
+# elsewhere a FAIL mark stays, so no API call can turn a failed UI step into a PASS.
+# Every P0 step owns one capture + one explicit screen marker; WARN/SKIP on a P0 point makes
+# the run FAIL. Nothing here touches prod.
 set -uo pipefail
 
 : "${BASE:?BASE is required (staging API, no prod)}"
@@ -24,7 +25,8 @@ PY="${PY:-python3}"
 mkdir -p "$OUT"
 rm -rf "$OUT"/screens "$OUT"/ui "$OUT"/state.json "$OUT"/results-raw.txt \
        "$OUT"/results-live.txt "$OUT"/captures.txt "$OUT"/ui-flags.txt \
-       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt
+       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt \
+       "$OUT"/accept.json "$OUT"/accept-via.txt
 mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
 : > "$SMOKE_LOG"
@@ -97,7 +99,7 @@ MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintena
 MARK_rider_final_itinerary='+Course terminée|+Lieu de prise en charge|+Destination|-Chargement'
 MARK_rider_rating='+Commentaire|Notez|étoile|-Chargement'
 MARK_rider_home_after='+Où allez-vous|+Partons pour une course|-Course terminée'
-MARK_driver_offer_with_stops='+Accepter\s+la\s+course|+REFUSER|+Prix recommandé|+Consignes du client|-Accueil'
+MARK_driver_offer_with_stops='+Accepter\s+la\s+course|+REFUSER|+Prix recommandé|+Consignes du client'
 MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
 # B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
 MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
@@ -127,10 +129,17 @@ marker_source() {
 
 # Flags UI_* : une transition n'est acquise que si l'écran SUIVANT le prouve.
 UI_ACCEPT=0; UI_START=0; UI_STOP0=0; UI_STOP1=0; UI_END=0; UI_CASH=0
+# ACCEPT_VIA : ui | api | failed — écrit aussi dans $OUT/accept-via.txt, car le
+# watchdog est forké AVANT la phase d'accept et ne verrait pas une variable tardive.
+ACCEPT_VIA=""
 write_flags() {
-  printf 'UI_ACCEPT=%s\nUI_START=%s\nUI_STOP0=%s\nUI_STOP1=%s\nUI_END=%s\nUI_CASH=%s\n' \
-    "$UI_ACCEPT" "$UI_START" "$UI_STOP0" "$UI_STOP1" "$UI_END" "$UI_CASH" > "$OUT/ui-flags.txt"
+  local via="${ACCEPT_VIA:-}"
+  [ -n "$via" ] || via="$(cat "$OUT/accept-via.txt" 2>/dev/null || true)"
+  [ -n "$via" ] || via="none"
+  printf 'UI_ACCEPT=%s\nUI_START=%s\nUI_STOP0=%s\nUI_STOP1=%s\nUI_END=%s\nUI_CASH=%s\nACCEPT_VIA=%s\n' \
+    "$UI_ACCEPT" "$UI_START" "$UI_STOP0" "$UI_STOP1" "$UI_END" "$UI_CASH" "$via" > "$OUT/ui-flags.txt"
 }
+set_accept_via() { ACCEPT_VIA="$1"; printf '%s\n' "$1" > "$OUT/accept-via.txt"; }
 
 # S13: a wedged emulator must still leave a verdict — AND release the step.
 # B10 (run 40177022780): l'ancien `( sleep 8100; ... ) &` forkait un `sleep`
@@ -220,6 +229,16 @@ cap() {
 }
 
 api() { STEP="$1" "$PY" e2e/api_flow.py; }
+# Repli d'acceptation : accept.json est la seule source de ok/via (ISC-3). Posé en
+# helper pour que le mark FAIL du point reste ADJACENT à l'appel de repli
+# (contrat vérifié par test_markers.py), sans être émis avant un succès possible.
+api_accept_ok() {
+  "$PY" -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get("ok") else 1)' \
+       "$OUT/accept.json" 2>/dev/null || return 1
+  ACCEPT_OK=1
+  set_accept_via "$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("via") or "api")' "$OUT/accept.json")"
+  log "accept_via=$ACCEPT_VIA (repli API, détail dans $OUT/accept.json)"
+}
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
 try_tap() { local pkg="$1"; shift; tap_when "$pkg" "$@"; }
@@ -230,17 +249,9 @@ ride_state() {
 }
 
 launch() { adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; }
-# wait_fg : un cold start de debug Flutter dépasse largement 6s. Attendre le premier
-# plan évite un `wait_ui` qui rend rc=3 sur le launcher avant même la première frame.
-wait_fg() {
-  local pkg="$1" tmo="${2:-45}" t0=$SECONDS
-  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
-    [ "$(fg_pkg)" = "$pkg" ] && return 0
-    sleep 2
-  done
-  log "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
-  return 1
-}
+# wait_fg vit dans ui.sh (attente ACTIVE, défaut WAIT_FG_SEC=600) : un cold start
+# de debug Flutter dépasse largement 60 s, et un `wait_ui` rendrait rc=3 sur le
+# launcher avant la première frame.
 # Bascule explicite entre étapes (jamais depuis un wait).
 bring_fg() {
   [ "$(fg_pkg)" = "$1" ] && return 0
@@ -278,6 +289,64 @@ artemis_run() {
     adb exec-out screencap -p > "$OUT/screens/artemis-$name-fail.png" 2>/dev/null || true
   fi
   return $rc
+}
+
+# --- fenêtre d'offre (run 40205373538) ---------------------------------------
+# OFFER_TIMEOUT_SEC est un MIROIR LECTURE SEULE de la config backend (défaut 30 s):
+# on ne l'exporte jamais pour le run, on ne l'injecte jamais via adb/setprop — le
+# harnais doit survivre à la valeur réelle du staging, pas la fabriquer.
+OFFER_TIMEOUT_SEC="${OFFER_TIMEOUT_SEC:-30}"
+OFFER_SAFETY_SEC="${OFFER_SAFETY_SEC:-8}"
+OFFER_CAPTURE_SEC="${OFFER_CAPTURE_SEC:-7}"
+OFFER_T0=0   # posé au dispatch de l'offre, pas au démarrage du step
+OFFER_T0_SOURCE=step_start
+OFFER_STEP_START=0
+# ISC-5: budget d'Artemis et du tap = restant MOINS cette réserve, gardée intacte
+# pour le repli API. Sans elle, Artemis consomme `left` en entier et le repli
+# d'acceptation démarre à/après l'expiration de l'offre.
+API_RESERVE_SEC="${API_RESERVE_SEC:-4}"
+OFFER_BUDGET=$((OFFER_TIMEOUT_SEC - OFFER_SAFETY_SEC))
+# Secondes d'offre restantes (0 au pire, jamais négatif) : borne l'attente du popup
+# et le repli API PENDANT la fenêtre, au lieu d'un timeout fixe de 45 s.
+offer_left() {
+  local left=$((OFFER_BUDGET - (SECONDS - OFFER_T0)))
+  [ "$left" -gt 0 ] || left=0
+  echo "$left"
+}
+# ISC-5: T0 = création réelle de la course, pas le retour de `api pick` (optimiste
+# de plusieurs secondes). Sortie: "<t0> <source>" où t0 vit dans l'horloge $SECONDS.
+# created_at accepté en epoch s, epoch ms ou ISO-8601; absent/illisible => repère
+# local pris AVANT le pick (`step_start`), donc sous-estimation, jamais sur-estimation.
+offer_t0() {
+  local state="${1:-$OUT/state.json}" step_start="${2:-$SECONDS}"
+  "$PY" - "$state" "$step_start" "$SECONDS" <<'PY' 2>/dev/null || printf '%s step_start\n' "$step_start"
+import datetime, json, sys, time
+path, step_start, now = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+try:
+    with open(path, encoding="utf-8") as fh:
+        st = json.load(fh)
+except Exception:
+    st = {}
+raw = ((st.get("ride_picked") or {}).get("created_at")
+       or (st.get("ride_create") or {}).get("created_at"))
+epoch = None
+if raw not in (None, ""):
+    try:
+        if isinstance(raw, (int, float)) or str(raw).strip().isdigit():
+            epoch = float(raw)
+            if epoch > 1e12:          # millisecondes
+                epoch /= 1000.0
+        else:
+            epoch = datetime.datetime.fromisoformat(
+                str(raw).strip().replace("Z", "+00:00")).timestamp()
+    except Exception:
+        epoch = None
+age = None if epoch is None else int(round(time.time() - epoch))
+if age is None or age < 0:            # absent, illisible ou horloge incohérente
+    print(step_start, "step_start")
+else:
+    print(max(0, now - age), "created_at")
+PY
 }
 
 write_prefs() {
@@ -427,9 +496,9 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ------------------------------------------------------------------ launch
-launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" 60 || true
+launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" "$WAIT_FG_SEC" || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
-launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
+launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" "$WAIT_FG_SEC" || true
 if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
   mark driver-home-online PASS "ui cap=33-driver-home-online.png"
 else
@@ -542,8 +611,20 @@ cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
 
 # ------------------------------------------------------------- driver offer
 deadline_check driver-offer  # budget mur : verdict partiel plutôt qu'un step qui traîne
+# ISC-5: repère conservateur du bloc, pris AVANT bring_fg/api pick. Sert de T0 de
+# secours quand l'état ne date pas la course : il sous-estime la fenêtre, jamais l'inverse.
+OFFER_STEP_START=$SECONDS
 bring_fg "$DRIVER_PKG" || true
 api pick >> "$OUT/run.log" 2>&1
+# T0 de l'offre : ancré sur la CRÉATION de la course quand state.json la date,
+# sinon sur le début du bloc ci-dessus. Jamais sur l'horloge post-pick.
+OFFER_T0_LINE=$(offer_t0 "$OUT/state.json" "$OFFER_STEP_START")
+OFFER_T0=${OFFER_T0_LINE%% *}
+OFFER_T0_SOURCE=${OFFER_T0_LINE##* }
+case "$OFFER_T0" in
+  ''|*[!0-9]*) OFFER_T0=$OFFER_STEP_START; OFFER_T0_SOURCE=step_start ;;
+esac
+log "offer_t0 source=$OFFER_T0_SOURCE left=$(offer_left)s"
 RIDE_ID=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_id') or '')" 2>/dev/null)
 # S14: the ride identifier is a uid, never called a token (it is not a credential).
 RIDE_UID=$("$PY" -c "
@@ -569,7 +650,7 @@ else
 fi
 ride_state
 
-cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
+cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" "$OFFER_CAPTURE_SEC"
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
 if [ "$RIDE_SOURCE" != "ui" ]; then
   mark bug-b2-offer-stops WARN "B2 non concluant: ride composée par l'API (ride_source=$RIDE_SOURCE)"
@@ -583,19 +664,76 @@ else
   mark bug-b2-offer-stops WARN "B2 reproduit: offre sans arrêt visible (34)"
 fi
 
+# D2 (run 40205373538): Artemis observe d'abord, le tap réel vient ensuite, le
+# repli API en dernier — les trois DANS la fenêtre d'offre, jamais un 45 s fixe.
+# ISC-5: Artemis ne reçoit que `ui_left` = restant - API_RESERVE_SEC, pour que le
+# repli d'acceptation garde toujours de quoi répondre dans la fenêtre.
+left=$(offer_left)
+ui_left=$(( left - API_RESERVE_SEC ))
+if [ "$ui_left" -gt 0 ]; then
+  artemis_run driver-accept \
+    "Open the Galass Driver app, open the incoming ride offer and tap 'Accepter la course'." \
+    "$ui_left" "$DRIVER_PKG"
+  ARTEMIS_ACCEPT_RC=$?
+else
+  # Fenêtre consommée ou trop courte : pas de timeout 0, on va droit au repli API.
+  ui_left=0
+  ARTEMIS_ACCEPT_RC=2
+  log "artemis skip: driver-accept (ui_left=${ui_left}s <= 0 — réserve API ${API_RESERVE_SEC}s)"
+fi
+if [ "$ARTEMIS_ACCEPT_RC" -eq 0 ]; then
+  mark artemis-driver-accept PASS "offre acceptée via Artemis"
+else
+  mark artemis-driver-accept SKIP "artemis fallback (rc=$ARTEMIS_ACCEPT_RC — tap puis API)"
+fi
+
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
-if tap_exact "Accepter la course"; then
-  if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
-    UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
-  else
-    mark driver-accepted-details FAIL "api fallback: accept"
-    api accept >> "$OUT/run.log" 2>&1
+ACCEPT_OK=0
+# ISC-5: budget UI recalculé après Artemis — même réserve, jamais tout `left`.
+ui_left=$(( $(offer_left) - API_RESERVE_SEC ))
+[ "$ui_left" -gt 0 ] || ui_left=0
+if [ "$ui_left" -gt 0 ] && tap_exact "Accepter la course"; then
+  if wait_ui "$DRIVER_PKG" "$ui_left" "$MARK_driver_accepted_details"; then
+    ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via ui
+    log "accept_via=$ACCEPT_VIA (écran suivant 35 prouvé dans la fenêtre)"
   fi
 else
-  log "tap_exact « Accepter la course » manqué"
-  mark driver-accepted-details FAIL "api fallback: accept"
+  log "offre: tap « Accepter la course » non joué ou manqué (ui_left=${ui_left}s)"
+fi
+if [ "$ACCEPT_OK" = "0" ]; then
+  log "offre: repli API (left=$(offer_left)s)"
   api accept >> "$OUT/run.log" 2>&1
+  api_accept_ok || true
+fi
+if [ "$ACCEPT_OK" != "1" ]; then
+  # ISC-3: FAIL seulement si aucun via n'a prouvé l'acceptation (report.py worst-wins).
+  mark driver-accepted-details FAIL "api fallback: accept"
+  ACCEPT_CAUSE=$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("cause") or "unknown")' "$OUT/accept.json" 2>/dev/null || true)
+  [ -n "${ACCEPT_CAUSE:-}" ] || ACCEPT_CAUSE=unknown
+  set_accept_via failed
+  log "accept_via=$ACCEPT_VIA cause=$ACCEPT_CAUSE — parcours driver arrêté, verdict partiel"
+  mark accept-via FAIL "accept_via=api et ui indisponibles: cause=$ACCEPT_CAUSE"
+  flush_results
+  write_flags
+  "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/early-report.txt" 2>&1 || true
+  exit 1
+fi
+if [ "$ACCEPT_OK" = "1" ]; then
+  # Chemin SUCCÈS : accept-via doit être une ligne de résultats, pas seulement un FAIL.
+  mark accept-via PASS "accept_via=$ACCEPT_VIA cause=none (renewed: voir accept.json si repli API)"
+  # Un renouvellement a créé une NOUVELLE course côté API : l'identifiant et la
+  # provenance doivent suivre, sinon les sondes suivantes visent l'ancienne.
+  RIDE_ID=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_id') or '')" 2>/dev/null)
+  RIDE_UID=$("$PY" -c "
+import json
+st=json.load(open('$OUT/state.json'))
+r=st.get('ride_picked') or {}
+print(r.get('uid') or (st.get('ride_create') or {}).get('uid') or '')
+" 2>/dev/null)
+  RIDE_SOURCE=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_source') or 'unknown')" 2>/dev/null)
+  [ -n "$RIDE_SOURCE" ] || RIDE_SOURCE=unknown
+  log "ride après acceptation: id=$RIDE_ID uid=$RIDE_UID source=$RIDE_SOURCE"
 fi
 sleep 2
 ride_state

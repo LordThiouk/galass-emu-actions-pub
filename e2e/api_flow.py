@@ -21,6 +21,7 @@ BASE = os.environ.get("BASE", "").rstrip("/")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from base_guard import check_base  # noqa: E402
 from sanitize import mask_path, redact_record, smoke_emit  # noqa: E402
+from offer_flow import run_accept  # noqa: E402
 _reason = check_base(BASE)
 if _reason:
     sys.exit(f"refusing BASE: {_reason}")
@@ -211,26 +212,71 @@ def driver_details():
     return (j.get("data") or {}).get("ride") or {}
 
 
-def accept_offer(retries=20, delay=3):
+def renew_offer():
+    """Remplacer une offre expirée par une course NEUVE (une seule fois).
+
+    Le backend exclut le driver de la course expirée : répondre à nouveau sur le
+    même ride ne peut que re-expirer. `offer_flow.run_accept` garantit l'unicité du
+    renouvellement ; ici on ne fait que permuter l'état et le journaliser.
+    """
     rid = ride_id()
+    if rid:
+        call("POST", f"ride/cancel/{rid}", RT, {"cancel_reason": "E2E offer expired"})
+        print("OFFER_RENEW cancel", rid, flush=True)
+    new_id = create_ride()
+    if not new_id:
+        return False
+    # Course recréée par l'API : la provenance UI de la composition est perdue.
+    st["ride_source"] = "api"
+    st["ride_picked"] = st.get("ride_create") or {}
+    st["offer_renewed"] = 1
+    save()
+    print("OFFER_RENEW new", new_id, flush=True)
+    return True
+
+
+def write_accept(out):
+    """$OUT/accept.json : la seule source lue par run.sh pour accept_via/cause."""
+    payload = {
+        "ok": bool(out.get("ok")),
+        # "ui" quand le tap a gagné sans que l'API reçoive offer_accepted.
+        "via": out.get("via") or "none",
+        "cause": out.get("cause"),
+        "renewed": bool(out.get("renewed")),
+        "attempts": int(out.get("attempts") or 0),
+    }
+    with open(f"{OUT}/accept.json", "w") as fh:
+        json.dump(payload, fh, indent=1)
+
+
+def accept_offer(retries=8, delay=2):
+    """Accepter l'offre côté API, avec renouvellement UNIQUE en cas d'expiration.
+
+    Borné à la fenêtre d'offre (~22 s utiles) : 8 tentatives x 2 s restent dedans.
+    """
     go_online()
-    for i in range(retries):
-        c, j = call("POST", "driver/ride/offer/respond", DT,
-                    {"ride_id": rid, "action": "accept"})
-        if j.get("status") == "success" or j.get("remark") == "offer_accepted":
-            st["offer_accept"] = j
-            save()
-            return True
-        remark = j.get("remark")
-        if remark == "not_authorized" or remark == "ride_unavailable":
-            time.sleep(delay)
-            continue
-        # already assigned to this driver, or another terminal answer
+
+    def respond():
+        return call("POST", "driver/ride/offer/respond", DT,
+                    {"ride_id": ride_id(), "action": "accept"})
+
+    def assigned():
         d = driver_details()
-        if int(d.get("driver_id") or 0) == DRIVER_ID:
-            return True
-        time.sleep(delay)
-    return False
+        return int(d.get("driver_id") or 0) == DRIVER_ID
+
+    def renew():
+        return renew_offer()
+
+    out = run_accept(respond, assigned, renew, time.sleep,
+                     retries=retries, delay=delay, renewed=bool(st.get("offer_renewed")))
+    write_accept(out)
+    if out["ok"]:
+        st["offer_accept"] = {"remark": "offer_accepted", "via": out.get("via"),
+                              "renewed": out["renewed"]}
+        save()
+    print("ACCEPT", "ok" if out["ok"] else "failed", "cause", out.get("cause"),
+          "renewed", out["renewed"], "attempts", out["attempts"], flush=True)
+    return out["ok"]
 
 
 def start_ride():
@@ -343,7 +389,7 @@ elif step == "push_count":
 elif step == "create":
     create_ride()
 elif step == "accept":
-    accept_offer()
+    sys.exit(0 if accept_offer() else 1)
 elif step == "start":
     start_ride()
 elif step == "stops":

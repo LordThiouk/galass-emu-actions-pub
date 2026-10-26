@@ -264,6 +264,43 @@ def test_p0_markers_do_not_match_prestate_screens():
     assert not bad, f"marqueurs satisfaits par l'écran pré-existant: {bad}"
 
 
+# ------------------------------------------- marker 34 (run 40205373538)
+# The Driver offer sheet keeps the bottom navigation visible: "Accueil" is a
+# persistent nav label, so it can never be a negative of the offer marker.
+OFFER_NAV_FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+    <node index="1" text="Accepter la&#10;course" content-desc="" visible-to-user="true" bounds="[100,1500][980,1650]" />
+    <node index="2" text="Prix recommandé" content-desc="" visible-to-user="true" bounds="[50,900][900,1000]" />
+    <node index="3" text="REFUSER" content-desc="" visible-to-user="true" bounds="[50,1700][400,1800]" />
+    <node index="4" text="" content-desc="Accueil" visible-to-user="true" bounds="[0,2200][270,2400]" />
+  </node>
+</hierarchy>
+"""
+
+HOME_NO_OFFER_FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+    <node index="1" text="Où allez-vous ?" content-desc="" visible-to-user="true" bounds="[100,200][900,300]" />
+    <node index="2" text="En ligne" content-desc="" visible-to-user="true" bounds="[50,400][400,500]" />
+    <node index="3" text="" content-desc="Accueil" visible-to-user="true" bounds="[0,2200][270,2400]" />
+  </node>
+</hierarchy>
+"""
+
+
+@case
+def test_marker_34_matches_offer_with_nav_home_label():
+    """ISC-2: a real offer screen that also shows the "Accueil" nav label must match."""
+    spec = markers().get("driver_offer_with_stops", "")
+    assert spec, "MARK_driver_offer_with_stops absent"
+    assert "accueil" not in spec.lower(), (
+        "« Accueil » est un libellé de navigation persistant: il rend le négatif toujours faux")
+    assert spec_ok(spec, OFFER_NAV_FIXTURE) == 0, f"marker 34 ne matche pas l'écran d'offre: {spec}"
+    assert spec_ok(spec, HOME_NO_OFFER_FIXTURE) != 0, (
+        f"marker 34 accepte le home sans offre: {spec}")
+
+
 @case
 def test_tap_exact_collapses_whitespace_and_taps_node_center():
     tmp = tempfile.mkdtemp(prefix="e2e-tap-")
