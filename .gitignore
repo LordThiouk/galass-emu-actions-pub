@@ -6,6 +6,7 @@ __pycache__/
 e2e-out/
 e2e-out-*/
 e2e/out/
+e2e/smoke.log
 
 # APK/AAB et matériel de signature : jamais dans le repo
 apk/

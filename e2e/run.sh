@@ -18,6 +18,7 @@ APK_RIDER="${APK_RIDER:-apk/rider/app-debug.apk}"
 APK_DRIVER="${APK_DRIVER:-apk/driver/app-debug.apk}"
 ARTEMIS_BIN="${ARTEMIS_BIN:-vendor/artemis/.venv/bin/artemis}"
 PY="${PY:-python3}"
+. "$(dirname "$0")/smoke_log.sh"
 
 # S6: nothing from a previous run may leak into this verdict.
 mkdir -p "$OUT"
@@ -26,6 +27,7 @@ rm -rf "$OUT"/screens "$OUT"/ui "$OUT"/state.json "$OUT"/results-raw.txt \
        "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt
 mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
+: > "$SMOKE_LOG"
 : > "$OUT/results-live.txt"
 : > "$OUT/captures.txt"
 
@@ -33,8 +35,14 @@ declare -a RESULTS=()
 . "$(dirname "$0")/ui.sh"
 
 # S21: details go to $OUT/run.log only; stdout carries POINT|RESULT and nothing else,
-# so a ride uid can never leak into the public Actions log.
-log() { printf '[e2e %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >> "$OUT/run.log"; }
+# so a ride uid can never leak into the public Actions log. A sanitized copy also goes
+# to stderr and e2e/smoke.log (public artifact).
+log() {
+  local line
+  line=$(printf '[e2e %s] %s' "$(date -u +%H:%M:%S)" "$*")
+  printf '%s\n' "$line" >> "$OUT/run.log"
+  smoke_emit "$line"
+}
 mark() {
   RESULTS+=("$1|$2|$3")
   printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$OUT/results-live.txt"
@@ -43,6 +51,7 @@ mark() {
 }
 # S7: every exit path leaves the points that were actually marked.
 flush_results() {
+  smoke_emit_file "$OUT/api-flow.err"
   if [ "${#RESULTS[@]}" -gt 0 ]; then
     printf '%s\n' "${RESULTS[@]}" > "$OUT/results-raw.txt"
   else
@@ -215,7 +224,8 @@ api() { STEP="$1" "$PY" e2e/api_flow.py; }
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
 try_tap() { local pkg="$1"; shift; tap_when "$pkg" "$@"; }
 ride_state() {
-  STEP=ride_state "$PY" e2e/api_flow.py > "$OUT/last-ride-state.txt" 2>&1
+  STEP=ride_state "$PY" e2e/api_flow.py > "$OUT/last-ride-state.txt" 2>"$OUT/api-flow.err"
+  smoke_emit_file "$OUT/api-flow.err"
   log "ride_state: $(tr '\n' ' ' < "$OUT/last-ride-state.txt")"
 }
 
