@@ -10,10 +10,17 @@ UI_XML_PATH="${UI_XML:-/tmp/w.xml}"
 ADB_TMO="${ADB_TMO:-60}"
 mkdir -p "$OUT/screens" "$OUT/ui"
 
+. "$(dirname "${BASH_SOURCE[0]}")/smoke_log.sh"
+
 # Every adb call is bounded: a wedged emulator must not eat the job's wall clock.
 # Callers see exit 124 and turn it into DUMP_UNAVAILABLE/FAIL instead of hanging.
 adb() { command timeout "$ADB_TMO" adb "$@"; }
-_ulog() { printf '[ui %s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$OUT/run.log" >&2; }
+_ulog() {
+  local line
+  line=$(printf '[ui %s] %s' "$(date -u +%H:%M:%S)" "$*")
+  printf '%s\n' "$line" >> "$OUT/run.log"
+  smoke_emit "$line"
+}
 
 UI_DUMP_HASH=""
 UI_DUMP_BYTES=0

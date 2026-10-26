@@ -278,6 +278,7 @@ def test_tap_exact_collapses_whitespace_and_taps_node_center():
         fh.write("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$ADB_LOG\"\n")
     os.chmod(stub, 0o755)
     env = dict(os.environ, OUT=tmp, UI_XML=xml, UI_XML_SRC=xml, E2E_ALLOW_FIXTURE="1",
+               SMOKE_LOG=os.path.join(tmp, "smoke.log"),
                PATH=bin_dir + os.pathsep + os.environ["PATH"], ADB_LOG=adb_log)
     env.pop("GITHUB_ACTIONS", None)
     proc = subprocess.run(["bash", "-c", '. "$1"; tap_exact "$2"', "_", UI, "Accepter la course"],
@@ -363,6 +364,7 @@ def stub_env(fixture=FIXTURE, adb_body="", extra=None):
         fh.write('#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$ADB_LOG"\n' + adb_body)
     os.chmod(stub, 0o755)
     env = dict(os.environ, OUT=tmp, UI_XML=xml, UI_XML_SRC=xml, E2E_ALLOW_FIXTURE="1",
+               SMOKE_LOG=os.path.join(tmp, "smoke.log"),
                PATH=bin_dir + os.pathsep + os.environ["PATH"], ADB_LOG=adb_log)
     env.pop("GITHUB_ACTIONS", None)
     env.update(extra or {})

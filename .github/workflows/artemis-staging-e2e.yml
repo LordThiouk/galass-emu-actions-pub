@@ -203,6 +203,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: staging-e2e-evidence-encrypted, path: evidence.tgz.gpg, retention-days: 7}
+      - name: Publier le smoke log (masqué)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: staging-e2e-smoke-log, path: e2e/smoke.log, retention-days: 7, if-no-files-found: warn}
       - name: Résumé (PASS/FAIL seulement)
         if: always()
         run: |

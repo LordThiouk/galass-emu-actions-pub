@@ -20,6 +20,7 @@ BASE = os.environ.get("BASE", "").rstrip("/")
 # check on "galassapp.com" missed http:// and every lookalike host.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from base_guard import check_base  # noqa: E402
+from sanitize import mask_path, redact_record, smoke_emit  # noqa: E402
 _reason = check_base(BASE)
 if _reason:
     sys.exit(f"refusing BASE: {_reason}")
@@ -39,7 +40,15 @@ DEV = os.environ["DEV_TOKEN"]
 RIDER_ID = int(os.environ.get("RIDER_ID", "106"))
 DRIVER_ID = int(os.environ.get("DRIVER_ID", "23"))
 
-log = open(f"{OUT}/api.jsonl", "a")
+_raw_fh = open(f"{OUT}/api.jsonl", "a")
+
+
+def log(record):
+    """Raw record in api.jsonl (encrypted evidence), redacted copy to smoke log."""
+    line = json.dumps(record)
+    _raw_fh.write(line + "\n")
+    _raw_fh.flush()
+    smoke_emit(json.dumps(redact_record(record)))
 
 
 def call(m, path, tok, body=None, timeout=40):
@@ -65,11 +74,9 @@ def call(m, path, tok, body=None, timeout=40):
         j = json.loads(txt)
     except Exception:
         j = {"raw": txt[:500]}
-    log.write(json.dumps({"t": time.time(), "m": m, "path": path, "code": code,
-                          "resp": j}) + "\n")
-    log.flush()
+    log({"t": time.time(), "m": m, "path": path, "code": code, "resp": j})
     remark = j.get("remark") if isinstance(j, dict) else None
-    print(m, path, code, remark, flush=True)
+    print(m, mask_path(path), code, remark, flush=True)
     return code, j
 
 
