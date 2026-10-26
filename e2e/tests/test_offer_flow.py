@@ -98,7 +98,8 @@ def test_failure_cause_is_explicit():
     assert f.failure_cause(f.ACCEPTED, False) == ""
 
 
-def _accept_harness(kinds, renew_ok=True, assigned=False, renewed=False, retries=5):
+def _accept_harness(kinds, renew_ok=True, assigned=False, renewed=False, retries=5,
+                    tap_proven=False):
     f = flow()
     queue = list(kinds)
     calls = {"respond": 0, "renew": 0, "sleep": 0}
@@ -126,7 +127,8 @@ def _accept_harness(kinds, renew_ok=True, assigned=False, renewed=False, retries
         calls["sleep"] += 1
 
     out = f.run_accept(respond, _assigned, renew, _sleep,
-                       retries=retries, delay=1, renewed=renewed)
+                       retries=retries, delay=1, renewed=renewed,
+                       tap_proven=tap_proven)
     return out, calls
 
 
@@ -197,11 +199,14 @@ def test_already_assigned_driver_is_an_accept():
 
 
 @case
-def test_assigned_means_ui_accepted():
-    """The tap winning must be credited to the UI, never to the API fallback."""
+def test_assigned_means_ui_only_with_tap_proof():
+    """Assigned is success, but the credit is UI only when OUR tap is proven."""
     f = flow()
     out, _ = _accept_harness([f.NOT_AUTHORIZED], assigned=True)
-    assert out["ok"] is True and out["via"] == "ui", out
+    assert out["ok"] is True and out["via"] == "unknown", out
+    assert out["cause"] == "respond_200_assigned", out
+    out, _ = _accept_harness([f.NOT_AUTHORIZED], assigned=True, tap_proven=True)
+    assert out["ok"] is True and out["via"] == "ui" and out["cause"] is None, out
     out, _ = _accept_harness([f.ACCEPTED])
     assert out["ok"] is True and out["via"] == "api", out
     out, _ = _accept_harness([f.TERMINAL])
@@ -211,12 +216,15 @@ def test_assigned_means_ui_accepted():
 @case
 def test_accepted_via_mapping_is_pure():
     f = flow()
-    assert f.accepted_via(f.ACCEPTED, False) == "api"
-    assert f.accepted_via(f.NOT_AUTHORIZED, True) == "ui"
-    assert f.accepted_via(f.NOT_AUTHORIZED, False) is None
-    # assigné = la course est à nous, quel que soit le remark : le crédit va à l'UI.
-    assert f.accepted_via(f.EXPIRED, True) == "ui"
-    assert f.accepted_via(f.EXPIRED, False) is None
+    assert f.accepted_via(200, f.ACCEPTED, False, False) == "api"
+    assert f.accepted_via(403, f.NOT_AUTHORIZED, True, True) == "ui"
+    assert f.accepted_via(403, f.NOT_AUTHORIZED, True, False) == "unknown"
+    assert f.accepted_via(403, f.NOT_AUTHORIZED, False, True) is None
+    # Assigné sans preuve de tap : jamais un crédit UI inventé.
+    assert f.accepted_via(200, f.EXPIRED, True, False) == "unknown"
+    assert f.accepted_via(200, f.EXPIRED, False, False) is None
+    # Un accepted sur un code non-2xx n'est pas une acceptation API.
+    assert f.accepted_via(500, f.ACCEPTED, False, False) is None
 
 
 # ------------------------------------------------------------- wait_fg

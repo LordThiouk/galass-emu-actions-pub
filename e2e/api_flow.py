@@ -235,13 +235,25 @@ def renew_offer():
     return True
 
 
+def ui_tap_proven():
+    """Le harnais a-t-il prouvé SON tap ? run.sh exporte E2E_UI_TAP_PROVEN=1
+    seulement si le Driver était devant avant ET après le tap réussi."""
+    value = str(os.environ.get("E2E_UI_TAP_PROVEN") or "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
 def write_accept(out):
     """$OUT/accept.json : la seule source lue par run.sh pour accept_via/cause."""
+    via = out.get("via") or "none"
+    cause = out.get("cause")
+    if via == "unknown" and not cause:
+        # Jamais de cause vide sur un crédit non prouvé.
+        cause = "assigned_without_tap_proof"
     payload = {
         "ok": bool(out.get("ok")),
         # "ui" quand le tap a gagné sans que l'API reçoive offer_accepted.
-        "via": out.get("via") or "none",
-        "cause": out.get("cause"),
+        "via": via,
+        "cause": cause,
         "renewed": bool(out.get("renewed")),
         "attempts": int(out.get("attempts") or 0),
     }
@@ -268,7 +280,8 @@ def accept_offer(retries=8, delay=2):
         return renew_offer()
 
     out = run_accept(respond, assigned, renew, time.sleep,
-                     retries=retries, delay=delay, renewed=bool(st.get("offer_renewed")))
+                     retries=retries, delay=delay, renewed=bool(st.get("offer_renewed")),
+                     tap_proven=ui_tap_proven())
     write_accept(out)
     if out["ok"]:
         st["offer_accept"] = {"remark": "offer_accepted", "via": out.get("via"),

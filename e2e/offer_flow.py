@@ -63,14 +63,32 @@ def decide(kind, renewed):
     return "fail"
 
 
-def accepted_via(kind, assigned):
-    """How the acceptance was obtained: "api" if the backend answered accepted,
-    "ui" if the driver is assigned without us getting that answer (the tap won),
-    None otherwise. `assigned` is a callable bool."""
-    if kind == ACCEPTED:
+def _truth(value):
+    """Accept a bool or a zero-arg callable, so callers never re-query by accident."""
+    return bool(value() if callable(value) else value)
+
+
+def accepted_via(code, kind, assigned=False, tap_proven=False):
+    """How the acceptance was obtained, or None.
+
+    "api"     a 2xx answer classified ACCEPTED — precedence, it is the strongest
+              proof and a concurrent tap cannot undo it;
+    "ui"      the driver is assigned AND the harness proved its own tap (Driver in
+              the foreground before and after) — credit belongs to the UI;
+    "unknown" assigned without that proof: the ride is ours, but claiming the tap
+              would be a guess (a concurrent accept, or a background tap);
+    None      not assigned, or an accepted shape on a non-2xx code.
+
+    `assigned`/`tap_proven` are bools or zero-arg callables.
+    """
+    try:
+        status = int(code)
+    except (TypeError, ValueError):
+        status = 0
+    if 200 <= status < 300 and kind == ACCEPTED:
         return "api"
-    if assigned:
-        return "ui"
+    if _truth(assigned):
+        return "ui" if _truth(tap_proven) else "unknown"
     return None
 
 
@@ -83,18 +101,25 @@ def failure_cause(kind, renewed):
     return kind if kind in KINDS else TERMINAL
 
 
-def run_accept(respond, assigned, renew, sleep, retries=20, delay=3, renewed=False):
+def run_accept(respond, assigned, renew, sleep, retries=20, delay=3, renewed=False,
+               tap_proven=False):
     """Drive offer acceptance against injected collaborators.
 
-    respond()  -> (http_code, payload)      one accept attempt
-    assigned() -> bool                      already assigned to this driver?
-    renew()    -> bool                      cancel the expired ride, create a fresh one
-    sleep(s)                                injected (no-op in tests)
+    respond()     -> (http_code, payload)  one accept attempt
+    assigned()    -> bool                  already assigned to this driver?
+    renew()       -> bool                  cancel the expired ride, create a fresh one
+    sleep(s)                               injected (no-op in tests)
+    tap_proven                             bool/callable: did the harness prove ITS tap?
 
     Returns {"ok", "via", "cause", "renewed", "attempts"} where `via` is "api"
-    (the backend accepted our respond), "ui" (the driver ended up assigned without
-    that answer: the tap won) or None. `renew` is called at most once per ride
-    generation, and an expired offer is never retried on the same ride.
+    (2xx accepted answer), "ui" (assigned + tap proven) or "unknown" (assigned
+    without proof). `unknown` is a SUCCESS — the ride is ours — but it returns
+    immediately with an explicit cause: renewing or retrying a ride we already
+    hold would be the 24-FAIL cascade again. A non-2xx ACCEPTED shape is a
+    failure, never a silent `ok: True, via: None`.
+
+    `renew` is called at most once per ride generation, and an expired offer is
+    never retried on the same ride.
     """
     attempts = 0
     renewed = bool(renewed)
@@ -104,18 +129,21 @@ def run_accept(respond, assigned, renew, sleep, retries=20, delay=3, renewed=Fal
         code, payload = respond()
         kind = classify(code, payload)
         last_kind = kind
-        if kind == ACCEPTED:
+        via = accepted_via(code, kind, assigned, tap_proven)
+        if via == "api":
             return {"ok": True, "via": "api", "cause": None,
                     "renewed": renewed, "attempts": attempts}
-        if assigned():
-            # A concurrent accept (or the UI tap) may have won the offer: success,
-            # but the credit belongs to the UI, never to the API fallback.
-            return {"ok": True, "via": "ui", "cause": None,
+        if via in ("ui", "unknown"):
+            # Assigned already: the offer is ours. Credit the UI only when the tap
+            # is provable, otherwise say `unknown` and stop touching the ride.
+            cause = f"respond_{code}_assigned" if via == "unknown" else None
+            return {"ok": True, "via": via, "cause": cause,
                     "renewed": renewed, "attempts": attempts}
         action = decide(kind, renewed)
         if action == "accept":
-            return {"ok": True, "via": accepted_via(kind, assigned),
-                    "cause": None, "renewed": renewed, "attempts": attempts}
+            # ACCEPTED shape on a non-2xx code, not assigned: do not claim success.
+            return {"ok": False, "via": None, "cause": f"respond_{code}",
+                    "renewed": renewed, "attempts": attempts}
         if action == "renew":
             if renew():
                 renewed = True

@@ -8,6 +8,10 @@ masked, everything else is preserved so the log stays useful.
 
 CLI:
     printf '%s\\n' "$line" | python3 e2e/sanitize.py [--append FILE] [--stderr]
+        [--redact-env VAR]...
+
+`--redact-env VAR` additionally masks the literal value of $VAR wherever it
+appears (a bare provider key echoed mid-line, which no key/value regex catches).
 """
 import os
 import re
@@ -89,6 +93,22 @@ def sanitize(text):
     out = _PHONE_SPACED.sub(_mask_phone, out)
     out = _E164.sub(_mask_phone, out)
     out = _SN_LOCAL.sub(_mask_phone, out)
+    return out
+
+
+def redact_env(text, names):
+    """Mask the literal value of each named env var, wherever it appears.
+
+    sanitize() masks key/value shapes, not a bare provider key echoed mid-line
+    (`INFO llm ready sk-…`). The caller names the vars it knows can leak. Values
+    shorter than 4 chars are skipped: replacing `1` or `on` would shred the log
+    without protecting anything.
+    """
+    out = str(text)
+    for name in names or ():
+        value = os.environ.get(str(name))
+        if value and len(value) >= 4:
+            out = out.replace(value, REDACTED)
     return out
 
 
@@ -191,25 +211,34 @@ def smoke_emit(text, path=None):
     return clean
 
 
+USAGE = "usage: sanitize.py [--append FILE] [--stderr] [--redact-env VAR]..."
+
+
 def main(argv):
     append = None
     to_stderr = False
+    redact_names = []
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg == "--append":
             i += 1
             if i >= len(argv):
-                sys.exit(f"usage: {argv[0]} [--append FILE] [--stderr]")
+                sys.exit(USAGE)
             append = argv[i]
+        elif arg == "--redact-env":
+            i += 1
+            if i >= len(argv):
+                sys.exit(USAGE)
+            redact_names.append(argv[i])
         elif arg == "--stderr":
             to_stderr = True
         else:
-            sys.exit(f"usage: {argv[0]} [--append FILE] [--stderr]")
+            sys.exit(USAGE)
         i += 1
     to_stdout = not (append or to_stderr)
     for line in sys.stdin:
-        clean = sanitize(line.rstrip("\n"))
+        clean = sanitize(redact_env(line.rstrip("\n"), redact_names))
         if append:
             append_line(clean, append)
         if to_stderr:

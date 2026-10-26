@@ -140,6 +140,10 @@ write_flags() {
     "$UI_ACCEPT" "$UI_START" "$UI_STOP0" "$UI_STOP1" "$UI_END" "$UI_CASH" "$via" > "$OUT/ui-flags.txt"
 }
 set_accept_via() { ACCEPT_VIA="$1"; printf '%s\n' "$1" > "$OUT/accept-via.txt"; }
+# Un crédit `ui` exige un tap prouvé (Driver devant AVANT et APRÈS). Un marker 35
+# prouve l'écran, pas le tap : sans preuve, la course avance mais le crédit reste
+# `unknown` — même vérité que `accepted_via()` côté API.
+ui_accept_via() { if [ "${UI_TAP_PROVEN:-0}" = 1 ]; then echo ui; else echo unknown; fi; }
 
 # S13: a wedged emulator must still leave a verdict — AND release the step.
 # B10 (run 40177022780): l'ancien `( sleep 8100; ... ) &` forkait un `sleep`
@@ -236,7 +240,7 @@ api_accept_ok() {
   "$PY" -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get("ok") else 1)' \
        "$OUT/accept.json" 2>/dev/null || return 1
   ACCEPT_OK=1
-  set_accept_via "$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("via") or "api")' "$OUT/accept.json")"
+  set_accept_via "$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("via") or "unknown")' "$OUT/accept.json")"
   log "accept_via=$ACCEPT_VIA (repli API, détail dans $OUT/accept.json)"
 }
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
@@ -248,7 +252,22 @@ ride_state() {
   log "ride_state: $(tr '\n' ' ' < "$OUT/last-ride-state.txt")"
 }
 
-launch() { adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; }
+# launch pkg : démarre le composant launcher RÉSOLU, en gardant monkey en repli.
+# `monkey` choisit parfois une activité secondaire (et ne prouve pas le composant) :
+# resolve-activity -> `am start -W -n pkg/pkg.Activity` rend le lancement explicite.
+launch() {
+  local pkg="$1" comp="" out=""
+  out=$(adb shell cmd package resolve-activity --brief \
+        -c android.intent.category.LAUNCHER "$pkg" 2>/dev/null) || out=""
+  comp=$(printf '%s\n' "$out" | grep -F '/' | tail -1 | tr -d '\r' \
+         | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if printf '%s' "$comp" | grep -Eq '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$'; then
+    adb shell am start -W -n "$comp" >/dev/null 2>&1
+    return 0
+  fi
+  log "launch: composant launcher introuvable pour $pkg — repli monkey"
+  adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+}
 # wait_fg vit dans ui.sh (attente ACTIVE, défaut WAIT_FG_SEC=600) : un cold start
 # de debug Flutter dépasse largement 60 s, et un `wait_ui` rendrait rc=3 sur le
 # launcher avant la première frame.
@@ -267,7 +286,51 @@ notif_probe() { # pkg token -> json
 }
 json_field() { "$PY" -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],0))' "$1"; }
 
-ARTEMIS_OK=1
+# publish_artemis_log name : tail borné (200 lignes), secrets masqués, vers run.log
+# ET le smoke artifact. Un journal brut peut porter la clé du provider : rien ne sort
+# d'ici sans passer par sanitize.py --redact-env.
+# Une SEULE passe groupée : le masquage coûte un processus python par run, pas un par
+# ligne (200 lignes × 6 runs ≈ 1200 processus). Les deux destinations reçoivent le
+# même tampon, donc exactement les mêmes lignes masquées.
+publish_artemis_log() {
+  local name="$1" src="$OUT/artemis/$1.log" masked
+  [ -f "$src" ] || return 0
+  mkdir -p "$OUT" "$(dirname "$SMOKE_LOG")" 2>/dev/null || true
+  masked=$(mktemp "${TMPDIR:-/tmp}/artemis-log.XXXXXX") || return 0
+  if ! tail -n 200 "$src" 2>/dev/null \
+       | sed 's/^/artemis-log: /' \
+       | "$PY" e2e/sanitize.py --redact-env OPENAI_API_KEY > "$masked"; then
+    rm -f "$masked"
+    return 0
+  fi
+  cat "$masked" >> "$OUT/run.log" 2>/dev/null || true
+  cat "$masked" >> "$SMOKE_LOG" 2>/dev/null || true
+  rm -f "$masked"
+}
+
+# Série épinglée : Artemis doit viser l'émulateur DU JOB, pas un device arbitraire
+# (un runner peut en exposer plusieurs). Résolution PARESSEUSE : au chargement du
+# script l'émulateur peut ne pas être encore visible, et un `adb get-serialno` trop
+# tôt désactiverait Artemis pour tout le run. Une série invalide, elle, désactive
+# Artemis sans casser le harnais : taps + API restent la voie de secours.
+ARTEMIS_SERIAL="${ARTEMIS_SERIAL:-${ANDROID_SERIAL:-}}"
+case "$ARTEMIS_SERIAL" in
+  ""|unknown) ;;  # résolue (ou refusée) au premier artemis_run
+  *[!A-Za-z0-9._:-]*)
+    log "artemis: série invalide ('$ARTEMIS_SERIAL') — smoke désactivé, taps + API"
+    ARTEMIS_SERIAL=""
+    ARTEMIS_OK=0 ;;
+esac
+ARTEMIS_OK="${ARTEMIS_OK:-1}"
+artemis_serial() {
+  local serial="${ARTEMIS_SERIAL:-}"
+  [ -n "$serial" ] || serial=$(adb get-serialno 2>/dev/null | tr -d '\r\n')
+  case "$serial" in
+    ""|unknown|*[!A-Za-z0-9._:-]*) return 1 ;;
+  esac
+  ARTEMIS_SERIAL="$serial"
+  printf '%s' "$serial"
+}
 artemis_run() {
   # name goal timeout_s [locked_pkg]
   local name="$1" goal="$2" tmo="${3:-240}" pkg="${4:-}"
@@ -275,17 +338,26 @@ artemis_run() {
     log "artemis skip: $name (smoke failed)"
     return 2
   fi
+  if ! artemis_serial >/dev/null; then
+    log "artemis: aucune série exploitable — smoke désactivé, taps + API"
+    ARTEMIS_OK=0
+    return 2
+  fi
   local args=(run "$goal" --profile flash --test-name "$name"
-              --traces-path "$(pwd)/$OUT/artemis")
+              --traces-path "$(pwd)/$OUT/artemis"
+              --standalone --device-serial "$ARTEMIS_SERIAL")
   [ -n "$pkg" ] && args+=(--locked-app "$pkg")
-  log "artemis start: $name"
+  log "artemis start: $name (device=$ARTEMIS_SERIAL)"
   ( cd vendor/artemis && timeout "$tmo" "./.venv/bin/artemis" "${args[@]}" ) \
     >"$OUT/artemis/$name.log" 2>&1
   local rc=$?
   log "artemis end: $name rc=$rc"
+  # Publié APRÈS CHAQUE exécution : le smoke réussi est précisément le journal qu'on
+  # veut voir dans run.log et dans l'artefact e2e/smoke.log. Un échec publie le même
+  # tampon masqué, puis sa capture d'écran (inchangée).
+  publish_artemis_log "$name"
   if [ "$rc" -ne 0 ]; then
     log "artemis fallback: $name indisponible ($( [ "$rc" = 124 ] && echo timeout || echo "rc=$rc" )) — reprise par taps + API"
-    tail -n 5 "$OUT/artemis/$name.log" 2>/dev/null | sed 's/^/artemis-log: /' >> "$OUT/run.log" || true
     adb exec-out screencap -p > "$OUT/screens/artemis-$name-fail.png" 2>/dev/null || true
   fi
   return $rc
@@ -693,18 +765,29 @@ ACCEPT_OK=0
 # ISC-5: budget UI recalculé après Artemis — même réserve, jamais tout `left`.
 ui_left=$(( $(offer_left) - API_RESERVE_SEC ))
 [ "$ui_left" -gt 0 ] || ui_left=0
+# Crédit UI : un tap n'est « prouvé » que si le Driver était devant AVANT et APRÈS.
+# Sinon l'API peut avoir gagné en parallèle, et le sidecar ne doit pas l'affirmer.
+UI_TAP_PROVEN=0
+FG_BEFORE=$(fg_pkg)
 if [ "$ui_left" -gt 0 ] && tap_exact "Accepter la course"; then
+  if [ "$FG_BEFORE" = "$DRIVER_PKG" ] && [ "$(fg_pkg)" = "$DRIVER_PKG" ]; then
+    UI_TAP_PROVEN=1
+  else
+    log "offre: tap hors premier plan Driver ($FG_BEFORE -> $(fg_pkg)) — crédit UI non prouvé"
+  fi
   if wait_ui "$DRIVER_PKG" "$ui_left" "$MARK_driver_accepted_details"; then
-    ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via ui
-    log "accept_via=$ACCEPT_VIA (écran suivant 35 prouvé dans la fenêtre)"
+    ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via "$(ui_accept_via)"
+    log "accept_via=$ACCEPT_VIA (écran suivant 35 prouvé dans la fenêtre; tap_ui_prouvé=$UI_TAP_PROVEN)"
   fi
 else
   log "offre: tap « Accepter la course » non joué ou manqué (ui_left=${ui_left}s)"
 fi
 if [ "$ACCEPT_OK" = "0" ]; then
   log "offre: repli API (left=$(offer_left)s)"
+  export E2E_UI_TAP_PROVEN="$UI_TAP_PROVEN"
   api accept >> "$OUT/run.log" 2>&1
   api_accept_ok || true
+  export E2E_UI_TAP_PROVEN=0
 fi
 if [ "$ACCEPT_OK" != "1" ]; then
   # ISC-3: FAIL seulement si aucun via n'a prouvé l'acceptation (report.py worst-wins).
@@ -720,8 +803,17 @@ if [ "$ACCEPT_OK" != "1" ]; then
   exit 1
 fi
 if [ "$ACCEPT_OK" = "1" ]; then
-  # Chemin SUCCÈS : accept-via doit être une ligne de résultats, pas seulement un FAIL.
-  mark accept-via PASS "accept_via=$ACCEPT_VIA cause=none (renewed: voir accept.json si repli API)"
+  # Chemin SUCCÈS : seule une preuve réelle (api ou ui) vaut PASS. `unknown` =
+  # assigné sans tap prouvé : la course continue, mais le crédit reste WARN.
+  ACCEPT_CAUSE=$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("cause") or "")' "$OUT/accept.json" 2>/dev/null || true)
+  case "$ACCEPT_VIA" in
+    api|ui)
+      mark accept-via PASS "accept_via=$ACCEPT_VIA cause=none (renewed: voir accept.json si repli API)" ;;
+    unknown)
+      mark accept-via WARN "accept_via=unknown cause=${ACCEPT_CAUSE:-assigned_without_tap_proof}" ;;
+    *)
+      mark accept-via WARN "accept_via=${ACCEPT_VIA:-none} cause=${ACCEPT_CAUSE:-inconnue}" ;;
+  esac
   # Un renouvellement a créé une NOUVELLE course côté API : l'identifiant et la
   # provenance doivent suivre, sinon les sondes suivantes visent l'ancienne.
   RIDE_ID=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_id') or '')" 2>/dev/null)

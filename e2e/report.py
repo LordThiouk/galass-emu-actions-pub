@@ -281,6 +281,19 @@ def build(out_dir, p0=None):
             _upsert(points, "b2-captures", "PASS",
                     "offre et course: captures distinctes, -REFUSER sur la course")
 
+    # accept-via PASS is only credible with a real credit. `unknown` means the ride
+    # was ours but the tap was never proven: the flow may continue, the claim may not.
+    for row in points:
+        if row["point"] != "accept-via" or row["result"] != "PASS":
+            continue
+        match = re.search(r"accept_via=([A-Za-z0-9_-]+)", row.get("detail") or "")
+        via = match.group(1).lower() if match else ""
+        if via not in ("api", "ui"):
+            row["result"] = "WARN"
+            row["detail"] = (
+                f"{row['detail']} [crédit non prouvé: accept_via={via or 'absent'}]"
+            ).strip()
+
     fails = [p for p in points if p["result"] == "FAIL"]
     warns = [p for p in points if p["result"] == "WARN"]
     skips = [p for p in points if p["result"] == "SKIP"]

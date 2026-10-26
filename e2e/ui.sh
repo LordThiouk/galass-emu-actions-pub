@@ -29,16 +29,26 @@ UI_DUMP_HASH=""
 UI_DUMP_BYTES=0
 UI_DUMP_VALID=0
 
-# fg_pkg : paquet réellement au premier plan. Jamais vide : UNKNOWN si illisible.
+# fg_pkg : paquet réellement au premier plan, sur le display PAR DÉFAUT. Jamais vide :
+# UNKNOWN si illisible. Un `dumpsys window` multi-display imprime d'abord le launcher
+# du display secondaire ; lire sa première ligne `mCurrentFocus` faisait croire que
+# l'app du display 0 était absente (chaque attente échouait sur un mensonge).
+# Le parseur (fg.py) ne retient que mDisplayId=0, puis bascule window -> activities -> top.
+FG_PARSER="${FG_PARSER:-$(dirname "${BASH_SOURCE[0]}")/fg.py}"
+PY="${PY:-python3}"
 fg_pkg() {
-  local cur=""
-  cur=$(adb shell dumpsys window 2>/dev/null \
-        | grep -m1 -E "mCurrentFocus|mFocusedApp" \
-        | grep -oE "[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+" | head -1 | cut -d/ -f1)
-  if [ -z "$cur" ]; then
-    cur=$(adb shell dumpsys activity activities 2>/dev/null \
-          | grep -m1 -E "topResumedActivity|mResumedActivity" \
-          | grep -oE "[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+" | head -1 | cut -d/ -f1)
+  local cur="" dump
+  if [ -f "$FG_PARSER" ]; then
+    dump=$(adb shell dumpsys window displays 2>/dev/null) || dump=""
+    cur=$(printf '%s\n' "$dump" | "$PY" "$FG_PARSER" --source window 2>/dev/null) || cur=""
+    if [ -z "$cur" ]; then
+      dump=$(adb shell dumpsys activity activities 2>/dev/null) || dump=""
+      cur=$(printf '%s\n' "$dump" | "$PY" "$FG_PARSER" --source activities 2>/dev/null) || cur=""
+    fi
+    if [ -z "$cur" ]; then
+      dump=$(adb shell dumpsys activity top 2>/dev/null) || dump=""
+      cur=$(printf '%s\n' "$dump" | "$PY" "$FG_PARSER" --source top 2>/dev/null) || cur=""
+    fi
   fi
   echo "${cur:-UNKNOWN}"
 }
@@ -220,9 +230,12 @@ PY
 }
 
 # wait_ui pkg timeout spec... -> 0 match, 1 timeout, 3 foreground mismatch, 4 no dump.
-# Ne relance JAMAIS l'app : comparer le premier plan après le dump, c'est tout.
+# Ne relance JAMAIS l'app. Le marqueur est AUTORITAIRE : un premier plan qui ne
+# correspond pas est journalisé et la boucle continue (le dump a pu être pris
+# pendant une transition, ou le display par défaut est momentanément illisible).
+# rc=3 seulement si TOUS les relevés connus étaient étrangers ET aucun marqueur.
 wait_ui() {
-  local pkg="$1" tmo="${2:-30}" t0=$SECONDS rc=1 cur
+  local pkg="$1" tmo="${2:-30}" t0=$SECONDS rc=1 cur checks=0 foreign=0
   shift 2
   while [ $((SECONDS - t0)) -lt "$tmo" ]; do
     if ! ui_xml; then
@@ -232,9 +245,12 @@ wait_ui() {
     fi
     clear_sys
     cur=$(fg_pkg)
-    if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ] && [ "$cur" != "$pkg" ]; then
-      _ulog "wait_ui: premier plan $cur != $pkg"
-      return 3
+    if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ]; then
+      checks=$((checks + 1))
+      if [ "$cur" != "$pkg" ]; then
+        foreign=$((foreign + 1))
+        _ulog "wait_ui: premier plan $cur != $pkg (marqueur prioritaire)"
+      fi
     fi
     if _spec_ok "$@"; then
       return 0
@@ -242,6 +258,9 @@ wait_ui() {
     rc=1
     sleep 1
   done
+  if [ "$rc" = "1" ] && [ "$checks" -gt 0 ] && [ "$foreign" -eq "$checks" ]; then
+    return 3
+  fi
   return "$rc"
 }
 
