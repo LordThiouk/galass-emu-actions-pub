@@ -272,11 +272,46 @@ launch() {
 # de debug Flutter dépasse largement 60 s, et un `wait_ui` rendrait rc=3 sur le
 # launcher avant la première frame.
 # Bascule explicite entre étapes (jamais depuis un wait).
+# Un overlay système (dialogue Réglages) est refermé AVANT la bascule : sinon le
+# monkey lance l'app derrière un dialogue qui garde le focus.
 bring_fg() {
+  close_system_overlay || true
   [ "$(fg_pkg)" = "$1" ] && return 0
   log "bring_fg $(fg_pkg) -> $1"
   adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   wait_fg "$1" 30
+}
+
+# grant_app_permissions pkg : accorde en amont ce qu'`adb install -g` ne couvre pas.
+# Run 40375590679 : le dashboard Driver appelle requestIgnoreBatteryOptimization() ;
+# sans exemption batterie (`isIgnoringBatteryOptimizations == false`), Android ouvre
+# le dialogue d'exemption (activité de com.android.settings), qui vole le premier
+# plan ~60 s et empêche de prouver l'accueil « En ligne ». L'exemption est donc
+# posée AVANT le premier lancement, puis RELUE (`user,pkg,uid`), jamais supposée.
+grant_app_permissions() {
+  local pkg="$1" perm whitelist
+  for perm in POST_NOTIFICATIONS ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION \
+              ACCESS_BACKGROUND_LOCATION; do
+    adb shell pm grant "$pkg" "android.permission.$perm" >/dev/null 2>&1 \
+      || log "grant_app_permissions: pm grant $perm refusé pour $pkg"
+  done
+  adb shell appops set "$pkg" RUN_IN_BACKGROUND allow >/dev/null 2>&1 \
+    || log "grant_app_permissions: appops RUN_IN_BACKGROUND refusé pour $pkg"
+  adb shell appops set "$pkg" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 \
+    || log "grant_app_permissions: appops RUN_ANY_IN_BACKGROUND refusé pour $pkg"
+  adb shell cmd deviceidle whitelist "+$pkg" >/dev/null 2>&1 \
+    || log "grant_app_permissions: deviceidle whitelist +$pkg refusé"
+  whitelist=$(adb shell cmd deviceidle whitelist 2>/dev/null) || whitelist=""
+  # Les deux formes réelles : `user,<pkg>,<uid>` et `<pkg>,<uid>` en tête de ligne.
+  # Lecture EXACTE (-F) : un point du nom de paquet n'est jamais un joker ERE, donc
+  # `user,foo.<pkg>,<uid>` et `user,<pkg>2,<uid>` ne matchent jamais. Le préfixe `@`
+  # ancre la seconde forme au début de ligne sans faire du paquet une regex.
+  if printf '%s\n' "$whitelist" | sed 's/^/@/' \
+       | grep -Fq -e ",$pkg," -e "@$pkg,"; then
+    log "battery exemption: $pkg (ok)"
+  else
+    log "battery exemption: $pkg (READBACK FAILED)"
+  fi
 }
 
 notif_probe() { # pkg token -> json
@@ -570,7 +605,16 @@ write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.dri
 # ------------------------------------------------------------------ launch
 launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" "$WAIT_FG_SEC" || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
-launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" "$WAIT_FG_SEC" || true
+# Démarrage Driver PROUVÉ (run 40375590679) : permissions + exemption batterie
+# AVANT le premier lancement (sinon le dialogue Réglages ouvre et vole le focus),
+# puis `launch_fg` (am start -W sur le composant résolu, 0 seulement si le Driver
+# est devant), puis `wait_app_ui` qui referme les overlays et relance l'app si elle
+# perd le premier plan. Le marqueur et le verdict PASS/WARN restent inchangés.
+grant_app_permissions "$DRIVER_PKG"
+launch_fg "$DRIVER_PKG" "$WAIT_FG_SEC" \
+  || log "launch_fg: $DRIVER_PKG jamais prouvé au premier plan — capture 33 tentée quand même"
+wait_app_ui "$DRIVER_PKG" "${DRIVER_ONLINE_WAIT_SEC:-120}" "$MARK_driver_home_online" \
+  || log "wait_app_ui: accueil Driver (« En ligne ») non prouvé en ${DRIVER_ONLINE_WAIT_SEC:-120}s"
 if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
   mark driver-home-online PASS "ui cap=33-driver-home-online.png"
 else

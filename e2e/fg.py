@@ -16,10 +16,23 @@ Rules, testable without an emulator:
   * window -> activities -> top is a fallback chain, first non-empty answer wins;
   * no answer is `""` (the caller prints UNKNOWN), never a guess.
 
+Two more questions the harness asks about a foreground package (run 40375590679:
+the Driver dashboard calls requestIgnoreBatteryOptimization(), Settings opens its
+dialog and steals the foreground for a minute):
+
+  * `--overlay PKG` — is PKG one of the known SYSTEM overlays? Exit 0 when it is
+    (com.android.settings, com.android.permissioncontroller,
+    com.google.android.permissioncontroller), 1 for anything else — launcher3 is a
+    normal app, not a dialog to close. Answers from the argument alone: no stdin.
+  * `--component` — the pkg/activity currently focused on the default display, so
+    the journal can name WHICH Settings screen stole the foreground.
+
 CLI:
     adb shell dumpsys window displays   | python3 e2e/fg.py --source window
     adb shell dumpsys activity activities | python3 e2e/fg.py --source activities
     adb shell dumpsys activity top      | python3 e2e/fg.py --source top
+    adb shell dumpsys window displays   | python3 e2e/fg.py --component
+    python3 e2e/fg.py --overlay com.android.settings      # exit 0 / 1
 """
 import argparse
 import re
@@ -109,6 +122,38 @@ def parse_top(text):
 PARSERS = {"window": parse_window, "activities": parse_activities, "top": parse_top}
 ORDER = ("window", "activities", "top")
 
+# Activities that own a SYSTEM dialog (battery-optimisation exemption, runtime
+# permission prompt). They are not the app under test: focusing one means an
+# overlay stole the foreground, and the harness has to close it.
+SYSTEM_OVERLAYS = frozenset((
+    "com.android.settings",
+    "com.android.permissioncontroller",
+    "com.google.android.permissioncontroller",
+))
+
+
+def is_system_overlay(pkg):
+    """True only for a known system overlay; launcher3 and apps are normal."""
+    return (pkg or "").strip() in SYSTEM_OVERLAYS
+
+
+def focused_component(text):
+    """`pkg/activity` of the focused window on the default display, or "".
+
+    Focus lines win over resumed lines: the dialog that stole the foreground is
+    named by `mCurrentFocus`, and a transient resumed activity would name the app
+    behind it. Unreadable is "", never a guess.
+    """
+    block = _default_block(text)
+    for pattern in (_FOCUS, _RESUMED):
+        for line in block.splitlines():
+            if not pattern.search(line):
+                continue
+            match = _COMPONENT.search(line)
+            if match:
+                return "%s/%s" % (match.group(1), match.group(2))
+    return ""
+
 
 def foreground(text, source="auto"):
     if source in PARSERS:
@@ -124,8 +169,22 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Foreground package from a dumpsys dump")
     parser.add_argument("--source", choices=("auto",) + ORDER, default="auto",
                         help="which dump is on stdin (auto probes all three parsers)")
+    parser.add_argument("--overlay", metavar="PKG", default=None,
+                        help="exit 0 if PKG is a known system overlay, 1 otherwise")
+    parser.add_argument("--component", action="store_true",
+                        help="print the focused pkg/activity of the default display")
     args = parser.parse_args(argv)
-    print(foreground(sys.stdin.read(), args.source))
+    # `--overlay` answers from its argument: reading stdin would block the caller.
+    if args.overlay is not None:
+        return 0 if is_system_overlay(args.overlay) else 1
+    text = sys.stdin.read()
+    if args.component:
+        comp = focused_component(text)
+        if not comp:
+            return 1
+        print(comp)
+        return 0
+    print(foreground(text, args.source))
     return 0
 
 

@@ -1,7 +1,8 @@
 # UI helpers — fresh uiautomator dumps, explicit screen markers, one sidecar per capture.
 # A dump is never reused: /sdcard/w.xml is deleted before every attempt, the dump must
 # print "dumped to", contain <hierarchy and be >400 bytes, otherwise it is a failure.
-# No helper here relaunches the app on its own during a wait: a splash screen is not a
+# Only `wait_app_ui` and `launch_fg` may relaunch the app, and only bounded and
+# journalised; `wait_fg`/`wait_ui` never launch anything. A splash screen is not a
 # screen state, and relaunching from wait_ui was how every dump ended up on Driver home.
 RIDER_PKG="${RIDER_PKG:-sn.galass.galassrider}"
 DRIVER_PKG="${DRIVER_PKG:-sn.galass.galassdriver}"
@@ -82,6 +83,143 @@ wait_fg() {
     sleep 2
   done
   _ulog "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
+  return 1
+}
+
+# --- overlays système (run 40375590679) --------------------------------------
+# Le dashboard Driver appelle requestIgnoreBatteryOptimization() : sans exemption
+# batterie, Android ouvre le dialogue d'exemption, qui appartient à
+# `com.android.settings` et VOLE le premier plan ~60 s — la capture « En ligne »
+# ne voyait alors jamais l'accueil. `close_system_overlay` est le filet ; l'app
+# réelle, elle, n'est jamais corrigée.
+SYSTEM_OVERLAYS="com.android.settings com.android.permissioncontroller com.google.android.permissioncontroller"
+OVERLAY_TRIES="${OVERLAY_TRIES:-3}"
+OVERLAY_SETTLE_SEC="${OVERLAY_SETTLE_SEC:-1}"
+LAUNCH_FG_SEC="${LAUNCH_FG_SEC:-180}"
+FG_POLL_SEC="${FG_POLL_SEC:-2}"
+WAIT_APP_UI_SLICE="${WAIT_APP_UI_SLICE:-15}"
+WAIT_APP_UI_RELAUNCH_SEC="${WAIT_APP_UI_RELAUNCH_SEC:-30}"
+WAIT_APP_UI_MAX_RELAUNCH="${WAIT_APP_UI_MAX_RELAUNCH:-2}"
+
+# is_system_overlay pkg : 0 seulement pour un overlay système CONNU (fg.py décide,
+# avec repli sur la même liste si le parseur est absent ou illisible). Launcher3,
+# une app métier, UNKNOWN : jamais un overlay.
+is_system_overlay() {
+  local pkg="$1" rc
+  [ -n "$pkg" ] || return 1
+  if [ -f "$FG_PARSER" ]; then
+    "$PY" "$FG_PARSER" --overlay "$pkg" >/dev/null 2>&1
+    rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      1) return 1 ;;
+    esac
+  fi
+  case " $SYSTEM_OVERLAYS " in
+    *" $pkg "*) return 0 ;;
+  esac
+  return 1
+}
+
+# fg_component : composant pkg/activity du premier plan par défaut, "" si illisible.
+# Sert à NOMMER l'écran fautif dans le journal (quel dialogue Réglages a volé le focus).
+fg_component() {
+  local dump comp
+  [ -f "$FG_PARSER" ] || return 1
+  dump=$(adb shell dumpsys window displays 2>/dev/null) || dump=""
+  comp=$(printf '%s\n' "$dump" | "$PY" "$FG_PARSER" --component --source window 2>/dev/null) || comp=""
+  if [ -z "$comp" ]; then
+    dump=$(adb shell dumpsys activity activities 2>/dev/null) || dump=""
+    comp=$(printf '%s\n' "$dump" | "$PY" "$FG_PARSER" --component --source activities 2>/dev/null) || comp=""
+  fi
+  printf '%s' "$comp"
+  [ -n "$comp" ]
+}
+
+# launcher_component pkg : composant launcher résolu (resolve-activity --brief), ""
+# et rc=1 s'il n'y en a pas — jamais un `am start` sans composant.
+launcher_component() {
+  local pkg="$1" out comp
+  out=$(adb shell cmd package resolve-activity --brief \
+        -c android.intent.category.LAUNCHER "$pkg" 2>/dev/null) || out=""
+  comp=$(printf '%s\n' "$out" | grep -F '/' | tail -1 | tr -d '\r' \
+         | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  printf '%s' "$comp"
+  printf '%s' "$comp" | grep -Eq '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$'
+}
+
+# close_system_overlay [essais] : si le premier plan est un overlay SYSTÈME, BACK
+# puis `am force-stop` s'il résiste, borné (3 essais par défaut), composant
+# journalisé. rc=0 quand plus aucun overlay n'est devant, 1 s'il persiste.
+# Sur une app normale ou un dump illisible : AUCUN input, AUCUN force-stop.
+close_system_overlay() {
+  local tries="${1:-$OVERLAY_TRIES}" i=1 cur comp
+  cur=$(fg_pkg)
+  is_system_overlay "$cur" || return 0
+  while [ "$i" -le "$tries" ]; do
+    comp=$(fg_component 2>/dev/null) || comp=""
+    _ulog "close_system_overlay: overlay $cur au premier plan${comp:+ (composant $comp)} — BACK $i/$tries"
+    adb shell input keyevent 4 >/dev/null 2>&1 || true
+    [ "$OVERLAY_SETTLE_SEC" = "0" ] || sleep "$OVERLAY_SETTLE_SEC"
+    cur=$(fg_pkg)
+    if ! is_system_overlay "$cur"; then
+      _ulog "close_system_overlay: overlay fermé par BACK (fg=$cur)"
+      return 0
+    fi
+    _ulog "close_system_overlay: $cur résiste au BACK — am force-stop $cur ($i/$tries)"
+    adb shell am force-stop "$cur" >/dev/null 2>&1 || true
+    [ "$OVERLAY_SETTLE_SEC" = "0" ] || sleep "$OVERLAY_SETTLE_SEC"
+    cur=$(fg_pkg)
+    if ! is_system_overlay "$cur"; then
+      _ulog "close_system_overlay: overlay arrêté, premier plan rendu (fg=$cur)"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  _ulog "close_system_overlay: overlay persistant ($cur) après $tries essais"
+  return 1
+}
+
+# launch_fg pkg [timeout_s] : lance le composant launcher RÉSOLU via
+# `am start -W -n`, puis rend 0 UNIQUEMENT quand `fg_pkg` = pkg, en refermant les
+# overlays au passage. Au plus 2 lancements (jamais de boucle de redémarrage).
+# rc=1 journalisé si le paquet n'est jamais devant — un lancement non prouvé n'est
+# pas un lancement.
+launch_fg() {
+  local pkg="$1" tmo="${2:-$LAUNCH_FG_SEC}" t_end attempt=0 cur comp slice a_end
+  t_end=$((SECONDS + tmo))
+  while [ "$attempt" -lt 2 ] && [ "$SECONDS" -lt "$t_end" ]; do
+    attempt=$((attempt + 1))
+    comp=$(launcher_component "$pkg") || comp=""
+    if [ -n "$comp" ]; then
+      _ulog "launch_fg: am start -W -n $comp (essai $attempt/2)"
+      adb shell am start -W -n "$comp" >/dev/null 2>&1 || true
+    else
+      _ulog "launch_fg: composant launcher introuvable pour $pkg — repli monkey (essai $attempt/2)"
+      adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    fi
+    # Chaque essai reçoit une part du budget (moitié au premier) : un second
+    # lancement ne sert que s'il lui reste du temps pour être prouvé.
+    slice=$(( (t_end - SECONDS) / (3 - attempt) ))
+    [ "$slice" -lt 1 ] && slice=1
+    a_end=$((SECONDS + slice))
+    while [ "$SECONDS" -lt "$a_end" ]; do
+      cur=$(fg_pkg)
+      if [ "$cur" = "$pkg" ]; then
+        _ulog "launch_fg: $pkg au premier plan (essai $attempt/2, fg=$cur)"
+        return 0
+      fi
+      close_system_overlay >/dev/null 2>&1 || true
+      cur=$(fg_pkg)
+      if [ "$cur" = "$pkg" ]; then
+        _ulog "launch_fg: $pkg au premier plan après fermeture d'overlay (essai $attempt/2)"
+        return 0
+      fi
+      [ "$SECONDS" -lt "$a_end" ] || break
+      [ "$FG_POLL_SEC" = "0" ] || sleep "$FG_POLL_SEC"
+    done
+  done
+  _ulog "launch_fg: $pkg jamais au premier plan (${attempt} lancement(s), tmo=${tmo}s, fg=$(fg_pkg))"
   return 1
 }
 
@@ -262,6 +400,37 @@ wait_ui() {
     return 3
   fi
   return "$rc"
+}
+
+# wait_app_ui pkg timeout spec... : attend un marqueur d'écran EN GARDANT l'app
+# devant. Boucle `wait_ui` par tranches, referme les overlays système au passage,
+# et relance l'app (au plus WAIT_APP_UI_MAX_RELAUNCH fois) si elle a perdu le
+# premier plan. rc=0 dès que le marqueur matche ; rc=3 seulement si la boucle
+# s'achève sans match. Ce rc ne prouve pas le premier plan : si celui-ci n'est pas
+# le paquet, le dump de `snap` (ex. capture 33) rejette le MATCH en ACTION_MISS et
+# le verdict reste WARN — la preuve finale est le dump de `snap`, pas ce retour.
+wait_app_ui() {
+  local pkg="$1" tmo="${2:-30}" t_end rc cur slice relaunch=0
+  shift 2
+  t_end=$((SECONDS + tmo))
+  while [ "$SECONDS" -lt "$t_end" ]; do
+    close_system_overlay >/dev/null 2>&1 || true
+    slice=$((t_end - SECONDS))
+    [ "$slice" -gt "$WAIT_APP_UI_SLICE" ] && slice="$WAIT_APP_UI_SLICE"
+    [ "$slice" -lt 1 ] && slice=1
+    wait_ui "$pkg" "$slice" "$@"
+    rc=$?
+    [ "$rc" = 0 ] && return 0
+    cur=$(fg_pkg)
+    if [ "$cur" != "$pkg" ] && [ "$relaunch" -lt "$WAIT_APP_UI_MAX_RELAUNCH" ] \
+       && [ "$SECONDS" -lt "$t_end" ]; then
+      relaunch=$((relaunch + 1))
+      _ulog "wait_app_ui: $pkg a perdu le premier plan (fg=$cur) — relance $relaunch/$WAIT_APP_UI_MAX_RELAUNCH"
+      launch_fg "$pkg" "$WAIT_APP_UI_RELAUNCH_SEC" >/dev/null 2>&1 || true
+    fi
+  done
+  _ulog "wait_app_ui: marqueur jamais présent pour $pkg (tmo=${tmo}s, fg=$(fg_pkg))"
+  return 3
 }
 
 # tap_exact label : noeud VISIBLE dont text ou content-desc, espaces normalisés,

@@ -290,8 +290,17 @@ def test_wait_fg_default_is_ten_minutes_and_used_by_launches():
     assert not re.search(r"\bwait_fg\b[^\n]*\s\b60\b", both), \
         "un lancement attend encore 60 s fixes (wait_fg ... 60)"
     run = run_text()
-    for pkg in ("$RIDER_PKG", "$DRIVER_PKG"):
-        assert re.search(r'launch "%s"; wait_fg "%s" "\$WAIT_FG_SEC"' % (re.escape(pkg), re.escape(pkg)), run), pkg
+    # Rider : lancement simple + wait_fg. Driver : démarrage PROUVÉ (ISC-4/5) —
+    # `launch_fg` puis `wait_app_ui` sur le marqueur d'accueil inchangé. Le littéral
+    # `launch "$DRIVER_PKG"; wait_fg ...` du run 40375590679 est ce qui laissait
+    # passer un écran Réglages en premier plan : il ne doit plus exister.
+    assert re.search(r'launch "\$RIDER_PKG"; wait_fg "\$RIDER_PKG" "\$WAIT_FG_SEC"', run), \
+        "$RIDER_PKG"
+    assert re.search(r'launch_fg "\$DRIVER_PKG" "\$WAIT_FG_SEC"', run), "$DRIVER_PKG (launch_fg)"
+    assert re.search(r'wait_app_ui "\$DRIVER_PKG" "\$\{DRIVER_ONLINE_WAIT_SEC:-120\}" '
+                     r'"\$MARK_driver_home_online"', run), "$DRIVER_PKG (wait_app_ui)"
+    assert not re.search(r'(?m)^\s*launch "\$DRIVER_PKG"', run), \
+        "le Driver ne doit plus être lancé sans preuve de premier plan"
 
 
 # ------------------------------------------------------ UI-first ordering
