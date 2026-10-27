@@ -18,6 +18,37 @@ DRIVER_PKG="sn.galass.galassdriver"
 APK_RIDER="${APK_RIDER:-apk/rider/app-debug.apk}"
 APK_DRIVER="${APK_DRIVER:-apk/driver/app-debug.apk}"
 ARTEMIS_BIN="${ARTEMIS_BIN:-vendor/artemis/.venv/bin/artemis}"
+# Chaîne de repli ORDONNÉE de modèles vision (FreeLLMAPI, vérifiés le 2026-10-27).
+# L'override workflow (ARTEMIS_DEFAULT_MODEL) passe en TÊTE, dédoublonné.
+# La route llama vision est MORTE (429 « lacks vision ») : jamais dans la chaîne.
+ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite}"
+ARTEMIS_BACKOFF="${ARTEMIS_BACKOFF:-5 15 30}"
+# Vide = un essai par modèle de la chaîne ; toute valeur est bornée à la chaîne.
+ARTEMIS_MAX_ATTEMPTS="${ARTEMIS_MAX_ATTEMPTS:-}"
+# Budget d'une sonde vision (une image par modèle) : une route qui pend ne doit
+# pas consommer le budget du step. Passé à vision_preflight.py --timeout.
+VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-20}"
+# Après un double-429, Artemis attend LLM_PAUSE_TIMEOUT_SECONDS (900 s par défaut)
+# avant d'échouer : ce budget mangerait tout le step. 15 s laisse le retry du
+# harnais basculer sur la route suivante. Un override utilisateur est respecté.
+export LLM_PAUSE_TIMEOUT_SECONDS="${LLM_PAUSE_TIMEOUT_SECONDS:-15}"
+# >>> B1
+# Artemis est lancé depuis vendor/artemis : un chemin RELATIF qu'on lui passe est
+# résolu depuis CE cwd, donc introuvable -> il retombe sur la config vendor et la
+# chaîne est inerte. Normalise une fois, au démarrage, en absolu.
+# La config Artemis réécrite vit dans $OUT : vendor/ n'est JAMAIS modifié.
+abs_path() {
+  case "${1:-}" in
+    "") printf '%s' "" ;;
+    /*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$(pwd)" "$1" ;;
+  esac
+}
+OUT_ABS=$(abs_path "$OUT")
+ARTEMIS_CONFIG=$(abs_path "${ARTEMIS_CONFIG:-vendor/artemis/config/artemis.jsonc}")
+ARTEMIS_CONFIG_RUNTIME=$(abs_path "${ARTEMIS_CONFIG_RUNTIME:-$OUT/artemis/artemis.jsonc}")
+ARTEMIS_CHAIN_FILE=$(abs_path "${ARTEMIS_CHAIN_FILE:-$OUT/artemis/vision-chain.txt}")
+# <<< B1
 PY="${PY:-python3}"
 . "$(dirname "$0")/smoke_log.sh"
 
@@ -32,6 +63,10 @@ mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$SMOKE_LOG"
 : > "$OUT/results-live.txt"
 : > "$OUT/captures.txt"
+# Chaîne de repli / config runtime / compteur d'usage : jamais hérités d'un run précédent.
+rm -f "$ARTEMIS_CHAIN_FILE" "$ARTEMIS_CONFIG_RUNTIME" "$OUT/artemis/model-usage.txt" \
+      "$OUT/artemis/vision-model.txt" "$OUT/artemis/vision-chain-requested.txt"
+mkdir -p "$(dirname "$ARTEMIS_CHAIN_FILE")" "$(dirname "$ARTEMIS_CONFIG_RUNTIME")"
 
 declare -a RESULTS=()
 . "$(dirname "$0")/ui.sh"
@@ -332,9 +367,14 @@ publish_artemis_log() {
   [ -f "$src" ] || return 0
   mkdir -p "$OUT" "$(dirname "$SMOKE_LOG")" 2>/dev/null || true
   masked=$(mktemp "${TMPDIR:-/tmp}/artemis-log.XXXXXX") || return 0
+  # Le provider peut être OpenRouter-like (OPENAI_*) ou FreeLLMAPI (FREELLM_*) :
+  # les deux clés et les deux bases sont masquées. sanitize.py ignore une variable
+  # absente ou vide, donc l'option reste sûre quand un seul backend est configuré.
   if ! tail -n 200 "$src" 2>/dev/null \
        | sed 's/^/artemis-log: /' \
-       | "$PY" e2e/sanitize.py --redact-env OPENAI_API_KEY > "$masked"; then
+       | "$PY" e2e/sanitize.py --redact-env OPENAI_API_KEY \
+             --redact-env FREELLM_API_KEY --redact-env OPENAI_BASE_URL \
+             --redact-env FREELLM_BASE_URL > "$masked"; then
     rm -f "$masked"
     return 0
   fi
@@ -378,15 +418,156 @@ artemis_run() {
     ARTEMIS_OK=0
     return 2
   fi
-  local args=(run "$goal" --profile flash --test-name "$name"
-              --traces-path "$(pwd)/$OUT/artemis"
-              --standalone --device-serial "$ARTEMIS_SERIAL")
-  [ -n "$pkg" ] && args+=(--locked-app "$pkg")
-  log "artemis start: $name (device=$ARTEMIS_SERIAL)"
-  ( cd vendor/artemis && timeout "$tmo" "./.venv/bin/artemis" "${args[@]}" ) \
-    >"$OUT/artemis/$name.log" 2>&1
-  local rc=$?
-  log "artemis end: $name rc=$rc"
+
+  # Chaîne de repli ordonnée. Absente ou à UN modèle => un seul essai, comportement
+  # historique (les tests unitaires du harnais reposent sur cet argv unique).
+  local chain_file="${ARTEMIS_CHAIN_FILE:-}"
+  local -a chain=()
+  if [ -n "$chain_file" ] && [ -s "$chain_file" ]; then
+    local line
+    while IFS= read -r line; do
+      [ -n "${line//[[:space:]]/}" ] && chain+=("$line")
+    done < "$chain_file"
+  fi
+  local chain_n="${#chain[@]}"
+  local max_attempts=1
+  if [ "$chain_n" -gt 1 ]; then
+    max_attempts="${ARTEMIS_MAX_ATTEMPTS:-$chain_n}"
+    case "$max_attempts" in ''|*[!0-9]*) max_attempts="$chain_n" ;; esac
+    [ "$max_attempts" -lt 1 ] && max_attempts=1
+    [ "$max_attempts" -gt "$chain_n" ] && max_attempts="$chain_n"
+  fi
+  # Un token non numérique ("abc", "-2") ferait planter `[ "$delay" -gt … ]` et
+  # annoncerait un backoff bidon dans le log : on ne garde que les entiers.
+  local -a backoff=()
+  if [ -n "${ARTEMIS_BACKOFF:-}" ]; then
+    local -a raw_backoff=()
+    read -r -a raw_backoff <<< "${ARTEMIS_BACKOFF}"
+    local token
+    if [ "${#raw_backoff[@]}" -gt 0 ]; then
+      for token in "${raw_backoff[@]}"; do
+        case "$token" in ''|*[!0-9]*) ;; *) backoff+=("$token") ;; esac
+      done
+    fi
+  fi
+  [ "${#backoff[@]}" -gt 0 ] || backoff=(5 15 30)
+
+  # B1: Artemis tourne depuis vendor/artemis; un chemin relatif y serait résolu.
+  local out_abs="${OUT_ABS:-}"
+  if [ -z "$out_abs" ]; then
+    out_abs="$OUT"
+    case "$out_abs" in /*) ;; *) out_abs="$(pwd)/$out_abs" ;; esac
+  fi
+
+  # B2: la piste d'audit décrit le DERNIER essai, pas la chaîne demandée.
+  # primary = modèle de cet essai, fallback = son repli Artemis (niveau unique),
+  # fallback_events = marqueurs "Falling back"/llm_fallback trouvés dans SON journal.
+  local attempt=1 rc=0 attempts_run=0 signals=""
+  local primary="none" fallback="none" fallback_events=0 served="unknown"
+  local last_primary="none" last_fallback="none" last_events=0
+  local deadline=0   # posé au premier appel Artemis: la config ne mange pas le budget
+  while :; do
+    local model="default" next_model="-"
+    if [ "$chain_n" -gt 0 ]; then
+      model="${chain[$((attempt - 1))]}"
+      # apply(offset=attempt-1) donne au nœud de tête la paire
+      # (chain[attempt-1], chain[attempt % n]).
+      [ "$chain_n" -gt 1 ] && next_model="${chain[$((attempt % chain_n))]}"
+    fi
+    local offset=$((attempt - 1))
+    # Config runtime régénérée AVANT chaque essai : offset=0 -> tête de chaîne,
+    # offset=1 -> route suivante. vendor/ n'est que lu ($ARTEMIS_CONFIG).
+    if [ "$chain_n" -gt 1 ] && [ -n "${ARTEMIS_CONFIG:-}" ] \
+       && [ -n "${ARTEMIS_CONFIG_RUNTIME:-}" ] && [ -n "$chain_file" ]; then
+      if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" \
+           --out "$ARTEMIS_CONFIG_RUNTIME" --chain-file "$chain_file" \
+           --offset "$offset" >> "$OUT/run.log" 2>&1; then
+        log "artemis config: $name offset=$offset primary=$model fallback=$next_model runtime=$ARTEMIS_CONFIG_RUNTIME"
+      else
+        # Pas de config à l'offset demandé => AUCUNE tentative : lancer Artemis sur
+        # l'ancienne config servirait silencieusement le mauvais modèle.
+        log "artemis config: $name régénération refusée (offset=$offset) — étape abandonnée rc=2"
+        rc=2
+        break
+      fi
+    fi
+
+    # Le premier essai garde le budget entier du step ; les suivants prennent ce
+    # qu'il reste, et on ne démarre pas un essai qui n'aurait pas ~5 s pour vivre.
+    if [ "$attempt" -eq 1 ]; then
+      deadline=$((SECONDS + tmo))
+    fi
+    local tmo_left="$tmo"
+    if [ "$attempt" -gt 1 ]; then
+      tmo_left=$((deadline - SECONDS))
+      if [ "$tmo_left" -le 5 ]; then
+        log "artemis retry: $name budget épuisé (remaining=${tmo_left}s) après $((attempt - 1)) essai(s)"
+        break
+      fi
+    fi
+
+    local attempt_log="$OUT/artemis/$name.attempt$attempt.log"
+    local -a args=(run "$goal" --profile flash --test-name "$name"
+                   --traces-path "$out_abs/artemis"
+                   --standalone --device-serial "$ARTEMIS_SERIAL")
+    [ -n "$pkg" ] && args+=(--locked-app "$pkg")
+    log "artemis start: $name attempt $attempt/$max_attempts primary=$model fallback=$next_model offset=$offset timeout=${tmo_left}s device=$ARTEMIS_SERIAL"
+    ( cd vendor/artemis && timeout "$tmo_left" "./.venv/bin/artemis" "${args[@]}" ) \
+      > "$attempt_log" 2>&1
+    rc=$?
+    # Chaque essai garde SON journal (audit) ; $name.log reste la DERNIÈRE tentative,
+    # c'est elle que publish_artemis_log publie.
+    cp "$attempt_log" "$OUT/artemis/$name.log" 2>/dev/null || true
+    local events=0
+    events=$(grep -E -c 'Falling back|llm_fallback' "$attempt_log" 2>/dev/null) || events=0
+    attempts_run="$attempt"
+    last_primary="$model"
+    last_fallback="$next_model"
+    last_events="$events"
+    log "artemis llm: $name attempt=$attempt/$max_attempts primary=$model fallback=$next_model fallback_events=$events"
+    log "artemis end: $name attempt $attempt/$max_attempts rc=$rc remaining=$((deadline - SECONDS))s"
+
+    if [ "$rc" -eq 0 ]; then break; fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      log "artemis end: $name dernier essai $attempt/$max_attempts rc=$rc — arrêt"
+      break
+    fi
+    # 429 / rate-limit / routing_exhausted / 5xx / timeout => route suivante.
+    # 400 / 401 / autre échec propre => pas de bascule (rejouer ne changerait rien).
+    local signal=""
+    signal=$("$PY" e2e/model_chain.py classify --rc "$rc" \
+               --log "$attempt_log" 2>/dev/null) || signal=""
+    if [ -z "$signal" ]; then
+      log "artemis end: $name échec non rejouable (rc=$rc) — pas de bascule"
+      break
+    fi
+    local next_model_retry="${chain[$attempt]}"
+    signals="${signals:+$signals,}$signal"
+    local delay="${backoff[$((attempt - 1))]:-30}"
+    local remaining=$((deadline - SECONDS))
+    [ "$delay" -gt "$remaining" ] && delay="$remaining"
+    [ "$delay" -lt 0 ] && delay=0
+    log "artemis retry: $name switch from=$model to=$next_model_retry signal=$signal backoff=${delay}s (attempt $((attempt + 1))/$max_attempts)"
+    [ "$delay" -gt 0 ] && sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+
+  # Piste d'audit HONNÊTE : quel modèle a RÉELLEMENT servi, combien d'essais,
+  # quels signaux. rc!=0 => served=unknown (jamais prétendre qu'un modèle a servi).
+  local signals_out="${signals:--}"
+  if [ "$attempts_run" -gt 0 ]; then
+    primary="$last_primary"
+    fallback="$last_fallback"
+    fallback_events="$last_events"
+    if [ "$rc" -eq 0 ]; then
+      if [ "$fallback_events" -gt 0 ]; then served="fallback"; else served="primary"; fi
+    fi
+  fi
+  log "artemis models: $name primary=$primary fallback=$fallback fallback_events=$fallback_events served=$served attempts=$attempts_run/$max_attempts signals=$signals_out rc=$rc"
+  printf '%s|%s|%s|head=%s|primary=%s|fallback=%s|fallback_events=%s|served=%s|signals=%s|rc=%s\n' \
+    "$name" "$attempts_run" "$max_attempts" "${chain[0]:-default}" \
+    "$primary" "$fallback" "$fallback_events" "$served" "$signals_out" "$rc" \
+    >> "$OUT/artemis/model-usage.txt"
   # Publié APRÈS CHAQUE exécution : le smoke réussi est précisément le journal qu'on
   # veut voir dans run.log et dans l'artefact e2e/smoke.log. Un échec publie le même
   # tampon masqué, puis sa capture d'écran (inchangée).
@@ -626,58 +807,58 @@ NOTIF_BEFORE=$(notif_probe "$DRIVER_PKG" "")
 NOTIF_BEFORE_PKG=$(printf '%s' "$NOTIF_BEFORE" | json_field records_pkg)
 log "notif baseline: $NOTIF_BEFORE"
 
-# Préflight vision (inchangé) + smoke Artemis.
-"$PY" - "$OUT/artemis" <<'PY' > "$OUT/artemis/vision-model.txt"
-import json, os, re, sys, urllib.request
-out = sys.argv[1]
-b = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
-H = {"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", ""), "Content-Type": "application/json"}
-key = os.environ.get("OPENAI_API_KEY", "")
-def clean(t): return t.replace(key, "***") if key else t
-png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-ids = []
-try:
-    with urllib.request.urlopen(urllib.request.Request(b + "/models", headers=H), timeout=30) as r:
-        ids = [m.get("id") for m in json.load(r).get("data", []) if m.get("id")]
-except Exception:
-    ids = []
-open(f"{out}/models.txt", "w").write("\n".join(ids) + "\n")
-want = os.environ.get("ARTEMIS_DEFAULT_MODEL") or "auto"
-vis = [i for i in ids if re.search(r"vl|vision|gemini|gpt-4o|gpt-4\.1|llama-4|pixtral|gemma-3|qwen.*vl|omni|scout|maverick", i, re.I)]
-cands = [want] + [i for i in vis if i != want][:8]
-log = open(f"{out}/vision-preflight.txt", "w")
-chosen = ""
-for m in cands:
-    body = {"model": m, "max_tokens": 300, "messages": [{"role": "user", "content": [
-        {"type": "text", "text": "color?"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}}]}]}
-    req = urllib.request.Request(b + "/chat/completions", data=json.dumps(body).encode(), method="POST", headers=H)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            code, txt = r.status, r.read().decode()[:300]
-    except urllib.error.HTTPError as e:
-        code, txt = e.code, e.read().decode(errors="replace")[:300]
-    except Exception as e:
-        code, txt = 0, repr(e)[:200]
-    log.write(f"model={m} http={code} body={clean(txt)}\n"); log.flush()
-    if code == 200:
-        chosen = m; break
-print(chosen)
-PY
-VISION_MODEL=$(tr -d '\n' < "$OUT/artemis/vision-model.txt")
+# Préflight vision: chaîne ORDONNÉE (override workflow en TÊTE), chaque modèle sonde
+# une image, seuls les 200 survivent. L'ancien heredoc s'arrêtait au PREMIER 200 :
+# une route rate-limitée en cours de run tuait toutes les étapes UI suivantes.
+CHAIN_REQUESTED="$OUT/artemis/vision-chain-requested.txt"
+chain_args=(chain --base "$ARTEMIS_BASE_CHAIN")
+if [ -n "${ARTEMIS_DEFAULT_MODEL:-}" ]; then
+  chain_args+=(--override "$ARTEMIS_DEFAULT_MODEL")
+fi
+if ! "$PY" e2e/model_chain.py "${chain_args[@]}" > "$CHAIN_REQUESTED" \
+     2> "$OUT/artemis/vision-chain.err"; then
+  log "llm-vision: override refusé — chaîne de base seule (voir artemis/vision-chain.err)"
+  if ! "$PY" e2e/model_chain.py chain --base "$ARTEMIS_BASE_CHAIN" > "$CHAIN_REQUESTED" \
+       2>> "$OUT/artemis/vision-chain.err"; then
+    : > "$CHAIN_REQUESTED"
+    log "llm-vision: chaîne de base invalide (voir artemis/vision-chain.err)"
+  fi
+fi
+: > "$ARTEMIS_CHAIN_FILE"
+if [ -s "$CHAIN_REQUESTED" ]; then
+  # VISION_PROBE_TIMEOUT borne UNE sonde : une route qui pend est morte, elle ne
+  # doit pas manger le budget du step (le défaut 20 s est documenté dans le log).
+  VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-20}"
+  log "llm-vision: préflight timeout=${VISION_PROBE_TIMEOUT}s par modèle ($(grep -c . "$CHAIN_REQUESTED" 2>/dev/null || echo 0) demandé(s))"
+  if ! "$PY" e2e/vision_preflight.py --chain-file "$CHAIN_REQUESTED" \
+         --out "$ARTEMIS_CHAIN_FILE" --log "$OUT/artemis/vision-preflight.txt" \
+         --timeout "$VISION_PROBE_TIMEOUT" \
+         >> "$OUT/run.log" 2>&1; then
+    log "llm-vision: préflight en erreur (voir artemis/vision-preflight.txt)"
+  fi
+fi
+VISION_MODEL=$(head -n 1 "$ARTEMIS_CHAIN_FILE" 2>/dev/null | tr -d '\r\n')
+printf '%s' "$VISION_MODEL" > "$OUT/artemis/vision-model.txt"
+ARTEMIS_CHAIN_N=$(grep -c . "$ARTEMIS_CHAIN_FILE" 2>/dev/null || true)
+[ -n "$ARTEMIS_CHAIN_N" ] || ARTEMIS_CHAIN_N=0
 if [ -z "$VISION_MODEL" ]; then
   mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
 elif ! printf '%s' "$VISION_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]{1,80}$'; then
-  # B6: the id is untrusted (remote /models listing). Refuse anything that could
-  # become a sed/shell token instead of splicing it into a command line.
+  # B6: l'id vient d'une sonde distante. Refuse tout ce qui pourrait devenir un
+  # token sed/shell au lieu de l'injecter dans une ligne de commande.
   mark llm-vision FAIL "VISION_MODEL rejeté (caractères non sûrs): $(printf '%s' "$VISION_MODEL" | tr -c 'A-Za-z0-9._:/-\n' '?')"
   ARTEMIS_OK=0
 else
   export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
-  if "$PY" e2e/set_model.py vendor/artemis/config/artemis.jsonc "$VISION_MODEL" >/dev/null; then
-    grep -c -F "\"model\": \"$VISION_MODEL\"" vendor/artemis/config/artemis.jsonc > "$OUT/artemis/profile-model-count.txt" || true
-    mark llm-vision PASS "modèle vision accepté: $VISION_MODEL"
+  # Config runtime réécrite DANS $OUT (vendor/ jamais modifié), puis vérifiée: le
+  # modèle de tête doit bien être présent dans le fichier produit.
+  if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" --out "$ARTEMIS_CONFIG_RUNTIME" \
+       --chain-file "$ARTEMIS_CHAIN_FILE" --offset 0 >> "$OUT/run.log" 2>&1 \
+     && "$PY" e2e/set_model.py --check "$ARTEMIS_CONFIG_RUNTIME" "$VISION_MODEL" >/dev/null; then
+    grep -c -F "\"model\": \"$VISION_MODEL\"" "$ARTEMIS_CONFIG_RUNTIME" > "$OUT/artemis/profile-model-count.txt" || true
+    export ARTEMIS_ARTEMIS_JSONC="$ARTEMIS_CONFIG_RUNTIME"
+    mark llm-vision PASS "chaîne vision (${ARTEMIS_CHAIN_N}): $(paste -sd, "$ARTEMIS_CHAIN_FILE")"
   else
     mark llm-vision FAIL "réécriture de la config Artemis refusée"
     ARTEMIS_OK=0
@@ -1174,7 +1355,8 @@ deadline_check report  # budget mur : verdict partiel plutôt qu'un step qui tra
 D="$OUT/diag"; mkdir -p "$D"
 find "$HOME/.artemis" vendor/artemis \( -name "daemon-*.log" -o -name "mcp_server.log" \) 2>/dev/null | head -10 | while read -r f; do cp "$f" "$D/" 2>/dev/null; done
 if ! curl -s -m 3 http://127.0.0.1:8000/ >/dev/null 2>&1; then
-  ( cd vendor/artemis && nohup ./.venv/bin/artemis-admin > "$(pwd)/../../$D/artemis-admin.log" 2>&1 & )
+  # OUT_ABS (B1) : un OUT absolu doublait le préfixe et le log partait ailleurs.
+  ( cd vendor/artemis && nohup ./.venv/bin/artemis-admin > "$OUT_ABS/diag/artemis-admin.log" 2>&1 & )
   for _ in $(seq 1 30); do curl -s -m 2 http://127.0.0.1:8000/ >/dev/null 2>&1 && break; sleep 2; done
 fi
 echo "artemis service http=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:8000/)" > "$D/daemon-status.txt"
