@@ -25,6 +25,8 @@ CLI (argv only, no shell strings):
   chain   --base "a,b,c" [--override X]                 -> ids, one per line (rc=2 invalid)
   apply   --in F --out F --chain-file F [--offset N]    -> writes nothing on invalid input
   classify --rc N [--log F]                             -> signal on stdout, rc=0 if retryable
+  attempt-timeout --remaining S --left N [--cap S]      -> seconds this attempt may use
+  attempts-affordable --remaining S --left N [--min S]  -> attempts that can still use >= min s
 """
 import argparse
 import hashlib
@@ -347,6 +349,70 @@ def classify(rc, log_text=""):
     return None
 
 
+# ------------------------------------------------------------------ budget
+# Run 40205373538: `artemis_run` gave the FIRST attempt the whole step budget, so
+# a hung route ate the offer window and the tap/API fallback started after the
+# offer had expired. Each attempt now gets a fair share of what is left, capped
+# so one slow route cannot hold the step for minutes.
+MODEL_TIMEOUT_SEC = 45
+MODEL_TIMEOUT_MIN = 5
+MODEL_TIMEOUT_MAX = 600
+
+
+def clamp_cap(cap=MODEL_TIMEOUT_SEC):
+    """Numeric attempt cap, clamped to [5, 600]; anything unparsable -> 45."""
+    try:
+        value = int(str(cap).strip())
+    except (TypeError, ValueError):
+        return MODEL_TIMEOUT_SEC
+    return max(MODEL_TIMEOUT_MIN, min(MODEL_TIMEOUT_MAX, value))
+
+
+def attempt_timeout(remaining, attempts_left, cap=MODEL_TIMEOUT_SEC):
+    """Seconds one attempt may use: min(cap, remaining // attempts_left).
+
+    The last attempt gets whatever is left (still capped), because there is no
+    next route to protect. Zero means "do not start an attempt": either the step
+    budget is gone or no attempt is left. While time remains and an attempt is
+    left, the share is never below 1 s (a 0 s `timeout` call would kill Artemis
+    before it could log anything).
+    """
+    try:
+        remaining = int(remaining)
+        attempts_left = int(attempts_left)
+    except (TypeError, ValueError):
+        return 0
+    cap = max(1, clamp_cap(cap))
+    if remaining < 1 or attempts_left < 1:
+        return 0
+    if attempts_left == 1:
+        share = min(cap, remaining)
+    else:
+        share = min(cap, remaining // attempts_left)
+    return max(1, share)
+
+
+def capped_attempts_left(remaining, attempts_left, min_attempt=MODEL_TIMEOUT_MIN):
+    """How many routes can still get a usable share of `remaining` seconds.
+
+    Contract A: dividing the step by every remaining route put a 22 s offer
+    window at 3 s per model (6 routes), under the 5 s usability floor, so
+    `artemis_run` refused to start ANY attempt on `driver-accept` and Artemis
+    never got a chance inside the offer. The count is what must shrink, never the
+    floor: `min(attempts_left, max(1, remaining // min_attempt))`, and 0 when the
+    window cannot fund a single usable attempt.
+    """
+    try:
+        remaining = int(remaining)
+        attempts_left = int(attempts_left)
+        min_attempt = max(1, int(min_attempt))
+    except (TypeError, ValueError):
+        return 0
+    if remaining < min_attempt or attempts_left < 1:
+        return 0
+    return min(attempts_left, max(1, remaining // min_attempt))
+
+
 # --------------------------------------------------------------------- CLI
 def _read_chain_file(path):
     with open(path, encoding="utf-8") as fh:
@@ -381,6 +447,16 @@ def _cmd_classify(args):
     return 0
 
 
+def _cmd_attempt_timeout(args):
+    sys.stdout.write(f"{attempt_timeout(args.remaining, args.left, args.cap)}\n")
+    return 0
+
+
+def _cmd_attempts_affordable(args):
+    sys.stdout.write(f"{capped_attempts_left(args.remaining, args.left, args.min)}\n")
+    return 0
+
+
 def _parser():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -401,6 +477,20 @@ def _parser():
     classify_p.add_argument("--rc", type=int, required=True)
     classify_p.add_argument("--log", default=None)
     classify_p.set_defaults(func=_cmd_classify)
+    timeout_p = sub.add_parser("attempt-timeout",
+                               help="seconds this Artemis attempt may use")
+    timeout_p.add_argument("--remaining", required=True)
+    timeout_p.add_argument("--left", required=True)
+    timeout_p.add_argument("--cap", default=MODEL_TIMEOUT_SEC)
+    timeout_p.set_defaults(func=_cmd_attempt_timeout)
+
+    affordable_p = sub.add_parser(
+        "attempts-affordable",
+        help="how many routes can still get a usable share of the step budget")
+    affordable_p.add_argument("--remaining", required=True)
+    affordable_p.add_argument("--left", required=True)
+    affordable_p.add_argument("--min", default=MODEL_TIMEOUT_MIN)
+    affordable_p.set_defaults(func=_cmd_attempts_affordable)
     return parser
 
 

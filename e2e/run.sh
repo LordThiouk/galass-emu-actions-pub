@@ -65,7 +65,8 @@ mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/captures.txt"
 # Chaîne de repli / config runtime / compteur d'usage : jamais hérités d'un run précédent.
 rm -f "$ARTEMIS_CHAIN_FILE" "$ARTEMIS_CONFIG_RUNTIME" "$OUT/artemis/model-usage.txt" \
-      "$OUT/artemis/vision-model.txt" "$OUT/artemis/vision-chain-requested.txt"
+      "$OUT/artemis/attempts.txt" "$OUT/artemis/vision-model.txt" \
+      "$OUT/artemis/vision-chain-requested.txt" "$OUT"/cash.json
 mkdir -p "$(dirname "$ARTEMIS_CHAIN_FILE")" "$(dirname "$ARTEMIS_CONFIG_RUNTIME")"
 
 declare -a RESULTS=()
@@ -164,6 +165,8 @@ marker_source() {
 
 # Flags UI_* : une transition n'est acquise que si l'écran SUIVANT le prouve.
 UI_ACCEPT=0; UI_START=0; UI_STOP0=0; UI_STOP1=0; UI_END=0; UI_CASH=0
+# UI_TAP_FAILED : un tap a bien été joué mais n'a pas produit l'écran suivant.
+UI_TAP_FAILED=0
 # ACCEPT_VIA : ui | api | failed — écrit aussi dans $OUT/accept-via.txt, car le
 # watchdog est forké AVANT la phase d'accept et ne verrait pas une variable tardive.
 ACCEPT_VIA=""
@@ -179,6 +182,58 @@ set_accept_via() { ACCEPT_VIA="$1"; printf '%s\n' "$1" > "$OUT/accept-via.txt"; 
 # prouve l'écran, pas le tap : sans preuve, la course avance mais le crédit reste
 # `unknown` — même vérité que `accepted_via()` côté API.
 ui_accept_via() { if [ "${UI_TAP_PROVEN:-0}" = 1 ]; then echo ui; else echo unknown; fi; }
+
+# D2 (run 40205373538): UN SEUL libellé accept_via, dérivé une fois des preuves
+# réelles (tap prouvé, écran prouvé, API 2xx) et journalisé UNE seule fois. Deux
+# logs dispersés pouvaient se contredire — c'est exactement ce qui a rendu le
+# verdict ambigu.
+resolve_accept_label() {
+  local api_via="" out="" via="" cause="" api_ok=0 api_2xx=0 assigned=0
+  # `assigned` = la course est-elle à nous, preuve backend (accept.json .ok) ou
+  # écran d'après-acceptation (UI_ACCEPT) : sans lui, un 4xx qui n'assignait rien
+  # empruntait la cause "assigned_without_tap_proof".
+  assigned=$("$PY" -c 'import json,sys
+try:
+    print(1 if json.load(open(sys.argv[1])).get("ok") else 0)
+except Exception:
+    print(0)' "$OUT/accept.json" 2>/dev/null || true)
+  if [ "$assigned" != "1" ] && [ "${UI_ACCEPT:-0}" = "1" ]; then
+    assigned=1
+  fi
+  if [ "${ACCEPT_OK:-0}" != "1" ]; then
+    # Aucun via n'a prouvé l'acceptation : "failed", avec la cause exacte du
+    # repli API — jamais un "unknown" qui laisserait croire à un succès.
+    cause=$("$PY" -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("cause") or "unknown")
+except Exception:
+    print("unknown")' "$OUT/accept.json" 2>/dev/null || true)
+    ACCEPT_VIA="failed"
+    ACCEPT_CAUSE="${cause:-unknown}"
+  else
+    api_via=$("$PY" -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("via") or "")
+except Exception:
+    print("")' "$OUT/accept.json" 2>/dev/null || true)
+    # accepted_via() ne renvoie "api" que sur un 2xx classé offer_accepted.
+    if [ "$api_via" = "api" ]; then api_ok=1; api_2xx=1; fi
+    out=$("$PY" e2e/offer_flow.py label \
+            --ui-tap-proven "${UI_TAP_PROVEN:-0}" \
+            --ui-screen-proven "${UI_ACCEPT:-0}" \
+            --api-ok "$api_ok" --api-2xx "$api_2xx" \
+            --ui-tap-failed "${UI_TAP_FAILED:-0}" \
+            --assigned "$assigned" 2>/dev/null) \
+      || out="via=unknown cause=not_assigned"
+    via="${out#via=}"; via="${via%% *}"
+    cause=""
+    case "$out" in *"cause="*) cause="${out#*cause=}" ;; esac
+    ACCEPT_VIA="$via"
+    case "$cause" in none|"") ACCEPT_CAUSE="" ;; *) ACCEPT_CAUSE="$cause" ;; esac
+  fi
+  set_accept_via "$ACCEPT_VIA"
+  log "accept_via=$ACCEPT_VIA cause=${ACCEPT_CAUSE:-none}"
+}
 
 # S13: a wedged emulator must still leave a verdict — AND release the step.
 # B10 (run 40177022780): l'ancien `( sleep 8100; ... ) &` forkait un `sleep`
@@ -276,7 +331,6 @@ api_accept_ok() {
        "$OUT/accept.json" 2>/dev/null || return 1
   ACCEPT_OK=1
   set_accept_via "$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("via") or "unknown")' "$OUT/accept.json")"
-  log "accept_via=$ACCEPT_VIA (repli API, détail dans $OUT/accept.json)"
 }
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
@@ -492,18 +546,40 @@ artemis_run() {
       fi
     fi
 
-    # Le premier essai garde le budget entier du step ; les suivants prennent ce
-    # qu'il reste, et on ne démarre pas un essai qui n'aurait pas ~5 s pour vivre.
+    # Budget PAR TENTATIVE (run 40205373538) : le premier essai recevait TOUT le
+    # step, une route pendue consommait la fenêtre et le repli API démarrait après
+    # expiration. Part = min(cap, restant / essais restants), dernier essai = restant.
     if [ "$attempt" -eq 1 ]; then
       deadline=$((SECONDS + tmo))
     fi
-    local tmo_left="$tmo"
-    if [ "$attempt" -gt 1 ]; then
-      tmo_left=$((deadline - SECONDS))
-      if [ "$tmo_left" -le 5 ]; then
-        log "artemis retry: $name budget épuisé (remaining=${tmo_left}s) après $((attempt - 1)) essai(s)"
-        break
-      fi
+    local remaining=$((deadline - SECONDS))
+    [ "$remaining" -ge 0 ] || remaining=0
+    local attempts_left=$((max_attempts - attempt + 1))
+    local cap="${ARTEMIS_MODEL_TIMEOUT_SEC:-45}"
+    # Contrat A (driver-accept): diviser la fenêtre par TOUTES les routes restantes
+    # donnait 22/6 = 3 s par modèle, sous le plancher de 5 s — run.sh refusait alors
+    # toute tentative et Artemis n'avait jamais sa chance dans l'offre. On réduit le
+    # NOMBRE de tentatives, jamais le plancher : 22 s => 4 routes à 5 s.
+    local affordable=""
+    affordable=$("$PY" e2e/model_chain.py attempts-affordable --remaining "$remaining" \
+                   --left "$attempts_left" --min 5 2>/dev/null) || affordable=""
+    case "$affordable" in ''|*[!0-9]*) affordable="$attempts_left" ;; esac
+    attempts_left="$affordable"
+    local tmo_left
+    tmo_left=$("$PY" e2e/model_chain.py attempt-timeout --remaining "$remaining" \
+                 --left "$attempts_left" --cap "$cap" 2>/dev/null) || tmo_left="$remaining"
+    case "$tmo_left" in ''|*[!0-9]*) tmo_left="$remaining" ;; esac
+    # Un essai de moins de 5 s ne peut rien produire : mieux vaut rendre la main
+    # tout de suite au repli taps + API qu'annoncer une tentative bidon.
+    if [ "$tmo_left" -lt 5 ]; then
+      log "artemis retry: $name budget épuisé (remaining=${remaining}s part=${tmo_left}s cap=${cap}s affordable=${attempts_left}) — aucune tentative"
+      # Aucun essai n'a tourné : rc INCONNU ("-"), jamais 124 qui se lit comme un
+      # timeout observé. `budget` est le signal, et la raison de l'arrêt.
+      printf '%s|%s|%s|%s|%s|%s|%s\n' "$name" "$attempt" "-" "-" "0" "budget" "budget" \
+        >> "$OUT/artemis/attempts.txt"
+      # Aucun essai n'a tourné : rc=0 annoncerait un succès sans preuve.
+      [ "$attempts_run" -gt 0 ] || rc=2
+      break
     fi
 
     local attempt_log="$OUT/artemis/$name.attempt$attempt.log"
@@ -511,7 +587,7 @@ artemis_run() {
                    --traces-path "$out_abs/artemis"
                    --standalone --device-serial "$ARTEMIS_SERIAL")
     [ -n "$pkg" ] && args+=(--locked-app "$pkg")
-    log "artemis start: $name attempt $attempt/$max_attempts primary=$model fallback=$next_model offset=$offset timeout=${tmo_left}s device=$ARTEMIS_SERIAL"
+    log "artemis start: $name attempt $attempt/$max_attempts primary=$model fallback=$next_model offset=$offset timeout=${tmo_left}s affordable=${attempts_left} device=$ARTEMIS_SERIAL"
     ( cd vendor/artemis && timeout "$tmo_left" "./.venv/bin/artemis" "${args[@]}" ) \
       > "$attempt_log" 2>&1
     rc=$?
@@ -527,6 +603,23 @@ artemis_run() {
     log "artemis llm: $name attempt=$attempt/$max_attempts primary=$model fallback=$next_model fallback_events=$events"
     log "artemis end: $name attempt $attempt/$max_attempts rc=$rc remaining=$((deadline - SECONDS))s"
 
+    # Journal PAR TENTATIVE (run 40205373538) : qui a tourné, avec quel budget, et
+    # comment ça s'est terminé. Le rapport ne devine plus rien à partir du seul rc.
+    local attempt_signal="" outcome="terminal"
+    attempt_signal=$("$PY" e2e/model_chain.py classify --rc "$rc" \
+                       --log "$attempt_log" 2>/dev/null) || attempt_signal=""
+    if [ "$rc" -eq 0 ]; then
+      outcome="success"
+    elif [ "$rc" -eq 124 ]; then
+      outcome="timeout"; [ -n "$attempt_signal" ] || attempt_signal="timeout"
+    elif [ -n "$attempt_signal" ]; then
+      outcome="retryable"
+    elif [ "$rc" -ge 128 ]; then
+      outcome="signal-id"
+    fi
+    printf '%s|%s|%s|%s|%s|%s|%s\n' "$name" "$attempt" "$model" "$rc" "$tmo_left" \
+      "${attempt_signal:--}" "$outcome" >> "$OUT/artemis/attempts.txt"
+
     if [ "$rc" -eq 0 ]; then break; fi
     if [ "$attempt" -ge "$max_attempts" ]; then
       log "artemis end: $name dernier essai $attempt/$max_attempts rc=$rc — arrêt"
@@ -534,9 +627,7 @@ artemis_run() {
     fi
     # 429 / rate-limit / routing_exhausted / 5xx / timeout => route suivante.
     # 400 / 401 / autre échec propre => pas de bascule (rejouer ne changerait rien).
-    local signal=""
-    signal=$("$PY" e2e/model_chain.py classify --rc "$rc" \
-               --log "$attempt_log" 2>/dev/null) || signal=""
+    local signal="$attempt_signal"
     if [ -z "$signal" ]; then
       log "artemis end: $name échec non rejouable (rc=$rc) — pas de bascule"
       break
@@ -544,6 +635,9 @@ artemis_run() {
     local next_model_retry="${chain[$attempt]}"
     signals="${signals:+$signals,}$signal"
     local delay="${backoff[$((attempt - 1))]:-30}"
+    # Un timeout n'est pas un quota : attendre ne rend pas la route plus rapide et
+    # brûle la fenêtre. 429/5xx gardent leur backoff.
+    [ "$signal" = "timeout" ] && delay=0
     local remaining=$((deadline - SECONDS))
     [ "$delay" -gt "$remaining" ] && delay="$remaining"
     [ "$delay" -lt 0 ] && delay=0
@@ -563,10 +657,20 @@ artemis_run() {
       if [ "$fallback_events" -gt 0 ]; then served="fallback"; else served="primary"; fi
     fi
   fi
-  log "artemis models: $name primary=$primary fallback=$fallback fallback_events=$fallback_events served=$served attempts=$attempts_run/$max_attempts signals=$signals_out rc=$rc"
-  printf '%s|%s|%s|head=%s|primary=%s|fallback=%s|fallback_events=%s|served=%s|signals=%s|rc=%s\n' \
+  # served_model = le modèle qui a RÉELLEMENT servi, jamais celui qu'on espérait.
+  # rc != 0 => unknown (aucune réponse exploitable) ; sinon primary, ou fallback
+  # quand Artemis a lui-même basculé (fallback_events > 0).
+  local served_model="unknown"
+  if [ "$rc" -eq 0 ] && [ "$attempts_run" -gt 0 ]; then
+    if [ "$fallback_events" -gt 0 ]; then served_model="$fallback"; else served_model="$primary"; fi
+  fi
+  local chain_csv="default"
+  if [ "$chain_n" -gt 0 ]; then chain_csv=$(IFS=,; printf '%s' "${chain[*]}"); fi
+  log "artemis models: $name primary=$primary fallback=$fallback fallback_events=$fallback_events served=$served attempts=$attempts_run/$max_attempts signals=$signals_out rc=$rc served_model=$served_model chain=$chain_csv"
+  printf '%s|%s|%s|head=%s|primary=%s|fallback=%s|fallback_events=%s|served=%s|signals=%s|rc=%s|served_model=%s|chain=%s\n' \
     "$name" "$attempts_run" "$max_attempts" "${chain[0]:-default}" \
     "$primary" "$fallback" "$fallback_events" "$served" "$signals_out" "$rc" \
+    "$served_model" "$chain_csv" \
     >> "$OUT/artemis/model-usage.txt"
   # Publié APRÈS CHAQUE exécution : le smoke réussi est précisément le journal qu'on
   # veut voir dans run.log et dans l'artefact e2e/smoke.log. Un échec publie le même
@@ -1002,7 +1106,8 @@ if [ "$ui_left" -gt 0 ] && tap_exact "Accepter la course"; then
   fi
   if wait_ui "$DRIVER_PKG" "$ui_left" "$MARK_driver_accepted_details"; then
     ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via "$(ui_accept_via)"
-    log "accept_via=$ACCEPT_VIA (écran suivant 35 prouvé dans la fenêtre; tap_ui_prouvé=$UI_TAP_PROVEN)"
+  else
+    UI_TAP_FAILED=1
   fi
 else
   log "offre: tap « Accepter la course » non joué ou manqué (ui_left=${ui_left}s)"
@@ -1014,14 +1119,14 @@ if [ "$ACCEPT_OK" = "0" ]; then
   api_accept_ok || true
   export E2E_UI_TAP_PROVEN=0
 fi
+resolve_accept_label  # un seul libellé, calculé et journalisé une fois (D2)
 if [ "$ACCEPT_OK" != "1" ]; then
-  # ISC-3: FAIL seulement si aucun via n'a prouvé l'acceptation (report.py worst-wins).
   mark driver-accepted-details FAIL "api fallback: accept"
-  ACCEPT_CAUSE=$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("cause") or "unknown")' "$OUT/accept.json" 2>/dev/null || true)
   [ -n "${ACCEPT_CAUSE:-}" ] || ACCEPT_CAUSE=unknown
-  set_accept_via failed
-  log "accept_via=$ACCEPT_VIA cause=$ACCEPT_CAUSE — parcours driver arrêté, verdict partiel"
-  mark accept-via FAIL "accept_via=api et ui indisponibles: cause=$ACCEPT_CAUSE"
+  # ISC-3: FAIL seulement si aucun via n'a prouvé l'acceptation (worst-wins).
+  # Le détail ne porte QUE des valeurs mesurées : pas de prose inventée sur
+  # l'indisponibilité de l'API ou de l'UI.
+  mark accept-via FAIL "accept_via=$ACCEPT_VIA cause=$ACCEPT_CAUSE"
   flush_results
   write_flags
   "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV" > "$OUT/early-report.txt" 2>&1 || true
@@ -1030,10 +1135,9 @@ fi
 if [ "$ACCEPT_OK" = "1" ]; then
   # Chemin SUCCÈS : seule une preuve réelle (api ou ui) vaut PASS. `unknown` =
   # assigné sans tap prouvé : la course continue, mais le crédit reste WARN.
-  ACCEPT_CAUSE=$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("cause") or "")' "$OUT/accept.json" 2>/dev/null || true)
   case "$ACCEPT_VIA" in
     api|ui)
-      mark accept-via PASS "accept_via=$ACCEPT_VIA cause=none (renewed: voir accept.json si repli API)" ;;
+      mark accept-via PASS "accept_via=$ACCEPT_VIA cause=${ACCEPT_CAUSE:-none} (renewed: voir accept.json si repli API)" ;;
     unknown)
       mark accept-via WARN "accept_via=unknown cause=${ACCEPT_CAUSE:-assigned_without_tap_proof}" ;;
     *)
@@ -1130,13 +1234,89 @@ bring_fg "$RIDER_PKG" || true
 cap rider-running-start 21-rider-running-start "$RIDER_PKG" 30
 
 # ------------------------------------------------------------------- stops
+# geofence_stop <index> : fix GPS appliqué ET vérifié avant tout complete-stop.
+# Les coordonnées de l'arrêt viennent de $OUT/state.json (détail de course déjà
+# sauvegardé), donc le fix injecté ne peut pas diverger de la course réelle — et
+# `api loc_stop` relit CES coordonnées : le backend voit l'arrêt que la géofence
+# a vérifié, jamais une copie codée en dur.
+# `stops_ride` doit être la course courante : après un renouvellement d'offre,
+# les arrêts persistés sont périmés (D4).
+# Échec => aucun `complete-stop`, ni tap ni repli API.
+geofence_stop() {
+  local i="$1" n=$(( $1 + 1 )) lat="" lng="" coords="" reason=""
+  reason=$("$PY" - "$OUT/state.json" "$i" "${RIDE_ID:-}" <<'PYCOORDS' 2>&1
+import json, sys
+path, idx, ride = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as fh:
+        st = json.load(fh)
+except Exception as exc:
+    sys.exit(f"{path} illisible ({exc.__class__.__name__})")
+stops = st.get("stops") or []
+if idx < 0 or idx >= len(stops):
+    sys.exit(f"arret {idx} absent de {path}")
+tag = str(st.get("stops_ride") or "")
+if not ride or tag != ride:
+    sys.exit(f"stale stops: stops_ride={tag or 'absent'} != ride_id={ride or 'absent'}")
+stop = stops[idx] or {}
+try:
+    lat, lng = float(stop["latitude"]), float(stop["longitude"])
+except (KeyError, TypeError, ValueError):
+    sys.exit(f"arret {idx} sans coordonnees numeriques")
+print(f"ok {lat} {lng}")
+PYCOORDS
+)
+  case "$reason" in
+    "ok "*) coords="${reason#ok }" ;;
+    *)
+      log "geofence: arrêt $n inutilisable (${reason:-state.json vide}) — complete-stop bloqué"
+      return 1 ;;
+  esac
+  lat="${coords%% *}"; lng="${coords##* }"
+  if ! adb emu geo fix "$lng" "$lat" >/dev/null 2>&1; then
+    log "geofence: adb emu geo fix a échoué (arrêt $n, $lat,$lng)"
+    return 1
+  fi
+  sleep "${GEO_SETTLE_SEC:-3}"
+  mkdir -p "$OUT/diag"
+  adb shell dumpsys location > "$OUT/diag/geo-stop$n.txt" 2>/dev/null || true
+  # Provider FIGÉ sur gps : un knob permettrait de « vérifier » un fix network
+  # périmé, exactement le bypass que geo.py existe pour empêcher. La limite reste
+  # réglable, bornée à la plage qui a un sens backend (100..2000 m).
+  local limit="${GEO_STOP_LIMIT_M:-500}"
+  case "$limit" in ''|*[!0-9]*) limit=500 ;; esac
+  [ "$limit" -lt 100 ] && limit=100
+  [ "$limit" -gt 2000 ] && limit=2000
+  if ! "$PY" e2e/geo.py check --fix "$OUT/diag/geo-stop$n.txt" \
+       --stop-lat "$lat" --stop-lng "$lng" \
+       --limit "$limit" \
+       --provider gps >> "$OUT/run.log" 2>&1; then
+    log "geofence: fix GPS non appliqué pour l'arrêt $n (voir diag/geo-stop$n.txt)"
+    return 1
+  fi
+  # Le backend doit voir le chauffeur à l'arrêt : POST seulement APRÈS vérification,
+  # et un refus de loc_stop (arrêt disparu/invalide) bloque le complete-stop.
+  if ! STOP_INDEX="$i" api loc_stop >> "$OUT/run.log" 2>&1; then
+    log "geofence: loc_stop a refusé l'arrêt $n — complete-stop bloqué"
+    return 1
+  fi
+  return 0
+}
+
 deadline_check stops  # budget mur : verdict partiel plutôt qu'un step qui traîne
-STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)
 ui_stops=0
 for i in 0 1; do
   n=$((i + 1))
-  adb emu geo fix "${STOP_LNG[$i]}" "${STOP_LAT[$i]}" >/dev/null 2>&1 || true
-  STOP_INDEX=$i api loc_stop >> "$OUT/run.log" 2>&1
+  # D4: aucun complete-stop sans un fix GPS vérifié (les coordonnées viennent de
+  # state.json, jamais de constantes qui divergent de la course réelle).
+  if ! geofence_stop "$i"; then
+    # ISC-5: un fix non vérifié interdit TOUT complete-stop — pas seulement celui
+    # de cet arrêt. Le repli API (stop_one) complète le premier arrêt PENDING quel
+    # que soit STOP_INDEX : continuer sur l'arrêt suivant compléterait un arrêt
+    # jamais vérifié. On sort de la boucle, le run continue après elle.
+    mark "driver-stop${n}-done" FAIL "geofence: fix GPS non appliqué (arrêt $n)"
+    break
+  fi
   ride_state
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
@@ -1155,7 +1335,9 @@ for i in 0 1; do
     log "arrêt $n confirmé par l'UI (écran suivant prouvé)"
   else
     mark "driver-stop${n}-done" FAIL "api fallback: stop $n"
-    STOP_INDEX=$i api stop_one >> "$OUT/run.log" 2>&1
+    # `geofence_stop` a déjà injecté ET vérifié le fix : l'assertion est portée
+    # par cette SEULE commande (préfixe d'environnement), jamais exportée.
+    STOP_INDEX=$i E2E_GEOFENCE_OK=1 api stop_one >> "$OUT/run.log" 2>&1
   fi
   ride_state
   bring_fg "$RIDER_PKG" || true
@@ -1211,16 +1393,43 @@ elif grep -qi "Temps estimé" "$OUT/ui/41-driver-cash-request.xml" 2>/dev/null; 
 else
   mark bug-b5-estimated-time PASS "pas de « Temps estimé » après la fin"
 fi
-if tap_exact "Confirmer le paiement"; then
-  if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
-    UI_CASH=1; log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
+# D3 (run 40205373538): `received-cash-payment` a été appelé AVANT que le rider
+# demande le cash — le backend a répondu not_found et le verdict a accusé le
+# harnais. On sonde l'état backend (payment_status==3) avant toute action, et on
+# n'appelle JAMAIS l'endpoint si le cash n'a pas été demandé.
+# Le détail du FAIL vient de cash.json : `cash_status_unavailable` (état
+# illisible) n'est pas `cash_not_requested` (statut lu, différent de 3), et une
+# config invalide (rc 4) ne dit rien du comportement du rider.
+CASH_REQUESTED=0
+CASH_RC=0
+api cash_wait >> "$OUT/run.log" 2>&1 || CASH_RC=$?
+CASH_CAUSE=$("$PY" -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("cause") or "")
+except Exception:
+    print("")' "$OUT/cash.json" 2>/dev/null || true)
+if [ "$CASH_RC" = "0" ]; then
+  CASH_REQUESTED=1
+  log "cash: le rider a demandé le paiement espèces (payment_status=3)"
+elif [ "$CASH_RC" = "4" ]; then
+  mark driver-cash-confirmed FAIL "cash config_error"
+  log "cash: config_error (${CASH_CAUSE:-config_error}) — aucun POST, comportement rider non observé"
+else
+  mark driver-cash-confirmed FAIL "${CASH_CAUSE:-cash_status_unavailable}"
+  log "cash: ${CASH_CAUSE:-cash_status_unavailable} (rc=$CASH_RC) — tap et received-cash-payment sautés (aucun POST)"
+fi
+if [ "$CASH_REQUESTED" = "1" ]; then
+  if tap_exact "Confirmer le paiement"; then
+    if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
+      UI_CASH=1; log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
+    else
+      mark driver-cash-confirmed FAIL "api fallback: cash"
+      api cash_driver >> "$OUT/run.log" 2>&1
+    fi
   else
     mark driver-cash-confirmed FAIL "api fallback: cash"
     api cash_driver >> "$OUT/run.log" 2>&1
   fi
-else
-  mark driver-cash-confirmed FAIL "api fallback: cash"
-  api cash_driver >> "$OUT/run.log" 2>&1
 fi
 ride_state
 api status >> "$OUT/run.log" 2>&1

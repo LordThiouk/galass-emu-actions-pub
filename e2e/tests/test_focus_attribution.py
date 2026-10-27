@@ -336,7 +336,8 @@ def test_unknown_credit_has_an_explicit_cause_and_never_renews():
                        lambda: True,
                        lambda _s: None,
                        retries=5, delay=1, tap_proven=lambda: True)
-    assert out == {"ok": True, "via": "ui", "cause": None,
+    # le code HTTP réel est publié dans accept.json (contrat D2) : jamais deviné
+    assert out == {"ok": True, "via": "ui", "cause": None, "code": 403,
                    "renewed": False, "attempts": 1}, out
 
     # A 2xx accepted answer stays api even when a tap was also proven.

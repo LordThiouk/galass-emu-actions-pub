@@ -51,6 +51,22 @@ def flow():
     return offer_flow
 
 
+def extract_fn(name):
+    """Whole `name() { ... }` definition, brace-counted (braces are balanced here)."""
+    body = run_text()
+    start = re.search(r"(?m)^%s\(\) \{" % re.escape(name), body)
+    assert start, f"{name}() introuvable"
+    depth = 0
+    for i in range(start.end() - 1, len(body)):
+        if body[i] == "{":
+            depth += 1
+        elif body[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return body[start.start():i + 1]
+    raise AssertionError(f"{name}() non fermée")
+
+
 def body_between(text, start, end):
     i = text.index(start)
     j = text.index(end, i)
@@ -534,8 +550,303 @@ def test_failed_accept_flushes_verdict_and_exits_non_zero():
     blk = re.search(r'if \[ "\$ACCEPT_OK" != "1" \]; then(.*?)^fi$', body, re.M | re.S)
     assert blk, "bloc d'échec d'acceptation introuvable"
     block = blk.group(1)
-    for needle in ("flush_results", "write_flags", "exit 1", "accept_via=api"):
+    for needle in ("flush_results", "write_flags", "exit 1",
+                   'accept_via=$ACCEPT_VIA cause=$ACCEPT_CAUSE'):
         assert needle in block, (needle, block)
+    assert "api et ui indisponibles" not in block, block
+
+
+@case
+def test_success_accept_mark_carries_the_measured_cause():
+    """The PASS detail must print ACCEPT_CAUSE, never a hardcoded `cause=none`."""
+    body = run_text()
+    start = body.index('if [ "$ACCEPT_OK" = "1" ]; then')
+    m = re.search(r'case "\$ACCEPT_VIA" in(.*?)^\s*esac$', body[start:], re.M | re.S)
+    assert m, body[start:start + 600]
+
+    tmp = tempfile.mkdtemp(prefix="e2e-accept-pass-")
+    env = dict(os.environ)
+    env.update({"OUT": tmp, "ACCEPT_VIA": "api",
+                "ACCEPT_CAUSE": "ui_tap_unproven_then_api"})
+    script = (
+        'mark() { printf "%s|%s|%s\n" "$1" "$2" "$3" >> "$OUT/marks.txt"; }\n'
+        'eval "$1"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script, "_", m.group(0)],
+                          capture_output=True, text=True, env=env, cwd=tmp)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    marks = open(os.path.join(tmp, "marks.txt"), encoding="utf-8").read()
+    assert "cause=ui_tap_unproven_then_api" in marks, marks
+    assert "cause=none" not in marks, marks
+    assert marks.startswith("accept-via|PASS|accept_via=api "), marks
+
+    # no measured cause: the honest fallback stays `none`
+    tmp = tempfile.mkdtemp(prefix="e2e-accept-pass-")
+    env.update({"OUT": tmp, "ACCEPT_CAUSE": ""})
+    proc = subprocess.run(["bash", "-c", script, "_", m.group(0)],
+                          capture_output=True, text=True, env=env, cwd=tmp)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    marks = open(os.path.join(tmp, "marks.txt"), encoding="utf-8").read()
+    assert "cause=none" in marks, marks
+
+
+@case
+def test_fail_detail_reports_only_measured_values_and_one_label():
+    body = run_text()
+    blk = re.search(r'if \[ "\$ACCEPT_OK" != "1" \]; then(.*?)^fi$', body, re.M | re.S)
+    assert blk, "bloc d'échec d'acceptation introuvable"
+    detail = re.search(r'mark accept-via FAIL "([^"]*)"', blk.group(1))
+    assert detail, blk.group(1)
+    assert detail.group(1) == "accept_via=$ACCEPT_VIA cause=$ACCEPT_CAUSE", detail.group(1)
+    # exactly one accept_via= label in the logs, one measured value in the marks
+    logs = re.findall(r'^\s*log "accept_via=', body, re.M)
+    assert len(logs) == 1, logs
+    assert re.search(r'mark accept-via (?:PASS|WARN|FAIL) "accept_via=\$ACCEPT_VIA', body), body
+
+
+def run_api_flow(script, state, extra_env=None):
+    """Import the REAL api_flow.py against a temp OUT and run `script`."""
+    tmp = tempfile.mkdtemp(prefix="e2e-apiflow-")
+    if state is not None:
+        with open(os.path.join(tmp, "state.json"), "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+    env = dict(os.environ)
+    env.update({"BASE": "https://staging.example.test", "OUT": tmp, "STEP": "ping",
+                "RIDER_TOKEN": "r", "DRIVER_TOKEN": "d", "DEV_TOKEN": "x"})
+    env.pop("GALASS_STAGING_URL", None)
+    env.pop("E2E_GEOFENCE_OK", None)
+    env.update(extra_env or {})
+    # STEP=ping runs one HTTP call at import: stub urllib so no socket is opened.
+    stub = (
+        "import sys, json, urllib.request\n"
+        "class _R:\n"
+        "    status = 200\n"
+        "    def read(self): return b'{\"data\":{}}'\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, *a): return False\n"
+        "urllib.request.urlopen = lambda *a, **k: _R()\n"
+        "sys.path.insert(0, %r)\n"
+        "import api_flow as a\n" % ROOT
+    )
+    driver = stub + script
+    proc = subprocess.run([sys.executable, "-c", driver], capture_output=True,
+                          text=True, env=env, cwd=os.path.dirname(ROOT))
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    return tmp, proc.stdout
+
+
+@case
+def test_status_never_keeps_a_previous_rides_stops():
+    state = {"ride_id": "R2", "stops": [{"latitude": 1.0, "longitude": 2.0}],
+             "stops_ride": "R1"}
+    script = (
+        "fresh = [{\"latitude\": 14.71, \"longitude\": -17.46}]\n"
+        "a.driver_details = lambda: {\"stops\": fresh}\n"
+        "a.details = lambda: {\"status\": \"running\"}\n"
+        "a.call = lambda *x, **k: (200, {\"data\": {\"total\": 0}})\n"
+        "a.status()\n"
+        "st = json.load(open(a.state_f))\n"
+        "print('STOPS', json.dumps(st['stops']), st.get('stops_ride'))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    line = [l for l in out.splitlines() if l.startswith("STOPS ")][0]
+    assert "14.71" in line, line
+    assert "1.0" not in line, f"les arrêts de la course précédente survivent: {line}"
+    assert line.endswith(" R2"), line
+
+
+@case
+def test_driver_details_tags_the_stops_with_the_ride_they_belong_to():
+    script = (
+        "ride = {\"id\": \"R3\", \"stops\": [{\"latitude\": 14.7, \"longitude\": -17.4}]}\n"
+        "a.call = lambda *x, **k: (200, {\"data\": {\"ride\": ride}})\n"
+        "a.driver_details()\n"
+        "st = json.load(open(a.state_f))\n"
+        "print('TAG', st.get('stops_ride'), len(st['stops']))\n"
+    )
+    _tmp, out = run_api_flow(script, {"ride_id": "R3"})
+    line = [l for l in out.splitlines() if l.startswith("TAG ")][0]
+    assert line == "TAG R3 1", line
+
+
+@case
+def test_loc_stop_posts_the_state_stops_and_refuses_anything_else():
+    """The backend must be sent the SAME stop the geofence verified."""
+    state = {"ride_id": "R1", "stops_ride": "R1", "stops": [
+        {"latitude": "14.7100", "longitude": "-17.4620"},
+        {"latitude": 14.7020, "longitude": -17.4550},
+    ]}
+    script = (
+        "sent = []\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "ok0 = a.loc_stop(0)\n"
+        "ok1 = a.loc_stop(1)\n"
+        "print('SENT', json.dumps(sent), ok0, ok1)\n"
+        "print('UNKNOWN', a.loc_stop(9), a.loc_stop(-1), a.loc_stop(1.5))\n"
+        "print('AFTER', json.dumps(sent))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    lines = {l.split(" ", 1)[0]: l.split(" ", 1)[1] for l in out.splitlines()
+             if l.split(" ", 1)[0] in ("SENT", "AFTER")}
+    sent = json.loads(lines["SENT"].rsplit(" ", 2)[0])
+    assert sent == [[14.71, -17.462], [14.702, -17.455]], sent
+    assert lines["SENT"].endswith("True True"), lines["SENT"]
+    assert "UNKNOWN False False False" in out, out
+    # a refused index must not inject a fix
+    assert json.loads(lines["AFTER"]) == sent, (lines, sent)
+
+
+@case
+def test_loc_stop_refuses_a_stop_without_numeric_coordinates():
+    state = {"ride_id": "R1", "stops_ride": "R1",
+             "stops": [{"latitude": "abc", "longitude": None},
+                       {"longitude": -17.45}]}
+    script = (
+        "sent = []\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "print('RESULT', a.loc_stop(0), a.loc_stop(1), a.loc_stop(0), len(sent))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    assert "RESULT False False False 0" in out, out
+
+
+@case
+def test_loc_stop_never_uses_the_hardcoded_stops_list():
+    body = api_text()
+    fn = re.search(r"^def loc_stop\(index\):(.*?)^def ", body, re.M | re.S)
+    assert fn, "loc_stop() introuvable"
+    assert "stop_coords(" in fn.group(1), fn.group(1)
+    assert "STOPS" not in fn.group(1), fn.group(1)
+    helper = re.search(r"^def stop_coords\(index\):(.*?)^def ", body, re.M | re.S)
+    assert helper, "stop_coords() introuvable"
+    assert 'st.get("stops")' in helper.group(1), helper.group(1)
+    assert "STOPS" not in helper.group(1), helper.group(1)
+
+
+@case
+def test_complete_stops_fails_closed_without_the_geofence():
+    """STEP=stops|all must never POST a complete-stop it cannot vouch for."""
+    state = {"ride_id": "R1", "stops_ride": "R1", "stops": [
+        {"latitude": 14.7100, "longitude": -17.4620},
+        {"latitude": 14.7020, "longitude": -17.4550},
+    ]}
+    script = (
+        "posts = []\n"
+        "sent = []\n"
+        "a.call = lambda m, path, *x, **k: (posts.append(path), (200, {'remark': 'stop_completed'}))[1]\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "print('RESULT', a.complete_stops(), len(posts), len(sent))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    assert "RESULT False 0 0" in out, out
+
+    # with the geofence asserted, it completes the STATE stops — not a copy
+    script = (
+        "posts = []\n"
+        "sent = []\n"
+        "a.call = lambda m, path, *x, **k: (posts.append(path), (200, {'remark': 'stop_completed'}))[1]\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "print('RESULT', a.complete_stops(), len(posts), json.dumps(sent))\n"
+    )
+    tmp = tempfile.mkdtemp(prefix="e2e-apiflow-")
+    with open(os.path.join(tmp, "state.json"), "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+    env = dict(os.environ)
+    env.update({"BASE": "https://staging.example.test", "OUT": tmp, "STEP": "ping",
+                "RIDER_TOKEN": "r", "DRIVER_TOKEN": "d", "DEV_TOKEN": "x",
+                "E2E_GEOFENCE_OK": "1"})
+    env.pop("GALASS_STAGING_URL", None)
+    stub = (
+        "import sys, json, urllib.request\n"
+        "class _R:\n"
+        "    status = 200\n"
+        "    def read(self): return b'{\"data\":{}}'\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, *a): return False\n"
+        "urllib.request.urlopen = lambda *a, **k: _R()\n"
+        "sys.path.insert(0, %r)\n"
+        "import api_flow as a\n" % ROOT
+    )
+    proc = subprocess.run([sys.executable, "-c", stub + script], capture_output=True,
+                          text=True, env=env, cwd=os.path.dirname(ROOT))
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    line = [l for l in proc.stdout.splitlines() if l.startswith("RESULT ")][0]
+    assert line == 'RESULT True 2 [[14.71, -17.462], [14.702, -17.455]]', line
+
+
+@case
+def test_stop_one_fails_closed_without_the_geofence():
+    """`stop_one` completes a stop too: same gate as `stops`, fail closed."""
+    state = {"ride_id": "R1", "stops_ride": "R1", "stops": [
+        {"latitude": 14.7100, "longitude": -17.4620}]}
+    script = (
+        "posts = []\n"
+        "sent = []\n"
+        "a.call = lambda m, path, *x, **k: (posts.append(path), (200, {'remark': 'stop_completed'}))[1]\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "a.driver_details = lambda: {'stops': [{'id': 11, 'latitude': 14.71, "
+        "'longitude': -17.462}]}\n"
+        "print('RESULT', a.stop_one(), len(posts), len(sent))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    assert "RESULT False 0 0" in out, out
+
+    # with the geofence asserted (run.sh scopes it to this one call) it completes
+    _tmp, out = run_api_flow(script, state, extra_env={"E2E_GEOFENCE_OK": "1"})
+    assert "RESULT True 1 1" in out, out
+
+
+@case
+def test_stops_pending_fails_closed_without_the_geofence():
+    """STEP=stops_pending completes every pending stop: third and last site, same gate."""
+    state = {"ride_id": "R1", "stops_ride": "R1", "stops": [
+        {"latitude": 14.7100, "longitude": -17.4620}]}
+    script = (
+        "posts = []\n"
+        "sent = []\n"
+        "a.call = lambda m, path, *x, **k: (posts.append(path), (200, {'remark': 'stop_completed'}))[1]\n"
+        "a.driver_loc = lambda lat, lng: sent.append((lat, lng))\n"
+        "a.driver_details = lambda: {'stops': [{'id': 11, 'latitude': 14.71, "
+        "'longitude': -17.462}]}\n"
+        "print('RESULT', a.complete_pending_stops(), len(posts), len(sent))\n"
+    )
+    _tmp, out = run_api_flow(script, state)
+    assert "RESULT False 0 0" in out, out
+
+    # with the geofence positively asserted by a hand-written flow it completes
+    _tmp, out = run_api_flow(script, state, extra_env={"E2E_GEOFENCE_OK": "1"})
+    assert "RESULT True 1 1" in out, out
+
+
+@case
+def test_every_complete_stop_post_lives_in_a_gated_function():
+    """Class-sweep: no `complete-stop` POST may sit outside a geofence-checking fn."""
+    body = api_text()
+    # a function body ends at the next `def` OR at any column-0 line (module code:
+    # `step = ...`, the `elif` chain) — otherwise the last def swallows the handlers.
+    fns = {m.group(1): m.group(3) for m in
+           re.finditer(r"^def ([a-z_]+)\((.*?)\):(.*?)(?=^def |^[^\s]|\Z)", body,
+                       re.M | re.S)}
+    sites = {n: b for n, b in fns.items() if "driver/rides/complete-stop/" in b}
+    assert sorted(sites) == ["complete_pending_stops", "complete_stops", "stop_one"], \
+        sorted(sites)
+    for name, blk in sites.items():
+        assert re.search(r'os\.environ\.get\(GEOFENCE_ENV\) != "1"', blk), name
+        assert "return False" in blk, name
+    total = body.count("driver/rides/complete-stop/")
+    assert total == sum(b.count("driver/rides/complete-stop/") for b in sites.values()), \
+        "un `complete-stop` POST vit hors d'une fonction géofencée"
+    assert re.search(r'elif step == "stops_pending":\s*\n\s*'
+                     r'sys\.exit\(0 if complete_pending_stops\(\) else 1\)', body), \
+        "le step stops_pending doit sortir en code non nul sur refus"
+
+
+@case
+def test_run_sh_scopes_the_geofence_gate_to_stop_one():
+    body = run_text()
+    assert len(re.findall(r"E2E_GEOFENCE_OK=1", body)) == 1, body
+    assert re.search(r'STOP_INDEX=\$i E2E_GEOFENCE_OK=1 api stop_one', body), body
+    assert "export E2E_GEOFENCE_OK" not in body, body
 
 
 @case
@@ -554,6 +865,193 @@ def test_api_flow_writes_accept_json_and_renews_once():
     assert 'st["offer_renewed"] = 1' in block, "le renouvellement doit être marqué (une seule fois)"
     assert 'st["ride_source"] = "api"' in block, "la provenance UI est perdue après renouvellement"
     assert "run_accept(" in body, "la règle de renouvellement doit venir d'offer_flow"
+
+
+def run_label(accept_json=None, **flags):
+    """Drive the REAL resolve_accept_label() from run.sh with fakes."""
+    tmp = tempfile.mkdtemp(prefix="e2e-label-")
+    if accept_json is not None:
+        with open(os.path.join(tmp, "accept.json"), "w", encoding="utf-8") as fh:
+            json.dump(accept_json, fh)
+    env = dict(os.environ)
+    env.update({"OUT": tmp, "PY": sys.executable})
+    env.update({k: str(v) for k, v in flags.items()})
+    script = (
+        "set -uo pipefail\n"
+        'log() { printf "%s\\n" "$*" >> "$OUT/run.log"; }\n'
+        'set_accept_via() { printf "%s\\n" "$1" > "$OUT/accept-via.txt"; }\n'
+        'eval "$1"\n'
+        "resolve_accept_label\n"
+        'printf "VIA=%s CAUSE=%s\\n" "$ACCEPT_VIA" "${ACCEPT_CAUSE:-}"\n'
+    )
+    # run.sh runs from the repo root: `e2e/offer_flow.py` is relative to it.
+    proc = subprocess.run(["bash", "-c", script, "_", extract_fn("resolve_accept_label")],
+                          capture_output=True, text=True, env=env,
+                          cwd=os.path.dirname(ROOT))
+    log = open(os.path.join(tmp, "run.log")).read() if os.path.exists(
+        os.path.join(tmp, "run.log")) else ""
+    sidecar = open(os.path.join(tmp, "accept-via.txt")).read().strip() if os.path.exists(
+        os.path.join(tmp, "accept-via.txt")) else ""
+    return proc, log, sidecar
+
+
+@case
+def test_resolve_accept_label_credits_ui_only_with_a_proven_tap():
+    proc, log, sidecar = run_label(ACCEPT_OK=1, UI_TAP_PROVEN=1, UI_ACCEPT=1)
+    assert proc.stdout.strip() == "VIA=ui CAUSE=", (proc.stdout, proc.stderr)
+    assert log.count("accept_via=") == 1, log
+    assert "accept_via=ui cause=none" in log, log
+    assert sidecar == "ui", sidecar
+
+    proc, log, _ = run_label(ACCEPT_OK=1, UI_TAP_PROVEN=0, UI_ACCEPT=1)
+    assert proc.stdout.strip() == "VIA=unknown CAUSE=assigned_without_tap_proof", proc.stdout
+
+
+@case
+def test_resolve_accept_label_prefers_a_2xx_api_answer():
+    proc, log, _ = run_label({"via": "api", "cause": None},
+                             ACCEPT_OK=1, UI_TAP_PROVEN=1, UI_ACCEPT=1,
+                             UI_TAP_FAILED=1)
+    assert proc.stdout.strip() == "VIA=api CAUSE=ui_tap_unproven_then_api", proc.stdout
+    assert log.count("accept_via=") == 1, log
+
+    proc, _, _ = run_label({"via": "api", "cause": None},
+                           ACCEPT_OK=1, UI_TAP_PROVEN=0, UI_ACCEPT=0)
+    assert proc.stdout.strip() == "VIA=api CAUSE=api_2xx", proc.stdout
+
+
+@case
+def test_resolve_accept_label_reads_assigned_from_accept_json():
+    # assigned by the backend, UI never proven -> assigned_without_tap_proof
+    proc, log, _ = run_label({"ok": True, "via": "unknown", "cause": None},
+                             ACCEPT_OK=1, UI_TAP_PROVEN=0, UI_ACCEPT=0)
+    assert proc.stdout.strip() == "VIA=unknown CAUSE=assigned_without_tap_proof", proc.stdout
+    # 4xx + not assigned: the ride is someone else's
+    proc, log, _ = run_label({"ok": False, "via": "none", "cause": "respond_403"},
+                             ACCEPT_OK=0, UI_TAP_PROVEN=0, UI_ACCEPT=0)
+    assert proc.stdout.strip() == "VIA=failed CAUSE=respond_403", proc.stdout
+    body = run_text()
+    fn = extract_fn("resolve_accept_label")
+    assert "--assigned" in fn, fn
+    assert '"ok"' in fn, "le --assigned doit venir de accept.json .ok"
+
+
+@case
+def test_resolve_accept_label_reports_failed_with_the_api_cause():
+    proc, log, sidecar = run_label({"via": "none", "cause": "offer_expired"},
+                                   ACCEPT_OK=0)
+    assert proc.stdout.strip() == "VIA=failed CAUSE=offer_expired", proc.stdout
+    assert "accept_via=failed cause=offer_expired" in log, log
+    assert sidecar == "failed", sidecar
+
+
+# --------------------------------------------------------- accept label
+@case
+def test_accept_label_table():
+    """One unambiguous label from the proofs we actually hold."""
+    f = flow()
+    # api wins, and says whether a UI tap failed first
+    assert f.accept_label(0, 0, True, True) == {"via": "api", "cause": "api_2xx"}, \
+        f.accept_label(0, 0, True, True)
+    assert f.accept_label(1, 1, True, True, ui_tap_failed=True) == \
+        {"via": "api", "cause": "ui_tap_unproven_then_api"}
+    # ui needs BOTH the tap and the screen
+    assert f.accept_label(1, 1, False, False, assigned=True) == {"via": "ui", "cause": None}
+    # `assigned` (accept.json .ok) separates "ours but unproven" from "not ours"
+    assert f.accept_label(0, 1, False, False, assigned=True) == \
+        {"via": "unknown", "cause": "assigned_without_tap_proof"}
+    assert f.accept_label(0, 1, False, False, assigned=False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+    assert f.accept_label(1, 0, False, False, assigned=False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+    assert f.accept_label(0, 0, False, False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+    # an "ok" that is not 2xx is not an API accept
+    assert f.accept_label(0, 0, True, False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+
+
+@case
+def test_accept_label_4xx_unassigned_is_not_assigned():
+    """A 4xx accept left the ride to someone else: never `assigned_*`."""
+    f = flow()
+    assert f.accept_label(0, 0, True, False, assigned=False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+    assert f.accept_label(0, 0, False, False, ui_tap_failed=True, assigned=False) == \
+        {"via": "unknown", "cause": "not_assigned"}
+    # precedence unchanged: a 2xx api answer still wins over everything
+    assert f.accept_label(0, 0, True, True, assigned=False) == \
+        {"via": "api", "cause": "api_2xx"}
+
+
+@case
+def test_accept_label_cli():
+    proc = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "offer_flow.py"), "label",
+         "--ui-tap-proven", "1", "--ui-screen-proven", "1",
+         "--api-ok", "0", "--api-2xx", "0"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "via=ui cause=none", proc.stdout
+
+    proc = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "offer_flow.py"), "label",
+         "--ui-tap-proven", "0", "--ui-screen-proven", "1",
+         "--api-ok", "1", "--api-2xx", "1", "--ui-tap-failed", "1"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "via=api cause=ui_tap_unproven_then_api", proc.stdout
+
+    # --assigned separates assigned-but-unproven from not assigned
+    proc = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "offer_flow.py"), "label",
+         "--ui-tap-proven", "0", "--ui-screen-proven", "1",
+         "--api-ok", "0", "--api-2xx", "0", "--assigned", "1"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "via=unknown cause=assigned_without_tap_proof", proc.stdout
+
+    proc = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "offer_flow.py"), "label",
+         "--ui-tap-proven", "0", "--ui-screen-proven", "0",
+         "--api-ok", "0", "--api-2xx", "0", "--assigned", "0"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "via=unknown cause=not_assigned", proc.stdout
+
+
+@case
+def test_run_sh_logs_the_label_exactly_once():
+    body = run_text()
+    logs = re.findall(r'^\s*log "accept_via=', body, re.M)
+    assert len(logs) == 1, logs
+    assert re.search(r'^\s*log "accept_via=\$ACCEPT_VIA cause=', body, re.M), body
+    assert "e2e/offer_flow.py label" in body, "le libellé doit venir d'accept_label"
+    # the api fallback helper no longer publishes its own accept_via
+    fn = re.search(r"^api_accept_ok\(\) \{(.*?)^\}", body, re.M | re.S).group(1)
+    assert 'get("via") or "unknown"' in fn, fn
+    assert 'log "accept_via' not in fn, fn
+
+
+@case
+def test_accept_json_records_the_http_code():
+    body = api_text()
+    write = re.search(r"^def write_accept\(out\):(.*?)^def ", body, re.M | re.S)
+    assert write, "write_accept() introuvable"
+    assert '"code"' in write.group(1), write.group(1)
+    assert "out.get(\"code\")" in write.group(1), write.group(1)
+    fn = re.search(r"^def run_accept\(.*?^\S", body, re.M | re.S)
+    # run_accept lives in offer_flow.py; its result must carry the last code
+    import offer_flow
+    calls = {"n": 0}
+
+    def respond():
+        calls["n"] += 1
+        return (403, {"remark": "not_authorized"}) if calls["n"] == 1 else (200, {"remark": "offer_accepted"})
+
+    out = offer_flow.run_accept(respond, lambda: False, lambda: False, lambda _s: None,
+                                retries=3, delay=1)
+    assert out["code"] == 200, out
 
 
 # ------------------------------------------------------------------- main

@@ -216,6 +216,128 @@ def _upsert(points, point, result, detail):
     points.append({"point": point, "result": result, "detail": detail})
 
 
+# Artemis ids are model names: an allowlist, never a free-form string. A poisoned
+# row must not be able to inject anything into report.json or summary.md.
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+# Artemis writes free-ish text into model-usage.txt / attempts.txt. Everything
+# that reaches report.json or summary.md goes through one of these allowlists:
+# a poisoned row must not be able to inject markdown/HTML into the verdict.
+SERVED_VALUES = ("primary", "fallback", "none", "unknown")
+OUTCOME_VALUES = ("success", "retryable", "terminal", "budget")
+
+
+def _model_id(value):
+    value = (value or "").strip()
+    return value if MODEL_ID_RE.match(value) else None
+
+
+def _safe_token(value, fallback="-"):
+    """Allowlisted token for a run/attempt name or a signal, else `fallback`."""
+    token = _model_id(value)
+    return token if token is not None else fallback
+
+
+def _signals(value):
+    """Allowlisted comma-joined signal list (`429,timeout`), token by token.
+
+    run.sh joins every retry signal with ','; a poisoned token drops alone
+    instead of blanking the whole (measured) list.
+    """
+    tokens = [t for t in (_model_id(x) for x in (value or "").split(",")) if t]
+    return ",".join(tokens) if tokens else "-"
+
+
+def _enum(value, allowed, fallback="unknown"):
+    """Strict enum for a field whose value set is known."""
+    token = (value or "").strip().lower()
+    return token if token in allowed else fallback
+
+
+def _int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_pipe_rows(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return [line.rstrip("\n") for line in fh if line.strip()]
+    except OSError:
+        return []
+
+
+def read_artemis(out_dir):
+    """Artemis audit trail: which model really served, with which budget.
+
+    `model-usage.txt` is one row per run (legacy rows have no `served_model`);
+    `attempts.txt` is one row per attempt. Both are rebuilt every run, so a
+    missing file simply means Artemis never ran.
+    """
+    adir = os.path.join(out_dir, "artemis")
+    runs = []
+    for row in _read_pipe_rows(os.path.join(adir, "model-usage.txt")):
+        fields = row.split("|")
+        if len(fields) < 3:
+            continue
+        data = {"name": _safe_token(fields[0]), "attempts": _int(fields[1]),
+                "max_attempts": _int(fields[2])}
+        kv = {}
+        for field in fields[3:]:
+            if "=" in field:
+                key, _, value = field.partition("=")
+                kv[key] = value
+        served_model = _model_id(kv.get("served_model"))
+        if served_model is None:
+            # legacy row: derive honestly, never assume a model ran
+            if kv.get("rc") not in ("0", None):
+                served_model = "unknown"
+            elif kv.get("fallback_events", "0") not in ("0", ""):
+                served_model = _model_id(kv.get("fallback"))
+            else:
+                served_model = _model_id(kv.get("primary"))
+        runs.append({
+            "name": data["name"],
+            "attempts": data["attempts"],
+            "max_attempts": data["max_attempts"],
+            "served": _enum(kv.get("served"), SERVED_VALUES),
+            "served_model": served_model or "unknown",
+            "rc": _int(kv.get("rc")),
+            "signals": _signals(kv.get("signals")),
+            "chain": [m for m in (_model_id(x) for x in (kv.get("chain") or "").split(",")) if m],
+        })
+
+    attempts = []
+    budget_exhausted = []
+    for row in _read_pipe_rows(os.path.join(adir, "attempts.txt")):
+        fields = row.split("|")
+        if len(fields) != 7:
+            continue
+        name, attempt, model, rc, timeout_sec, signal, outcome = fields
+        safe_name = _safe_token(name)
+        attempts.append({"name": safe_name, "attempt": _int(attempt),
+                         "model": _model_id(model) or "-", "rc": _int(rc),
+                         "timeout_sec": _int(timeout_sec),
+                         "signal": _safe_token(signal, "-"),
+                         "outcome": _enum(outcome, OUTCOME_VALUES)})
+        if outcome == "budget" and safe_name not in budget_exhausted:
+            budget_exhausted.append(safe_name)
+
+    chain = [m for m in (_model_id(x) for x in
+                         _read_pipe_rows(os.path.join(adir, "vision-chain.txt"))) if m]
+    # ISC-6: run.sh writes the chain it ASKED for at preflight, before probing.
+    # Reporting only the survivors makes a rate-limited model look unrequested.
+    # `chain` is the probe result and stays separate: without the requested file
+    # nothing was asked for, so the summary must not claim a `chaîne demandée`.
+    requested_path = os.path.join(adir, "vision-chain-requested.txt")
+    requested_chain = [m for m in (_model_id(x) for x in _read_pipe_rows(requested_path))
+                       if m]
+    return {"runs": runs, "attempts": attempts, "chain": chain,
+            "requested_chain": requested_chain,
+            "budget_exhausted": budget_exhausted}
+
+
 def build(out_dir, p0=None):
     p0 = [p for p in (p0 if p0 is not None else P0_DEFAULT)]
     if not p0:
@@ -327,6 +449,7 @@ def build(out_dir, p0=None):
                        "node_count", "invalid_reason")}
                      for c in sidecars],
         "duplicates": duplicates,
+        "artemis": read_artemis(out_dir),
     }
 
     if not os.path.isfile(raw_path):
@@ -348,6 +471,21 @@ def build(out_dir, p0=None):
         "|---|---|---|",
     ]
     lines += [f"| {p['point']} | {p['result']} | {p['detail']} |" for p in points]
+    artemis = report["artemis"]
+    if artemis["runs"] or artemis["attempts"] or artemis["chain"] \
+            or artemis["requested_chain"]:
+        lines += ["", "## Artemis", ""]
+        if artemis["requested_chain"]:
+            lines += [f"- chaîne demandée: {', '.join(artemis['requested_chain'])}"]
+        if artemis["chain"]:
+            lines += [f"- chaîne: {', '.join(artemis['chain'])}"]
+        for run in artemis["runs"]:
+            lines += [f"- {run['name']}: served_model={run['served_model']} "
+                      f"attempts={run['attempts']}/{run['max_attempts']} "
+                      f"signals={run['signals']} rc={run['rc']}"]
+        if artemis["budget_exhausted"]:
+            lines += [f"- budget épuisé (aucune tentative): "
+                      f"{', '.join(artemis['budget_exhausted'])}"]
     if duplicates:
         lines += ["", "## Duplicate captures", ""]
         lines += [f"- {d['name']} repeats {d['duplicate_of']}" for d in duplicates]

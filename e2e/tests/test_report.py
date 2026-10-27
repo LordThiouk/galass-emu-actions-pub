@@ -375,6 +375,271 @@ def test_not_attempted_fixture_has_zero_p0_pass():
     assert res["verdict"] == "FAIL"
 
 
+def _artemis_out(usage, attempts=None, chain=None, requested=None):
+    out = make_out([("no-prod-calls", "PASS", "0 hit")])
+    adir = os.path.join(out, "artemis")
+    os.makedirs(adir, exist_ok=True)
+    with open(os.path.join(adir, "model-usage.txt"), "w") as fh:
+        fh.write(usage)
+    with open(os.path.join(adir, "attempts.txt"), "w") as fh:
+        fh.write("\n".join(attempts or []) + ("\n" if attempts else ""))
+    if chain is not None:
+        with open(os.path.join(adir, "vision-chain.txt"), "w") as fh:
+            fh.write("\n".join(chain) + "\n")
+    if requested is not None:
+        with open(os.path.join(adir, "vision-chain-requested.txt"), "w") as fh:
+            fh.write("\n".join(requested) + ("\n" if requested else ""))
+    return out
+
+
+@case
+def test_artemis_section_reports_served_model_and_attempts():
+    import report
+
+    out = _artemis_out(
+        "driver-accept|2|6|head=gpt-4.1|primary=gemini-2.5-flash|fallback=gpt-4o"
+        "|fallback_events=0|served=primary|signals=429|rc=0|served_model=gemini-2.5-flash"
+        "|chain=gpt-4.1,gemini-2.5-flash\n",
+        ["driver-accept|1|gpt-4.1|1|15|429|retryable",
+         "driver-accept|2|gemini-2.5-flash|0|15|15|success"],
+        ["gpt-4.1", "gemini-2.5-flash"],
+        requested=["gpt-4.1", "gemini-2.5-flash"])
+    res = report.build(out, p0={"no-prod-calls"})
+    art = res.get("artemis")
+    assert art, "report['artemis'] absent"
+    assert art["runs"][0]["name"] == "driver-accept", art
+    assert art["runs"][0]["served_model"] == "gemini-2.5-flash", art["runs"][0]
+    assert art["runs"][0]["attempts"] == 2, art["runs"][0]
+    assert art["chain"] == ["gpt-4.1", "gemini-2.5-flash"], art["chain"]
+    assert len(art["attempts"]) == 2, art["attempts"]
+    assert art["attempts"][0]["outcome"] == "retryable", art["attempts"][0]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "## Artemis" in summary, summary
+    assert "gemini-2.5-flash" in summary, summary
+
+
+@case
+def test_artemis_keeps_every_allowlisted_signal_token():
+    """run.sh joins signals with ',' (`signals=429,timeout`): report both."""
+    import report
+
+    out = _artemis_out(
+        "driver-accept|2|6|served=primary|signals=429,timeout|rc=0"
+        "|served_model=gpt-4.1|chain=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|1|15|429|retryable",
+         "driver-accept|2|gpt-4.1|0|15|timeout|success"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["signals"] == "429,timeout", res["artemis"]["runs"][0]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "signals=429,timeout" in summary, summary
+
+    # a single signal is unchanged
+    single = _artemis_out(
+        "driver-accept|1|1|served=primary|signals=429|rc=0|served_model=gpt-4.1\n")
+    res = report.build(single, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["signals"] == "429", res["artemis"]["runs"][0]
+
+
+@case
+def test_artemis_a_poisoned_signal_token_drops_alone():
+    """One bad token must not blank the whole row, and must not reach the report."""
+    import report
+
+    bad = "<svg/onload=alert(1)>"
+    out = _artemis_out(
+        f"driver-accept|2|6|served=primary|signals=429,{bad},timeout|rc=0"
+        f"|served_model=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|1|15|429|retryable",
+         "driver-accept|2|gpt-4.1|0|15|timeout|success"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["signals"] == "429,timeout", res["artemis"]["runs"][0]
+    blob = json.dumps(res, ensure_ascii=False)
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    for needle in ("<svg", "onload"):
+        assert needle not in blob, (needle, blob)
+        assert needle not in summary, (needle, summary)
+
+
+@case
+def test_artemis_served_model_is_unknown_on_failure():
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|6|head=gpt-4.1|primary=gpt-4.1|fallback=gemini-2.5-flash"
+        "|fallback_events=0|served=unknown|signals=-|rc=2|served_model=unknown"
+        "|chain=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|2|15|-|terminal"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["served_model"] == "unknown", res["artemis"]
+    # a legacy row without served_model still derives honestly from rc
+    out2 = _artemis_out(
+        "driver-accept|1|6|head=gpt-4.1|primary=gpt-4.1|fallback=none"
+        "|fallback_events=0|served=unknown|signals=-|rc=2\n")
+    res2 = report.build(out2, p0={"no-prod-calls"})
+    assert res2["artemis"]["runs"][0]["served_model"] == "unknown", res2["artemis"]
+
+
+@case
+def test_artemis_drops_ids_outside_the_allowlist():
+    """A poisoned id must never reach report.json or summary.md."""
+    import report
+
+    bad = "evil;rm -rf /tmp/x"
+    out = _artemis_out(
+        f"driver-accept|1|1|head={bad}|primary={bad}|fallback=none"
+        f"|fallback_events=0|served=unknown|signals=-|rc=1|served_model={bad}"
+        f"|chain={bad},gpt-4.1\n",
+        [f"driver-accept|1|{bad}|1|15|-|terminal"],
+        [bad, "gpt-4.1"],
+        requested=[bad, "gpt-4.1"])
+    res = report.build(out, p0={"no-prod-calls"})
+    blob = json.dumps(res, ensure_ascii=False)
+    assert "rm -rf" not in blob, blob
+    assert "evil" not in blob, blob
+    assert res["artemis"]["chain"] == ["gpt-4.1"], res["artemis"]["chain"]
+    assert res["artemis"]["requested_chain"] == ["gpt-4.1"], res["artemis"]["requested_chain"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "rm -rf" not in summary and "evil" not in summary, summary
+
+
+@case
+def test_artemis_poisoned_name_and_signals_cannot_reach_the_summary():
+    """A poisoned model-usage.txt/attempts.txt must not inject into summary.md."""
+    import report
+
+    out = _artemis_out(
+        "driver-<img src=x onerror=alert(1)>|1|1|head=gpt-4.1|primary=gpt-4.1"
+        "|fallback=none|fallback_events=0|served=<script>alert(1)</script>"
+        "|signals=<svg/onload=alert(1)>|rc=2|served_model=unknown"
+        "|chain=gpt-4.1\n",
+        ["bad<script>|1|gpt-4.1|2|15|<b>x</b>|</td><script>alert(1)</script>"])
+    res = report.build(out, p0={"no-prod-calls"})
+    blob = json.dumps(res, ensure_ascii=False)
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    for needle in ("<script", "<img", "<svg", "<b>", "</td"):
+        assert needle not in blob, (needle, blob)
+        assert needle not in summary, (needle, summary)
+    assert "<" not in summary, summary
+    assert res["artemis"]["runs"][0]["served"] == "unknown", res["artemis"]["runs"][0]
+    assert res["artemis"]["attempts"][0]["outcome"] == "unknown", res["artemis"]["attempts"][0]
+
+
+@case
+def test_artemis_outcome_is_a_strict_enum():
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|1|served=primary|signals=-|rc=0|served_model=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|0|15|-|success",
+         "driver-accept|1|gpt-4.1|2|15|-|terminal",
+         "driver-accept|1|gpt-4.1|1|15|429|retryable",
+         "driver-accept|1|-|124|0|-|budget",
+         "driver-accept|1|-|1|0|-|injected|extra"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert [a["outcome"] for a in res["artemis"]["attempts"]] == \
+        ["success", "terminal", "retryable", "budget"], res["artemis"]["attempts"]
+    # served is an enum too: an unknown word is not evidence
+    bad = _artemis_out("driver-accept|1|1|served=primary-ish|signals=-|rc=0"
+                       "|served_model=gpt-4.1\n")
+    res = report.build(bad, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["served"] == "unknown", res["artemis"]["runs"][0]
+
+
+@case
+def test_artemis_absent_files_are_an_empty_section():
+    import report
+
+    out = make_out([("no-prod-calls", "PASS", "0 hit")])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"] == {"runs": [], "attempts": [], "chain": [],
+                              "requested_chain": [], "budget_exhausted": []}, res["artemis"]
+
+
+@case
+def test_artemis_reports_the_requested_chain():
+    """ISC-6: the chain run.sh asked for is reported, not only the survivors."""
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|1|head=gpt-4o|primary=gpt-4.1|fallback=none|fallback_events=0"
+        "|served=primary|signals=-|rc=0|served_model=gpt-4.1|chain=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|0|15|-|success"],
+        ["gpt-4.1"],
+        requested=["gpt-4o", "gpt-4.1", "gemini-2.5-flash"])
+    res = report.build(out, p0={"no-prod-calls"})
+    art = res["artemis"]
+    assert art["requested_chain"] == ["gpt-4o", "gpt-4.1", "gemini-2.5-flash"], art
+    assert art["chain"] == ["gpt-4.1"], art
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "chaîne demandée: gpt-4o, gpt-4.1, gemini-2.5-flash" in summary, summary
+
+
+@case
+def test_artemis_requested_chain_is_empty_without_the_requested_file():
+    """No requested file => nothing was asked for. A hand-built $OUT with only the
+    legacy probe chain must not be reported as `chaîne demandée`."""
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|1|served=primary|signals=-|rc=0|served_model=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|0|15|-|success"],
+        ["gpt-4.1", "gemini-2.5-flash"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["requested_chain"] == [], res["artemis"]
+    assert res["artemis"]["chain"] == ["gpt-4.1", "gemini-2.5-flash"], res["artemis"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "chaîne demandée" not in summary, summary
+
+
+@case
+def test_artemis_empty_requested_chain_file_does_not_crash():
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|1|served=primary|signals=-|rc=0|served_model=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|0|15|-|success"],
+        ["gpt-4.1"],
+        requested=[])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["requested_chain"] == [], res["artemis"]
+    assert res["artemis"]["chain"] == ["gpt-4.1"], res["artemis"]
+
+
+@case
+def test_artemis_requested_chain_ids_are_allowlisted():
+    """A poisoned vision-chain-requested.txt must not reach report.json/summary.md."""
+    import report
+
+    bad = "evil;rm -rf /tmp/x"
+    out = _artemis_out(
+        "driver-accept|1|1|served=primary|signals=-|rc=0|served_model=gpt-4.1\n",
+        ["driver-accept|1|gpt-4.1|0|15|-|success"],
+        ["gpt-4.1"],
+        requested=[bad, "gpt-4o", "<img src=x onerror=alert(1)>"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["requested_chain"] == ["gpt-4o"], res["artemis"]
+    blob = json.dumps(res, ensure_ascii=False)
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    for needle in ("rm -rf", "evil", "<img"):
+        assert needle not in blob, (needle, blob)
+        assert needle not in summary, (needle, summary)
+
+
+@case
+def test_artemis_budget_exhaustion_is_visible():
+    import report
+
+    out = _artemis_out(
+        "driver-accept|1|6|head=gpt-4.1|primary=none|fallback=none|fallback_events=0"
+        "|served=unknown|signals=-|rc=2|served_model=unknown|chain=gpt-4.1\n",
+        ["driver-accept|1|-|-|0|budget|budget"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["budget_exhausted"] == ["driver-accept"], res["artemis"]
+    row = res["artemis"]["attempts"][0]
+    assert row["rc"] is None, row
+    assert row["signal"] == "budget" and row["outcome"] == "budget", row
+
+
 @case
 def test_artifacts_are_written():
     import report

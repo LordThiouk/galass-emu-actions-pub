@@ -2,12 +2,22 @@
 """Staging-only multistop E2E API driver.
 
 Env: BASE, RIDER_TOKEN, DRIVER_TOKEN, DEV_TOKEN, OUT, STEP.
-STEP: ping|pick|create|accept|start|stops|end|pay|finish|status|all
+STEP: ping|pick|create|accept|start|stops|end|pay|pay_rider|cash_wait|cash_driver
+      |finish|status|all
+
+STEP=stops|all|stop_one refuses to complete anything unless E2E_GEOFENCE_OK=1:
+`run.sh` `geofence_stop` is the ONLY path that injects a fix and proves the
+emulator applied it, and the backend must never see a `complete-stop` it did not
+vouch for. `run.sh` scopes that variable to the single `api stop_one` call.
+`loc_stop` always posts a stop read from `$OUT/state.json` (the same stop
+`geofence_stop` verified), never a hardcoded copy, and stays ungated on purpose:
+its sole caller runs immediately after `geofence_stop` succeeded.
 
 The script is idempotent enough to be called step by step from run.sh: state
 (ride id, responses) is persisted in $OUT/state.json between calls.
 """
 import json
+import math
 import os
 import subprocess
 import sys
@@ -22,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from base_guard import check_base  # noqa: E402
 from sanitize import mask_path, redact_record, smoke_emit  # noqa: E402
 from offer_flow import run_accept  # noqa: E402
+from cash_flow import poll_payment_status, poll_settings, driver_label  # noqa: E402
 _reason = check_base(BASE)
 if _reason:
     sys.exit(f"refusing BASE: {_reason}")
@@ -205,11 +216,65 @@ def details():
 
 
 def driver_details():
+    """Ride detail seen by the DRIVER, and the stops it carries.
+
+    Persisted under `st["stops"]` because run.sh's `geofence_stop` reads the stop
+    coordinates from `$OUT/state.json`: a hardcoded copy could diverge from the
+    ride the backend actually created.
+    """
     rid = ride_id()
     if not rid:
         return {}
     c, j = call("GET", f"driver/rides/details/{rid}", DT)
-    return (j.get("data") or {}).get("ride") or {}
+    ride = (j.get("data") or {}).get("ride") or {}
+    if ride.get("stops"):
+        # Tagged with its ride: a stale list from a previous ride would make
+        # geofence_stop inject the wrong coordinates (D4).
+        st["stops"] = ride["stops"]
+        st["stops_ride"] = rid
+        save()
+    return ride
+
+
+def stop_coords(index):
+    """(lat, lng) for stop `index` from the ride-detail snapshot, or None.
+
+    This is the SAME stop `run.sh:geofence_stop` verified: the geofence reads the
+    coordinates from `$OUT/state.json`, so the backend must be sent those and not
+    a hardcoded copy that can diverge from the ride it actually created.
+    """
+    if isinstance(index, bool) or not isinstance(index, int):
+        return None
+    stops = st.get("stops") or []
+    if index < 0 or index >= len(stops):
+        return None
+    stop = stops[index] or {}
+    try:
+        lat = float(stop["latitude"])
+        lng = float(stop["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lng)):
+        return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+        return None
+    return lat, lng
+
+
+def loc_stop(index):
+    """Send the driver to a stop the geofence has coordinates for. Fail closed.
+
+    Deliberately NOT behind `E2E_GEOFENCE_OK`: its sole caller is
+    `run.sh:geofence_stop`, which reaches this line only after it injected and
+    verified the fix. It posts a location, never a `complete-stop`.
+    """
+    coords = stop_coords(index)
+    if coords is None:
+        print(f"LOC_STOP refuse: arrêt {index} absent/invalide dans {state_f} "
+              f"(aucun fix envoyé)", file=sys.stderr, flush=True)
+        return False
+    driver_loc(*coords)
+    return True
 
 
 def renew_offer():
@@ -251,6 +316,8 @@ def write_accept(out):
         cause = "assigned_without_tap_proof"
     payload = {
         "ok": bool(out.get("ok")),
+        # dernier code HTTP réellement observé sur offer/respond (0 = aucun appel)
+        "code": int(out.get("code") or 0),
         # "ui" quand le tap a gagné sans que l'API reçoive offer_accepted.
         "via": via,
         "cause": cause,
@@ -303,13 +370,37 @@ def start_ride():
     return j.get("status") == "success"
 
 
+GEOFENCE_ENV = "E2E_GEOFENCE_OK"
+
+
 def complete_stops():
+    """Complete EVERY stop — refused without the run.sh geofence.
+
+    `run.sh:geofence_stop` is the only path that injects a fix, proves the
+    emulator applied it, and only then lets `complete-stop` through. Completing
+    stops from here would bypass that proof entirely, so it fails closed unless
+    the caller positively asserts the geofence ran (run.sh never sets it).
+    """
+    if os.environ.get(GEOFENCE_ENV) != "1":
+        print(f"stops/all refuse: {GEOFENCE_ENV}!=1 - seule la boucle géofencée "
+              f"de run.sh (geofence_stop) peut compléter un arrêt", file=sys.stderr,
+              flush=True)
+        return False
     rid = ride_id()
     if not rid:
         return False
+    total = len(st.get("stops") or [])
+    if total == 0:
+        print("stops/all refuse: aucun arrêt dans state.json", file=sys.stderr, flush=True)
+        return False
     ok = True
-    for i in range(len(STOPS)):
-        driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
+    for i in range(total):
+        coords = stop_coords(i)
+        if coords is None:
+            print(f"stops/all refuse: arrêt {i} invalide dans state.json",
+                  file=sys.stderr, flush=True)
+            return False
+        driver_loc(*coords)
         hook = os.environ.get("STOP_HOOK")
         if hook:
             # S20: argv, never a shell string — the hook path is configuration, not code.
@@ -322,7 +413,7 @@ def complete_stops():
             continue
         if remark == "stop_too_far":
             time.sleep(2)
-            driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
+            driver_loc(*coords)
             c, s = call("POST", f"driver/rides/complete-stop/{rid}", DT)
             st.setdefault("stops_resp", []).append(s)
             save()
@@ -331,6 +422,67 @@ def complete_stops():
         ok = False
         break
     return ok
+
+
+def stop_one():
+    """Repli API borné à UN arrêt (celui que l'UI a raté), jamais tous d'un coup.
+
+    Same gate as `complete_stops`: a `complete-stop` is only legitimate after
+    `run.sh:geofence_stop` injected and PROVED the fix. `run.sh` scopes
+    `E2E_GEOFENCE_OK=1` to this one call, right after that proof; nothing else
+    sets it.
+    """
+    if os.environ.get(GEOFENCE_ENV) != "1":
+        print(f"stop_one refuse: {GEOFENCE_ENV}!=1 - seule la boucle géofencée "
+              f"de run.sh (geofence_stop) peut compléter un arrêt", file=sys.stderr,
+              flush=True)
+        return False
+    rid = ride_id()
+    # S5: the fallback always completes the first PENDING stop, whatever index the
+    # UI loop was on; indexing into `pending` skipped a stop after one UI success.
+    pending = [x for x in (driver_details().get("stops") or []) if not x.get("completed_at")]
+    if not rid:
+        print("stop_one: no ride", file=sys.stderr, flush=True)
+        return False
+    if not pending:
+        print("STOP_ONE none", "no_pending_stop", flush=True)
+        return False
+    driver_loc(pending[0]["latitude"], pending[0]["longitude"])
+    c, resp = call("POST", f"driver/rides/complete-stop/{rid}", DT)
+    st.setdefault("stops_resp", []).append(resp)
+    save()
+    print("STOP_ONE", pending[0].get("id"), resp.get("remark"), flush=True)
+    return True
+
+
+def complete_pending_stops():
+    """Complete every stop the backend still lists as PENDING — same gate as above.
+
+    Third and last `complete-stop` site. `run.sh` never calls this step, so the
+    gate costs the run nothing; it stays available only to a hand-written flow
+    that positively asserts the geofence ran (`E2E_GEOFENCE_OK=1`). Without that
+    proof a `complete-stop` here would bypass `run.sh:geofence_stop` entirely.
+    """
+    if os.environ.get(GEOFENCE_ENV) != "1":
+        print(f"stops_pending refuse: {GEOFENCE_ENV}!=1 - seule la boucle géofencée "
+              f"de run.sh (geofence_stop) peut compléter un arrêt", file=sys.stderr,
+              flush=True)
+        return False
+    d = driver_details()
+    rid = ride_id()
+    if not rid:
+        print("stops_pending: no ride", file=sys.stderr, flush=True)
+        return False
+    for x in d.get("stops") or []:
+        if x.get("completed_at"):
+            continue
+        driver_loc(x["latitude"], x["longitude"])
+        c, r = call("POST", f"driver/rides/complete-stop/{rid}", DT)
+        st.setdefault("stops_resp", []).append(r)
+        save()
+    st["stops"] = (driver_details().get("stops") or [])
+    save()
+    return True
 
 
 def end_ride():
@@ -351,15 +503,73 @@ def pay_rider():
     save()
 
 
+def payment_status():
+    """`payment_status` as the BACKEND reports it for this ride."""
+    return details().get("payment_status")
+
+
+def write_cash(state):
+    with open(f"{OUT}/cash.json", "w") as fh:
+        json.dump(state, fh, indent=1)
+
+
+def cash_wait():
+    """Poll until the rider asks for cash (payment_status==3) or the budget ends.
+
+    Run 40205373538: the harness called `received-cash-payment` before the rider
+    had asked, the backend answered `not_found`, and the verdict blamed the
+    harness. The request is a backend state; it must be observed, never assumed.
+
+    rc: 0 requested, 3 not requested (a REAL non-3 status), 4 config error — an
+    out-of-range CASH_POLL_* is reported, never silently clamped.
+    """
+    config = poll_settings(os.environ.get("CASH_POLL_SEC"),
+                           os.environ.get("CASH_POLL_INTERVAL"))
+    if not config["ok"]:
+        write_cash({"requested": False, "payment_status": None,
+                    "cause": "config_error", "waited": 0.0, "polls": 0,
+                    "error": config["error"]})
+        print(f"CASH_WAIT config_error {config['error']}", flush=True)
+        return 4
+    state = poll_payment_status(payment_status, time.sleep,
+                                timeout=config["timeout"],
+                                interval=config["interval"])
+    write_cash(state)
+    print(f"CASH_WAIT requested={1 if state['requested'] else 0} "
+          f"status={state['payment_status']} cause={state['cause']} "
+          f"polls={state['polls']} waited={state['waited']}s", flush=True)
+    return 0 if state["requested"] else 3
+
+
 def cash_driver():
+    """Confirm the driver received the cash — ONLY if the rider asked for it.
+
+    The label reports what was OBSERVED: a payment_status we could not read is
+    `cash_status_unavailable`, never "the rider did not ask".
+    """
     rid = ride_id()
+    state = poll_payment_status(payment_status, time.sleep, timeout=0, interval=0)
+    label = driver_label(state["payment_status"])
+    # cash.json is the one place run.sh reads the cause from.
+    state["cause"] = label
+    write_cash(state)
+    if label != "cash_requested":
+        # Rien à confirmer : appeler l'endpoint ferait un POST que le backend
+        # refusera (not_found) et que le rapport imputerait au harnais.
+        print("CASH_SKIP", label, flush=True)
+        st["cash_received"] = {"skipped": label,
+                               "payment_status": state["payment_status"]}
+        save()
+        return False
     c, r = call("POST", f"driver/rides/received-cash-payment/{rid}", DT)
     st["cash_received"] = r
     save()
+    return c == 200
 
 
 def pay():
     pay_rider()
+    # Jamais de POST si le rider n'a pas demandé le cash (voir cash_driver()).
     cash_driver()
     return True
 
@@ -371,7 +581,14 @@ def status():
     st["driver_final"] = d
     st["rider_final"] = r
     st["rider_push"] = pn.get("data")
-    st.setdefault("stops", d.get("stops") or r.get("stops") or [])
+    fresh = d.get("stops") or r.get("stops") or []
+    rid = ride_id()
+    # A new ride invalidates the persisted stops: never keep the previous ride's
+    # coordinates around for geofence_stop to trust.
+    if fresh and st.get("stops_ride") != rid:
+        st["stops"] = fresh
+        st["stops_ride"] = rid
+    st.setdefault("stops", [])
     save()
     print(json.dumps({
         "ride_id": ride_id(),
@@ -406,10 +623,14 @@ elif step == "accept":
 elif step == "start":
     start_ride()
 elif step == "stops":
-    complete_stops()
+    sys.exit(0 if complete_stops() else 1)
 elif step == "loc_stop":
-    i = int(os.environ.get("STOP_INDEX", "0"))
-    driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
+    raw = os.environ.get("STOP_INDEX", "0")
+    try:
+        i = int(raw)
+    except ValueError:
+        sys.exit(f"loc_stop: STOP_INDEX={raw!r} invalide")
+    sys.exit(0 if loc_stop(i) else 1)
 elif step == "loc_dest":
     driver_loc(*DEST)
 elif step == "ride_state":
@@ -418,39 +639,17 @@ elif step == "ride_state":
     done = sum(1 for x in (d.get("stops") or []) if x.get("completed_at"))
     print(f"status={d.get('status')} stops_done={done} payment_status={d.get('payment_status')}", flush=True)
 elif step == "stop_one":
-    # Repli API borné à UN arrêt (celui que l'UI a raté), jamais tous d'un coup.
-    rid = ride_id()
-    # S5: the fallback always completes the first PENDING stop, whatever index the
-    # UI loop was on; indexing into `pending` skipped a stop after one UI success.
-    pending = [x for x in (driver_details().get("stops") or []) if not x.get("completed_at")]
-    if not rid:
-        sys.exit("stop_one: no ride")
-    if not pending:
-        print("STOP_ONE none", "no_pending_stop", flush=True)
-        sys.exit(1)
-    driver_loc(pending[0]["latitude"], pending[0]["longitude"])
-    c, resp = call("POST", f"driver/rides/complete-stop/{rid}", DT)
-    st.setdefault("stops_resp", []).append(resp)
-    save()
-    print("STOP_ONE", pending[0].get("id"), resp.get("remark"), flush=True)
+    sys.exit(0 if stop_one() else 1)
 elif step == "stops_pending":
-    d = driver_details()
-    rid = ride_id()
-    for i, x in enumerate(d.get("stops") or []):
-        if x.get("completed_at"):
-            continue
-        driver_loc(x["latitude"], x["longitude"])
-        c, r = call("POST", f"driver/rides/complete-stop/{rid}", DT)
-        st.setdefault("stops_resp", []).append(r)
-        save()
-    st["stops"] = (driver_details().get("stops") or [])
-    save()
+    sys.exit(0 if complete_pending_stops() else 1)
 elif step == "end":
     end_ride()
 elif step == "pay":
     pay()
 elif step == "pay_rider":
     pay_rider()
+elif step == "cash_wait":
+    sys.exit(cash_wait())
 elif step == "cash_driver":
     cash_driver()
 elif step == "finish":
@@ -459,7 +658,8 @@ elif step == "finish":
     if not start_ride():
         accept_offer()
         start_ride()
-    complete_stops()
+    if not complete_stops():
+        sys.exit(1)
     end_ride()
     pay()
     status()
@@ -470,7 +670,8 @@ elif step == "all":
     create_ride()
     accept_offer()
     start_ride()
-    complete_stops()
+    if not complete_stops():
+        sys.exit(1)
     end_ride()
     pay()
     status()

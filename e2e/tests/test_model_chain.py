@@ -670,6 +670,25 @@ printf 'ERROR HTTP 400 invalid_request_error: bad payload\\n'
 exit 2
 """
 
+FAKE_OK = """\
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CALLS"
+printf 'INFO answered the step\\n'
+exit 0
+"""
+
+FAKE_TIMEOUT_THEN_OK = """\
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CALLS"
+n=$(wc -l < "$CALLS")
+if [ "$n" -eq 1 ]; then
+  printf 'ERROR step hung, killed by the harness timeout\\n'
+  exit 124
+fi
+printf 'INFO ok on the next route\\n'
+exit 0
+"""
+
 FAKE_SLOW_FAIL = """\
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$CALLS"
@@ -728,7 +747,8 @@ def test_artemis_run_retries_the_next_model_and_logs_the_switch():
     ledger = text(os.path.join(art, "model-usage.txt")).strip().splitlines()
     assert len(ledger) == 1, ledger
     assert ledger[0] == ("smoke|2|2|head=gpt-4.1|primary=gemini-2.5-flash|fallback=gpt-4.1"
-                         "|fallback_events=0|served=primary|signals=429|rc=0"), ledger
+                         "|fallback_events=0|served=primary|signals=429|rc=0"
+                         "|served_model=gemini-2.5-flash|chain=gpt-4.1,gemini-2.5-flash"), ledger
 
     # the retry regenerated the runtime config with offset=1 (next route promoted)
     assert json.loads(text(runtime))["default"]["model"] == "gemini-2.5-flash", text(runtime)
@@ -748,7 +768,8 @@ def test_artemis_run_reports_served_fallback_when_artemis_falls_back_itself():
     ledger = text(os.path.join(tmp, "artemis", "model-usage.txt")).strip().splitlines()
     assert len(ledger) == 1, ledger
     assert ledger[0] == ("smoke|1|2|head=gpt-4.1|primary=gpt-4.1|fallback=gemini-2.5-flash"
-                         "|fallback_events=2|served=fallback|signals=-|rc=0"), ledger
+                         "|fallback_events=2|served=fallback|signals=-|rc=0"
+                         "|served_model=gemini-2.5-flash|chain=gpt-4.1,gemini-2.5-flash"), ledger
     log = text(os.path.join(tmp, "run.log"))
     assert ("artemis llm: smoke attempt=1/2 primary=gpt-4.1 fallback=gemini-2.5-flash "
             "fallback_events=2") in log, log
@@ -769,7 +790,8 @@ def test_artemis_run_aborts_the_step_when_the_config_cannot_be_regenerated():
     assert "étape abandonnée rc=2" in log, log
     ledger = text(os.path.join(tmp, "artemis", "model-usage.txt")).strip()
     assert ledger == ("smoke|0|2|head=gpt-4.1|primary=none|fallback=none|fallback_events=0"
-                      "|served=unknown|signals=-|rc=2"), ledger
+                      "|served=unknown|signals=-|rc=2|served_model=unknown"
+                      "|chain=gpt-4.1,gemini-2.5-flash"), ledger
 
 
 @case
@@ -777,14 +799,15 @@ def test_artemis_run_does_not_retry_a_non_retryable_failure():
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-noretry-")
     env, _chain_file, _runtime = artemis_tree(tmp, FAKE_NON_RETRYABLE, BASE_CHAIN[:3],
                                               timeout="0 0 0")
-    proc = run_artemis(env, tmp)
+    proc = run_artemis(env, tmp, tmo="30")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     assert proc.stdout.strip().endswith("RC=2"), proc.stdout
     calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
     assert len(calls) == 1, calls
     ledger = text(os.path.join(tmp, "artemis", "model-usage.txt")).strip()
     assert ledger == ("smoke|1|3|head=gpt-4.1|primary=gpt-4.1|fallback=gemini-2.5-flash"
-                      "|fallback_events=0|served=unknown|signals=-|rc=2"), ledger
+                      "|fallback_events=0|served=unknown|signals=-|rc=2"
+                      "|served_model=unknown|chain=gpt-4.1,gemini-2.5-flash,gpt-4o"), ledger
 
 
 @case
@@ -792,13 +815,276 @@ def test_artemis_run_stays_inside_the_step_budget():
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-budget-")
     env, _chain_file, _runtime = artemis_tree(tmp, FAKE_SLOW_FAIL, BASE_CHAIN,
                                               timeout="0 0 0")
-    proc = run_artemis(env, tmp, tmo="5")
+    # 4 s pour 6 modèles : la fenêtre ne finance aucun essai de 5 s, même après le
+    # clamp du nombre de tentatives => AUCUN essai ne démarre (mieux vaut rendre la
+    # main aux taps + API qu'un timeout bidon).
+    proc = run_artemis(env, tmp, tmo="4")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
-    assert proc.stdout.strip().endswith("RC=1"), proc.stdout
-    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
-    assert len(calls) == 1, f"budget dépassé: {len(calls)} essais"
+    assert proc.stdout.strip().endswith("RC=2"), proc.stdout
+    assert not os.path.exists(env["CALLS"]), "un essai a démarré sous 5 s de part"
     log = text(os.path.join(tmp, "run.log"))
-    assert "budget" in log, log
+    assert "budget épuisé" in log, log
+    rows = text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()
+    # Aucun essai n'a tourné : rc inconnu ("-"), jamais 124 (= un timeout observé).
+    assert rows == ["smoke|1|-|-|0|budget|budget"], rows
+
+
+@case
+def test_attempt_timeout_fair_share_table():
+    """A pendling route must not eat the whole step: fair share, capped."""
+    import model_chain
+
+    table = [((200, 6, 45), 33), ((200, 1, 45), 45), ((60, 3, 45), 20),
+             ((10, 6, 45), 1), ((0, 6, 45), 0)]
+    for (remaining, left, cap), want in table:
+        got = model_chain.attempt_timeout(remaining, left, cap)
+        assert got == want, (remaining, left, cap, got, want)
+
+    # invariants: never above min(cap, remaining), at least 1s while time is left
+    for remaining in (0, 1, 2, 5, 17, 60, 200, 1000):
+        for left in (0, 1, 2, 6, 10):
+            got = model_chain.attempt_timeout(remaining, left, 45)
+            assert got <= min(45, remaining), (remaining, left, got)
+            if remaining >= 1 and left >= 1:
+                assert got >= 1, (remaining, left, got)
+            else:
+                assert got == 0, (remaining, left, got)
+
+
+@case
+def test_attempt_timeout_cli():
+    for (remaining, left, cap), want in (((200, 6, 45), 33), ((200, 1, 45), 45),
+                                        ((60, 3, 45), 20), ((10, 6, 45), 1)):
+        proc = py(MODEL_CHAIN, ("attempt-timeout", "--remaining", str(remaining),
+                                "--left", str(left), "--cap", str(cap)))
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert proc.stdout.strip() == str(want), (remaining, left, cap, proc.stdout)
+    proc = py(MODEL_CHAIN, ("attempt-timeout", "--remaining", "0", "--left", "6"))
+    assert proc.returncode == 0 and proc.stdout.strip() == "0", proc.stdout
+
+
+@case
+def test_attempts_affordable_never_starves_artemis():
+    """Contract A: fair share below the 5 s floor => fewer attempts, not zero.
+
+    `remaining // attempts_left` alone put a 22 s offer window on 3 s per route
+    (6 models), so `artemis_run` refused to start ANY attempt on driver-accept.
+    """
+    import model_chain
+
+    table = [((22, 6, 5), 4), ((200, 6, 5), 6), ((9, 6, 5), 1), ((4, 6, 5), 0),
+             ((22, 3, 5), 3), ((0, 6, 5), 0)]
+    for (remaining, left, floor), want in table:
+        got = model_chain.capped_attempts_left(remaining, left, floor)
+        assert got == want, (remaining, left, floor, got, want)
+
+    # invariants: never above attempts_left, never negative, always 0 below floor
+    for remaining in (0, 1, 4, 5, 9, 22, 200, 1000):
+        for left in (0, 1, 2, 3, 6, 10):
+            got = model_chain.capped_attempts_left(remaining, left, 5)
+            assert 0 <= got <= left, (remaining, left, got)
+            if remaining < 5 or left < 1:
+                assert got == 0, (remaining, left, got)
+            else:
+                assert got >= 1, (remaining, left, got)
+
+    # a nonsense floor must not divide by zero, and junk input stays conservative
+    assert model_chain.capped_attempts_left(22, 6, 0) == 6
+    assert model_chain.capped_attempts_left("abc", 6, 5) == 0
+    assert model_chain.capped_attempts_left(22, "abc", 5) == 0
+
+
+@case
+def test_attempts_affordable_cli():
+    for (remaining, left), want in (((22, 6), 4), ((200, 6), 6), ((9, 6), 1),
+                                    ((4, 6), 0), ((22, 3), 3), ((0, 6), 0)):
+        proc = py(MODEL_CHAIN, ("attempts-affordable", "--remaining", str(remaining),
+                                "--left", str(left), "--min", "5"))
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert proc.stdout.strip() == str(want), (remaining, left, proc.stdout)
+    # --min defaults to 5: same answer without the flag
+    proc = py(MODEL_CHAIN, ("attempts-affordable", "--remaining", "22", "--left", "6"))
+    assert proc.returncode == 0 and proc.stdout.strip() == "4", proc.stdout
+    proc = py(MODEL_CHAIN, ("attempts-affordable", "--remaining", "22", "--left", "6",
+                            "--min", "10"))
+    assert proc.returncode == 0 and proc.stdout.strip() == "2", proc.stdout
+
+
+@case
+def test_run_sh_clamps_attempts_before_the_timeout():
+    """Static contract: the clamp sits between the count and the per-attempt share."""
+    fn = extract_fn(RUN, "artemis_run")
+    i_aff = fn.index("attempts-affordable")
+    i_tmo = fn.index("attempt-timeout")
+    assert i_aff < i_tmo, "attempts-affordable doit précéder attempt-timeout"
+    assert "--min 5" in fn, "le plancher de 5 s doit être explicite dans run.sh"
+
+    zone = fn[i_aff:i_tmo]
+    assert re.search(r'(?m)^\s*attempts_left=', zone), \
+        "attempts_left doit être réassigné depuis le clamp"
+    assert re.search(r'\|\|[^\n]*attempts_left|case "\$affordable"', zone), \
+        "repli sur la valeur non bridée absent si le helper échoue"
+    # the 5 s floor guard and its `budget` ledger row are untouched, AFTER the clamp
+    assert fn.index('if [ "$tmo_left" -lt 5 ]') > i_tmo, fn
+    assert '"budget"' in fn, "la ligne budget du ledger a disparu"
+    assert "affordable=" in fn, "la valeur bridée n'est pas journalisée"
+
+
+@case
+def test_driver_accept_budget_keeps_a_real_artemis_attempt():
+    """Real loop arithmetic for the accept step: 22 s of UI budget, 6 models."""
+    import model_chain
+
+    remaining, max_attempts, cap, floor = 22, 6, 45, 5
+    # the defect: fair share over every remaining route is under the floor
+    unclamped = model_chain.attempt_timeout(remaining, max_attempts, cap)
+    assert unclamped == 3, unclamped
+    assert unclamped < floor, "le partage brut doit bien passer sous le plancher"
+
+    # the fix: clamp the attempt count, then the share
+    affordable = model_chain.capped_attempts_left(remaining, max_attempts, floor)
+    assert affordable == 4, affordable
+    first = model_chain.attempt_timeout(remaining, affordable, cap)
+    assert first == 5, first
+    assert not first < floor, "run.sh prendrait la branche `tmo_left < 5`"
+
+
+@case
+def test_artemis_run_gets_five_seconds_on_a_short_accept_budget():
+    """End-to-end: 22 s over 6 models runs the FIRST attempt with 5 s."""
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-accept-budget-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:6], timeout="0 0 0")
+    proc = run_artemis(env, tmp, tmo="22")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
+    assert len(calls) == 1, calls
+    log = text(os.path.join(tmp, "run.log"))
+    assert "timeout=5s" in log, log
+    assert "budget épuisé" not in log, log
+    assert "affordable=4" in log, log
+
+
+@case
+def test_artemis_wall_clock_never_exceeds_the_step_budget():
+    """6 models, 30 s, every attempt failing: the wall clock stays inside 30 s."""
+    import time
+
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-wallclock-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_SLOW_FAIL, BASE_CHAIN[:3], timeout="0 0 0")
+    started = time.monotonic()
+    proc = run_artemis(env, tmp, tmo="15")
+    elapsed = time.monotonic() - started
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert elapsed < 15, f"budget dépassé: {elapsed:.1f}s"
+    rows = text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()
+    real = [r for r in rows if not r.endswith("|budget")]
+    assert real, rows
+    for row in real:
+        fields = row.split("|")
+        assert fields[0] == "smoke" and fields[6] == "retryable", row
+        assert 5 <= int(fields[4]) <= 15, row  # jamais plus que le budget du step
+    # the first attempt gets an honest slice (15 s / 3 modèles = 5 s); the last
+    # one may take whatever remains (min(cap, remaining)) — never more.
+    assert real[0].split("|")[4] == "5", real[0]
+    assert len(real) <= 3, real
+    assert proc.stdout.strip().endswith("RC=1"), proc.stdout
+    assert "timeout=5s" in text(os.path.join(tmp, "run.log"))
+
+
+@case
+def test_artemis_run_splits_the_step_budget_between_models():
+    """200 s over 6 models: the FIRST attempt gets 33 s, not the whole step."""
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-fairshare-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:6], timeout="0 0 0")
+    proc = run_artemis(env, tmp, tmo="200")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    log = text(os.path.join(tmp, "run.log"))
+    assert "timeout=33s" in log, log
+    # the last remaining attempt may take min(cap, remaining)
+    assert "ARTEMIS_MODEL_TIMEOUT_SEC" in text(RUN), "budget par tentative absent"
+
+
+@case
+def test_artemis_model_timeout_is_numeric_and_clamped():
+    for preset, want in (("abc", "45"), ("0", "5"), ("9000", "600"), ("30", "30")):
+        tmp = tempfile.mkdtemp(prefix="e2e-artemis-cap-")
+        env, _cf, _rt = artemis_tree(tmp, FAKE_OK, ["gpt-4.1"], timeout="0 0 0")
+        env["ARTEMIS_MODEL_TIMEOUT_SEC"] = preset
+        proc = run_artemis(env, tmp, tmo="1000")
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        log = text(os.path.join(tmp, "run.log"))
+        assert f"timeout={want}s" in log, (preset, log)
+
+
+@case
+def test_artemis_timeout_switches_model_without_backoff():
+    """rc=124 is not a rate limit: the next route starts immediately."""
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-timeout-switch-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_TIMEOUT_THEN_OK, BASE_CHAIN[:2])
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
+    assert len(calls) == 2, calls
+    log = text(os.path.join(tmp, "run.log"))
+    assert "signal=timeout backoff=0s" in log, log
+    assert "backoff=5s" not in log, log
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert [r[:2] + r[3:4] + r[5:] for r in rows] == [
+        ["smoke", "1", "124", "timeout", "timeout"],
+        ["smoke", "2", "0", "-", "success"]], rows
+    assert rows[0][2] == "gpt-4.1" and rows[1][2] == "gemini-2.5-flash", rows
+    assert rows[0][4] == "15", rows[0]
+
+
+@case
+def test_artemis_attempts_ledger_has_one_row_per_attempt():
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-attempts-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_FAIL_THEN_PASS, BASE_CHAIN[:2], timeout="0 0 0")
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert [r[:2] + r[3:4] + r[5:] for r in rows] == [
+        ["smoke", "1", "1", "429", "retryable"],
+        ["smoke", "2", "0", "-", "success"]], rows
+    assert rows[0][2] == "gpt-4.1" and rows[1][2] == "gemini-2.5-flash", rows
+    assert rows[0][4] == "15", rows[0]
+    assert all(len(r) == 7 for r in rows), rows
+
+
+@case
+def test_artemis_served_model_is_honest():
+    """served_model=unknown on failure; the primary/fallback id otherwise."""
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-served-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_FAIL_THEN_PASS, BASE_CHAIN[:2], timeout="0 0 0")
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    log = text(os.path.join(tmp, "run.log"))
+    lines = [l for l in log.splitlines() if "artemis models:" in l]
+    assert len(lines) == 1, lines
+    assert "served_model=gemini-2.5-flash" in lines[0], lines[0]
+
+    tmp2 = tempfile.mkdtemp(prefix="e2e-artemis-served-fail-")
+    env2, _cf2, _rt2 = artemis_tree(tmp2, FAKE_NON_RETRYABLE, BASE_CHAIN[:2], timeout="0 0 0")
+    proc2 = run_artemis(env2, tmp2, tmo="30")
+    assert proc2.stdout.strip().endswith("RC=2"), proc2.stdout
+    log2 = text(os.path.join(tmp2, "run.log"))
+    line2 = [l for l in log2.splitlines() if "artemis models:" in l][0]
+    assert "served_model=unknown" in line2, line2
+
+
+@case
+def test_artemis_model_usage_gains_served_model_and_chain():
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-usage-")
+    env, _cf, _rt = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    row = text(os.path.join(tmp, "artemis", "model-usage.txt")).strip()
+    assert row.endswith("|served_model=gpt-4.1|chain=gpt-4.1,gemini-2.5-flash"), row
+    assert row.startswith("smoke|1|2|head=gpt-4.1|primary=gpt-4.1"), row
 
 
 @case
@@ -829,13 +1115,14 @@ def test_artemis_run_falls_back_to_default_backoff_when_no_token_is_numeric():
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-backoff-default-")
     env, _chain_file, _runtime = artemis_tree(tmp, FAKE_FAIL_THEN_PASS, BASE_CHAIN[:2])
     env["ARTEMIS_BACKOFF"] = "abc -2"
-    proc = run_artemis(env, tmp, tmo="1")
+    proc = run_artemis(env, tmp, tmo="10")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     assert "integer expression" not in proc.stderr, proc.stderr
-    assert proc.stdout.strip().endswith("RC=1"), proc.stdout
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
     log = text(os.path.join(tmp, "run.log"))
-    # (5 15 30)[0] = 5, borné au budget restant (1 s) -> 1 s
-    assert "backoff=1s" in log, log
+    # tokens non numériques => table par défaut (5 15 30): le premier backoff est 5 s
+    assert "backoff=5s" in log, log
+    assert "backoff=30s" not in log, log
 
 
 @case

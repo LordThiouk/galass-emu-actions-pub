@@ -15,7 +15,12 @@ Two invariants live here, testable without any I/O:
 
 `api_flow.py` only injects its HTTP calls into `run_accept`, so the renewal rule
 is exercised by `e2e/tests/test_offer_flow.py` with fakes.
+
+`accept_label` is the ONE place that decides `accept_via` (api | ui | unknown)
+from the proofs the harness actually holds.
 """
+import argparse
+import sys
 
 ACCEPTED = "offer_accepted"
 EXPIRED = "offer_expired"
@@ -101,6 +106,32 @@ def failure_cause(kind, renewed):
     return kind if kind in KINDS else TERMINAL
 
 
+def accept_label(ui_tap_proven, ui_screen_proven, api_ok, api_2xx,
+                 ui_tap_failed=False, assigned=False):
+    """The ONE unambiguous accept label, from the proofs actually held.
+
+    Run 40205373538 published `accept_via` from three different places and they
+    disagreed. Precedence is fixed here, once:
+
+      api      an OK answer on a 2xx code is the strongest proof, whatever the UI
+               did — the cause says whether the UI tap left no proof
+               (`ui_tap_unproven_then_api`: screen not proven, no HTTP status was
+               ever observed) or the API simply answered (`api_2xx`);
+      ui       the harness proved its own tap AND the next screen appeared;
+      unknown  the ride is ours but the tap is unproven
+               (`assigned_without_tap_proof`) — `assigned` is the backend's own
+               `accept.json .ok`, so a 4xx that assigned nothing cannot borrow
+               that cause; anything else is `not_assigned`. Never a success claim.
+    """
+    if api_ok and api_2xx:
+        return {"via": "api",
+                "cause": "ui_tap_unproven_then_api" if ui_tap_failed else "api_2xx"}
+    if ui_tap_proven and ui_screen_proven:
+        return {"via": "ui", "cause": None}
+    return {"via": "unknown",
+            "cause": "assigned_without_tap_proof" if assigned else "not_assigned"}
+
+
 def run_accept(respond, assigned, renew, sleep, retries=20, delay=3, renewed=False,
                tap_proven=False):
     """Drive offer acceptance against injected collaborators.
@@ -124,37 +155,70 @@ def run_accept(respond, assigned, renew, sleep, retries=20, delay=3, renewed=Fal
     attempts = 0
     renewed = bool(renewed)
     last_kind = None
+    last_code = 0
     while attempts < max(0, int(retries)):
         attempts += 1
         code, payload = respond()
         kind = classify(code, payload)
         last_kind = kind
+        last_code = code
         via = accepted_via(code, kind, assigned, tap_proven)
         if via == "api":
-            return {"ok": True, "via": "api", "cause": None,
+            return {"ok": True, "via": "api", "cause": None, "code": code,
                     "renewed": renewed, "attempts": attempts}
         if via in ("ui", "unknown"):
             # Assigned already: the offer is ours. Credit the UI only when the tap
             # is provable, otherwise say `unknown` and stop touching the ride.
             cause = f"respond_{code}_assigned" if via == "unknown" else None
-            return {"ok": True, "via": via, "cause": cause,
+            return {"ok": True, "via": via, "cause": cause, "code": code,
                     "renewed": renewed, "attempts": attempts}
         action = decide(kind, renewed)
         if action == "accept":
             # ACCEPTED shape on a non-2xx code, not assigned: do not claim success.
             return {"ok": False, "via": None, "cause": f"respond_{code}",
-                    "renewed": renewed, "attempts": attempts}
+                    "code": code, "renewed": renewed, "attempts": attempts}
         if action == "renew":
             if renew():
                 renewed = True
                 continue
-            return {"ok": False, "via": None, "cause": EXPIRED,
+            return {"ok": False, "via": None, "cause": EXPIRED, "code": code,
                     "renewed": renewed, "attempts": attempts}
         if action == "fail":
             return {"ok": False, "via": None,
-                    "cause": failure_cause(kind, renewed),
+                    "cause": failure_cause(kind, renewed), "code": code,
                     "renewed": renewed, "attempts": attempts}
         sleep(delay)
     return {"ok": False, "via": None,
             "cause": failure_cause(last_kind or TERMINAL, renewed),
-            "renewed": renewed, "attempts": attempts}
+            "code": last_code, "renewed": renewed, "attempts": attempts}
+
+
+# --------------------------------------------------------------------- CLI
+def _cmd_label(args):
+    out = accept_label(args.ui_tap_proven == "1", args.ui_screen_proven == "1",
+                       args.api_ok == "1", args.api_2xx == "1",
+                       ui_tap_failed=args.ui_tap_failed == "1",
+                       assigned=args.assigned == "1")
+    sys.stdout.write(f"via={out['via']} cause={out['cause'] or 'none'}\n")
+    return 0
+
+
+def _parser():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    label = sub.add_parser("label", help="single accept_via label from real proofs")
+    for name in ("--ui-tap-proven", "--ui-screen-proven", "--api-ok", "--api-2xx"):
+        label.add_argument(name, default="0")
+    label.add_argument("--ui-tap-failed", default="0")
+    label.add_argument("--assigned", default="0")
+    label.set_defaults(func=_cmd_label)
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
