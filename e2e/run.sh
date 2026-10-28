@@ -18,10 +18,14 @@ DRIVER_PKG="sn.galass.galassdriver"
 APK_RIDER="${APK_RIDER:-apk/rider/app-debug.apk}"
 APK_DRIVER="${APK_DRIVER:-apk/driver/app-debug.apk}"
 ARTEMIS_BIN="${ARTEMIS_BIN:-vendor/artemis/.venv/bin/artemis}"
-# Chaîne de repli ORDONNÉE de modèles vision (FreeLLMAPI, vérifiés le 2026-10-27).
-# L'override workflow (ARTEMIS_DEFAULT_MODEL) passe en TÊTE, dédoublonné.
+# Chaîne de repli ORDONNÉE de modèles vision. Source unique: BASE_CHAIN de
+# model_chain.py (mesurée sur le relais, tête `auto`/`gemma` réellement 200).
+# Run 40766728045: un littéral périmé ici court-circuitait BASE_CHAIN et le
+# préflight ne sondait QUE des routes 429 « lacks vision » -> chain vide.
+# ARTEMIS_BASE_CHAIN ne sert que d'override explicite de secours; vide = chaîne
+# vérifiée. L'override workflow (ARTEMIS_DEFAULT_MODEL) passe en TÊTE, dédoublonné.
 # La route llama vision est MORTE (429 « lacks vision ») : jamais dans la chaîne.
-ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o}"
+ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-}"
 ARTEMIS_BACKOFF="${ARTEMIS_BACKOFF:-5 15 30}"
 # Vide = un essai par modèle de la chaîne ; toute valeur est bornée à la chaîne.
 ARTEMIS_MAX_ATTEMPTS="${ARTEMIS_MAX_ATTEMPTS:-}"
@@ -1050,14 +1054,23 @@ log "notif baseline: $NOTIF_BEFORE"
 # une image, seuls les 200 survivent. L'ancien heredoc s'arrêtait au PREMIER 200 :
 # une route rate-limitée en cours de run tuait toutes les étapes UI suivantes.
 CHAIN_REQUESTED="$OUT/artemis/vision-chain-requested.txt"
-chain_args=(chain --base "$ARTEMIS_BASE_CHAIN")
+# --base UNIQUEMENT pour une chaîne explicitement fournie: vide, model_chain.py
+# applique sa BASE_CHAIN vérifiée (source unique, tête auto/gemma mesurée 200).
+chain_args=(chain)
+if [ -n "${ARTEMIS_BASE_CHAIN:-}" ]; then
+  chain_args+=(--base "$ARTEMIS_BASE_CHAIN")
+fi
 if [ -n "${ARTEMIS_DEFAULT_MODEL:-}" ]; then
   chain_args+=(--override "$ARTEMIS_DEFAULT_MODEL")
 fi
 if ! "$PY" e2e/model_chain.py "${chain_args[@]}" > "$CHAIN_REQUESTED" \
      2> "$OUT/artemis/vision-chain.err"; then
   log "llm-vision: override refusé — chaîne de base seule (voir artemis/vision-chain.err)"
-  if ! "$PY" e2e/model_chain.py chain --base "$ARTEMIS_BASE_CHAIN" > "$CHAIN_REQUESTED" \
+  fallback_args=(chain)
+  if [ -n "${ARTEMIS_BASE_CHAIN:-}" ]; then
+    fallback_args+=(--base "$ARTEMIS_BASE_CHAIN")
+  fi
+  if ! "$PY" e2e/model_chain.py "${fallback_args[@]}" > "$CHAIN_REQUESTED" \
        2>> "$OUT/artemis/vision-chain.err"; then
     : > "$CHAIN_REQUESTED"
     log "llm-vision: chaîne de base invalide (voir artemis/vision-chain.err)"
@@ -1073,6 +1086,19 @@ fi
 # comptent (stage, model, sample, http, latency_ms) ; tout ce qui suit le premier
 # `body=` vient du relais et est ignoré — un body contenant « http=200
 # latency_ms=99000 » ne doit jamais devenir un plancher.
+# Run 40766728045: quand llm-vision part en WARN, les lignes de sonde ne vivaient
+# que dans l'archive chiffrée — le job log restait aveugle. Chaque ligne `stage=`
+# du preflight (masquée en amont par redact(), CR/LF pliés) est recopiée dans le
+# log du job, body borné aux 120 PREMIERS caractères — jamais la clé, jamais une
+# queue géante d'erreur.
+vision_probe_echo() {
+  local log="$1"
+  [ -s "$log" ] || return 0
+  sed -E 's/(body=.{120}).*/\1…/' "$log" | grep '^stage=' | while IFS= read -r line; do
+    log "vision-probe ${line#stage=}"
+  done
+}
+
 vision_floor_map() {
   local log="${1:-}" chain="${2:-}" out="${3:-}"
   if [ -z "$out" ]; then
@@ -1147,6 +1173,7 @@ if [ "$VISION_FLOOR_COUNT" -gt 0 ]; then
   log "llm-vision: plancher de latence par modèle ($VISION_FLOOR_COUNT route(s) mesurée(s), stage réaliste http=200) -> artemis/vision-floor.txt"
 fi
 if [ "$VISION_UNREACHABLE" = "1" ]; then
+  vision_probe_echo "$OUT/artemis/vision-preflight.txt"
   mark llm-vision WARN "relay unreachable (toutes les sondes http=0) (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
   ARTEMIS_SKIP_CAUSE="relay unreachable"
@@ -1180,9 +1207,11 @@ else
     read -r vision_probes vision_http0 vision_http200 <<< "$vision_http_codes"
     if [ "$vision_probes" -gt 0 ] && [ "$vision_http0" -eq 0 ] \
        && [ "$vision_http200" -eq 0 ]; then
+      vision_probe_echo "$OUT/artemis/vision-preflight.txt"
       mark llm-vision WARN "aucun modèle n'a répondu 200 (clé invalide ou service dégradé — voir artemis/vision-preflight.txt)"
       ARTEMIS_SKIP_CAUSE="aucun modèle n'a répondu 200"
     else
+      vision_probe_echo "$OUT/artemis/vision-preflight.txt"
       mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
       ARTEMIS_SKIP_CAUSE="aucun modèle vision"
     fi

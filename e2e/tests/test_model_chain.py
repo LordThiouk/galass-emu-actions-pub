@@ -42,8 +42,9 @@ SET_MODEL = os.path.join(ROOT, "set_model.py")
 sys.path.insert(0, ROOT)
 
 # Synthetic 6-route fixture (spread/budget math needs 6 slots). The real default
-# chain is 3 routes since 2026-10-28: every flash-lite route was dead (see
-# DEAD_MODELS); test_default_chain_has_no_dead_flash_lite pins that.
+# chain lives ONLY in model_chain.BASE_CHAIN (run 40766728045: run.sh shadowed it
+# with a stale 3-model literal and probed only routes that now 429 — see
+# test_run_sh_default_chain_is_the_verified_single_source).
 BASE_CHAIN = ["gpt-4.1", "gemini-2.5-flash", "gpt-4o", "fixture-route-4",
               "fixture-route-5", "fixture-route-6"]
 BASE_STR = ",".join(BASE_CHAIN)
@@ -404,7 +405,7 @@ def test_apply_writes_nothing_on_invalid_input():
 SECRET = "sk-e2e-do-not-log-0123456789"
 
 
-def _serve(alive):
+def _serve(alive, refusal_body=None):
     class Handler(BaseHTTPRequestHandler):
         seen = []
 
@@ -417,7 +418,8 @@ def _serve(alive):
                 data = json.dumps({"choices": [{"message": {"content": "Red"}}]}).encode()
                 code = 200
             else:
-                data = json.dumps({"error": {"message": "429 rate limit " + SECRET}}).encode()
+                data = (refusal_body if refusal_body is not None
+                        else json.dumps({"error": {"message": "429 rate limit " + SECRET}})).encode()
                 code = 429
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
@@ -1216,7 +1218,11 @@ def test_run_sh_wires_the_chain_and_never_writes_vendor():
                    "e2e/model_chain.py", "e2e/vision_preflight.py",
                    "e2e/set_model.py", "vision-chain.txt"):
         assert needle in body, needle
-    assert "gpt-4.1" in body and "gpt-4o" in body and "flash-lite" not in body, "chaîne par défaut absente"
+    # Le littéral de chaîne périmé a QUITTÉ run.sh (source unique: BASE_CHAIN,
+    # test_run_sh_default_chain_is_the_verified_single_source) — les seuls ids
+    # restants dans run.sh vivent dans ce commentaire de latence historique.
+    assert 'ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o}"' not in body
+    assert "flash-lite" not in body, "route morte dans run.sh"
     assert DEAD not in body, "route morte dans run.sh"
     assert 'export ARTEMIS_ARTEMIS_JSONC="$ARTEMIS_CONFIG_RUNTIME"' in body, \
         "la config runtime n'est pas exportée vers Artemis"
@@ -2062,6 +2068,81 @@ def test_default_chain_has_no_dead_flash_lite():
               "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite"):
         assert m in model_chain.DEAD_MODELS, m
         assert m not in model_chain.BASE_CHAIN, m
+
+
+# --------------------------- run 40766728045 root cause (chain provenance)
+@case
+def test_run_sh_default_chain_is_the_verified_single_source():
+    """run.sh must NOT shadow model_chain.BASE_CHAIN with a stale literal.
+
+    Run 40766728045: line 24 pinned `gpt-4.1,gemini-2.5-flash,gpt-4o` and `chain
+    --base` always received it, so the preflight probed ONLY the three routes
+    that now 429 "lacks vision" under every key — the 19:50 UTC measured chain
+    (auto, gemma-4-31b-it) was never requested. The default must be EMPTY and
+    `--base` passed only when the caller ACTUALLY set an override chain.
+    """
+    src = text(RUN)
+    stale = 'ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o}"'
+    assert stale not in src, "run.sh écrase encore la chaîne vérifiée"
+    assert 'ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-}"' in src, src
+    assert "chain_args=(chain)" in src, "la chaîne doit partir du défaut de model_chain.py"
+    # --base n'est ajouté QUE pour une chaîne explicitement fournie (set -u proof)
+    assert 'if [ -n "${ARTEMIS_BASE_CHAIN:-}" ]; then\n  chain_args+=(--base "$ARTEMIS_BASE_CHAIN")\nfi' in src, src
+
+    # Behavior: NO ARTEMIS_BASE_CHAIN, no override -> the requested chain IS
+    # model_chain.BASE_CHAIN, `auto` head, probed in order.
+    server, handler = _serve(set())
+    try:
+        tmp = tempfile.mkdtemp(prefix="e2e-chain-source-")
+        env = preflight_tree(tmp, f"http://127.0.0.1:{server.server_port}")
+        env.pop("ARTEMIS_BASE_CHAIN", None)
+        env.pop("ARTEMIS_DEFAULT_MODEL", None)
+        proc = run_preflight_block(env, cwd=tmp)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        art = os.path.join(tmp, "e2e-out", "artemis")
+        requested = [l for l in text(os.path.join(art, "vision-chain-requested.txt")).splitlines() if l]
+        import model_chain
+        assert requested == model_chain.BASE_CHAIN, \
+            f"la chaîne réellement demandée doit être la chaîne vérifiée: {requested}"
+        assert handler.seen[0][0] == "auto", handler.seen[:3]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@case
+def test_every_vision_probe_refusal_is_named_in_the_job_log_without_the_key():
+    """When llm-vision WARNs, the job log itself carries each probe's verdict.
+
+    Run 40766728045 ground blind: the per-probe lines only lived in the
+    encrypted evidence archive. Every `stage=` line must be echoed into the
+    run/job log as `vision-probe model=<id> http=<code> body=<120 chars>`, redacted,
+    and NEVER the key — nor the long tail of a huge error body.
+    """
+    filler = "F" * 500
+    refusal = "HEADMARK 429 vision " + filler + SECRET
+    server, _handler = _serve(set(), refusal_body=refusal)
+    try:
+        tmp = tempfile.mkdtemp(prefix="e2e-probe-echo-")
+        env = preflight_tree(tmp, f"http://127.0.0.1:{server.server_port}")
+        proc = run_preflight_block(env, cwd=tmp)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        marks = text(os.path.join(tmp, "e2e-out", "marks.txt"))
+        assert "MARK llm-vision WARN" in marks, marks
+        log = text(os.path.join(tmp, "e2e-out", "run.log"))
+        echoes = [l for l in log.splitlines() if "vision-probe" in l and "http=" in l]
+        assert echoes, "aucun echo vision-probe dans le run.log: " + log
+        assert any("http=429" in l for l in echoes), echoes
+        assert any("body=HEADMARK" in l for l in echoes), echoes
+        # clamp: the echoed body is the FIRST 120 chars (+…), never more
+        for line in echoes:
+            seg = line.rsplit("body=", 1)[1] if "body=" in line else ""
+            assert len(seg) <= 121, (len(seg), line)
+        assert "F" * 121 not in log, "corps d'erreur non tronqué dans le job log"
+        assert SECRET not in log, "la clé a fuité dans le job log"
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":
