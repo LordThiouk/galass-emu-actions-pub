@@ -552,7 +552,9 @@ def test_artemis_absent_files_are_an_empty_section():
     out = make_out([("no-prod-calls", "PASS", "0 hit")])
     res = report.build(out, p0={"no-prod-calls"})
     assert res["artemis"] == {"runs": [], "attempts": [], "chain": [],
-                              "requested_chain": [], "budget_exhausted": []}, res["artemis"]
+                              "requested_chain": [], "budget_exhausted": [],
+                              "latency_floor_refused": [],
+                              "floors": {}, "bounds": {}}, res["artemis"]
 
 
 @case
@@ -638,6 +640,163 @@ def test_artemis_budget_exhaustion_is_visible():
     row = res["artemis"]["attempts"][0]
     assert row["rc"] is None, row
     assert row["signal"] == "budget" and row["outcome"] == "budget", row
+
+
+@case
+def test_artemis_latency_floor_refusal_is_a_named_outcome():
+    """run.sh's refusal branch writes the 7-field row
+    `smoke|1|gpt-4.1|-|15|latency_floor|latency_floor` (3rd field = the REFUSED
+    route). It must read as its own clean outcome: not unknown (silent), not
+    budget (wrong cause), not success (no attempt ran) — and it must never crash
+    the verdict.
+    """
+    import report
+
+    out = _artemis_out(
+        "smoke|1|6|head=gpt-4.1|primary=gpt-4.1|fallback=none|fallback_events=0"
+        "|served=unknown|signals=-|rc=2|served_model=unknown|chain=gpt-4.1\n",
+        ["smoke|1|gpt-4.1|-|15|latency_floor|latency_floor"])
+    res = report.build(out, p0={"no-prod-calls"})  # must not raise
+    row = res["artemis"]["attempts"][0]
+    assert row["outcome"] == "latency_floor", row
+    assert row["outcome"] not in ("unknown", "budget", "success"), row
+    assert row["signal"] == "latency_floor", row
+    assert row["model"] == "gpt-4.1", row
+    assert row["rc"] is None and row["timeout_sec"] == 15, row
+    # explicitly named in the human summary, and never reported as a budget stop
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "plancher de latence refusé (1): gpt-4.1" in summary, summary
+    assert "budget épuisé" not in summary, summary
+    # an Artemis refusal is not a P0 point: it cannot flip the verdict by itself
+    assert res["verdict"] == "PASS", res
+
+
+@case
+def test_artemis_latency_refusal_and_budget_stay_separate():
+    """Both are 'no attempt ran', but the cause differs: never merge the two."""
+    import report
+
+    out = _artemis_out(
+        "smoke|2|3|head=gpt-4.1|primary=gemini-2.5-flash|fallback=none"
+        "|fallback_events=0|served=unknown|signals=-|rc=1|served_model=unknown"
+        "|chain=gpt-4.1,gemini-2.5-flash,gemini-3.5-flash-lite\n",
+        ["driver-accept|1|-|-|0|budget|budget",
+         "smoke|1|gpt-4.1|-|15|latency_floor|latency_floor",
+         "smoke|3|gemini-3.5-flash-lite|-|15|latency_floor|latency_floor"])
+    res = report.build(out, p0={"no-prod-calls"})
+    art = res["artemis"]
+    assert [a["outcome"] for a in art["attempts"]] == [
+        "budget", "latency_floor", "latency_floor"], art
+    assert art["budget_exhausted"] == ["driver-accept"], art
+    assert art["latency_floor_refused"] == ["smoke"], art
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "budget épuisé: driver-accept" in summary, summary
+    # ONE run, TWO refused routes: the line names the ROUTES (3rd ledger field),
+    # never the step, and never a claim about how many attempts ran.
+    assert ("plancher de latence refusé (2): gpt-4.1, gemini-3.5-flash-lite"
+            in summary), summary
+    # the false claim the audit caught: recap said "aucune tentative" while the
+    # same block showed attempts=2/3 rc=1.
+    floor_line = [l for l in summary.splitlines() if "plancher de latence" in l][0]
+    assert "aucune tentative" not in floor_line, floor_line
+    assert "aucun essai" not in floor_line, floor_line
+    budget_line = [l for l in summary.splitlines() if "budget épuisé" in l][0]
+    assert "aucune tentative" not in budget_line, budget_line
+    assert "attempts=2/3" in summary, summary
+
+
+@case
+def test_artemis_run_line_carries_the_measured_floor_and_the_funded_bound():
+    """Max M2: a run that DID attempt and still reads served=unknown used to look
+    causeless. The measured floor (vision-floor.txt) and the bound that funded the
+    attempt (run.log) must sit next to the run line, and only when the files hold
+    them."""
+    import report
+
+    out = _artemis_out(
+        "smoke|1|6|head=gpt-4.1|primary=gpt-4.1|fallback=none|fallback_events=0"
+        "|served=unknown|signals=timeout|rc=124|served_model=unknown|chain=gpt-4.1\n",
+        ["smoke|1|gpt-4.1|124|15|timeout|timeout"])
+    with open(os.path.join(out, "artemis", "vision-floor.txt"), "w") as fh:
+        fh.write("model=gpt-4.1 floor=15\n")
+    with open(os.path.join(out, "run.log"), "w") as fh:
+        fh.write("[e2e 10:00:00] artemis config: smoke offset=0 primary=gpt-4.1 "
+                 "request_timeout=5s sdk_retries=2\n")
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["floors"] == {"gpt-4.1": 15}, res["artemis"]["floors"]
+    assert res["artemis"]["bounds"] == {"smoke": 5}, res["artemis"]["bounds"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "latence mesurée 15s (gpt-4.1), borne 5s" in summary, summary
+    # the sub-line sits directly under its run line, never in its own section
+    lines = summary.splitlines()
+    i = [n for n, l in enumerate(lines) if l.startswith("- smoke:")][0]
+    assert lines[i + 1].strip().startswith("- latence mesurée"), lines[i:i + 2]
+
+
+@case
+def test_artemis_floor_and_bound_are_omitted_when_the_files_do_not_hold_them():
+    """No invented numbers: no vision-floor.txt / no run.log => no sub-line, and
+    a floor without a bound prints the floor only."""
+    import report
+
+    out = _artemis_out(
+        "smoke|1|6|head=gpt-4.1|primary=gpt-4.1|fallback=none|fallback_events=0"
+        "|served=unknown|signals=timeout|rc=124|served_model=unknown|chain=gpt-4.1\n",
+        ["smoke|1|gpt-4.1|124|15|timeout|timeout"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["floors"] == {} and res["artemis"]["bounds"] == {}, res["artemis"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "latence mesurée" not in summary, summary
+    assert "borne " not in summary, summary
+
+    with open(os.path.join(out, "artemis", "vision-floor.txt"), "w") as fh:
+        fh.write("model=gpt-4.1 floor=15\n")
+    res = report.build(out, p0={"no-prod-calls"})
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "latence mesurée 15s (gpt-4.1)" in summary, summary
+    assert "borne" not in summary, summary
+
+
+@case
+def test_a_refused_route_without_a_name_prints_the_count_only():
+    """Max m2: when the 3rd ledger field carries no route name, the line must not
+    fall back to STEP names (step names on a route-naming line)."""
+    import report
+
+    out = _artemis_out(
+        "smoke|1|2|head=gpt-4.1|primary=gpt-4.1|fallback=none|fallback_events=0"
+        "|served=unknown|signals=-|rc=2|served_model=unknown|chain=gpt-4.1\n",
+        ["smoke|1|-|-|15|latency_floor|latency_floor"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["latency_floor_refused"] == ["smoke"], res["artemis"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    floor_line = [l for l in summary.splitlines() if "plancher de latence" in l][0]
+    assert floor_line.strip() == "- plancher de latence refusé (1)", floor_line
+    assert "smoke" not in floor_line, floor_line
+
+
+@case
+def test_artemis_budget_line_never_claims_zero_attempts_after_a_real_launch():
+    """F5: the budget stop is reachable AFTER a real attempt (attempt 1 ran, the
+    remaining share funds no second launch). The recap must state the stop, not
+    assert zero attempts it cannot prove — same false-claim class as the floor
+    line the audit caught."""
+    import report
+
+    out = _artemis_out(
+        "smoke|1|3|head=gpt-4.1|primary=gpt-4.1|fallback=gemini-2.5-flash"
+        "|fallback_events=0|served=unknown|signals=429|rc=1|served_model=unknown"
+        "|chain=gpt-4.1,gemini-2.5-flash,gpt-4o\n",
+        ["smoke|1|gpt-4.1|1|4|429|retryable",
+         "smoke|2|-|-|0|budget|budget"])
+    res = report.build(out, p0={"no-prod-calls"})
+    assert res["artemis"]["runs"][0]["attempts"] == 1, res["artemis"]["runs"]
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    budget_line = [l for l in summary.splitlines() if "budget épuisé" in l][0]
+    assert "smoke" in budget_line, budget_line
+    assert "aucune tentative" not in budget_line, budget_line
+    assert "aucun essai" not in budget_line, budget_line
+    assert "attempts=1/3" in summary, summary
 
 
 @case

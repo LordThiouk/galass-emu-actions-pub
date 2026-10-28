@@ -18,7 +18,20 @@ Credentials come from the environment ONLY (OPENAI_* first, then FREELLM_*):
   key  = OPENAI_API_KEY or FREELLM_API_KEY
 The key is never written: every response body is redacted before it reaches the
 log. An empty alive list is NOT an error — the caller WARNs (Artemis unavailable).
-Exit 0 unless the usage/inputs are broken.
+
+Every per-probe line carries `latency_ms=` (ISC-2), because the admission envelope
+is the reason run 40669473919 burned every attempt: a route can answer a probe and
+still be far slower than the runtime budget. When EVERY ATTEMPTED liveness probe is
+a network error (http=0), the relay itself is unreachable: the log ends with
+`verdict=relay_unreachable` and the exit code is 3 (ISC-3), so the caller names the
+cause instead of printing `served_model=unknown`. Three CONSECUTIVE http=0 probes
+are enough to stop probing (the remaining ids are left unprobed) ONLY while no route
+has answered 200 yet: a survivor is already proof the relay is up, so a later streak
+of timeouts is data about those routes, never a dead-relay verdict — the probe then
+runs to the end of the chain. A mixed run (network errors then an HTTP status) keeps
+probing and never gets the verdict either.
+
+Exit 0 unless the usage/inputs are broken (2) or the relay never answered (3).
 """
 import argparse
 import base64
@@ -28,6 +41,7 @@ import os
 import random
 import struct
 import sys
+import time
 import zlib
 import urllib.error
 import urllib.request
@@ -39,6 +53,13 @@ from model_chain import MODEL_RE  # noqa: E402  (single allowlist, B6)
 PNG_1x1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGA"
            "hKmMIQAAAABJRU5ErkJggg==")
 BODY_EXCERPT = 300
+# Head of the key redacted on its own, so a key cut by BODY_EXCERPT cannot ship
+# its first characters (Max m7). 8 is identifying, short enough to stay plausible.
+KEY_HEAD_CHARS = 8
+# ISC-3: three CONSECUTIVE network failures mean the relay is down — but only as
+# long as NOT ONE route has answered 200 yet (a survivor proves the relay is up).
+# Once a route succeeded, the streak is data about those routes, never a verdict.
+RELAY_UNREACHABLE_STREAK = 3
 
 # A real Galass capture is 1080x2400 and lands around 300 KB once encoded: that
 # SIZE is what the relay 502s on, so the probe must reach it to be meaningful.
@@ -119,9 +140,21 @@ def backend():
 
 
 def redact(text, key):
+    """Redacted, single-line body excerpt.
+
+    CR/LF are folded to spaces: the body comes from the relay, and a raw newline
+    would let it fabricate a whole `stage=realistic …` log line (the floor map
+    parses those lines positionally — see run.sh vision_floor_map).
+
+    The key's HEAD is redacted too, not just the whole key: a key straddling the
+    BODY_EXCERPT boundary is truncated, so the exact-substring replace misses it
+    and its first characters would ship in the log (Max m7).
+    """
     text = str(text or "")
     if key:
         text = text.replace(key, "***")
+        text = text.replace(str(key)[:KEY_HEAD_CHARS], "***")
+    text = text.replace("\r", " ").replace("\n", " ")
     return text[:BODY_EXCERPT]
 
 
@@ -198,17 +231,46 @@ def main(argv=None):
             log.write("no base url (OPENAI_BASE_URL / FREELLM_BASE_URL) — cannot probe\n")
         else:
             survivors = []
+            liveness_codes = []
+            consecutive_zero = 0
             log.write(f"stage=liveness bytes={payload_bytes('probe')}\n")
             for model in requested:
                 if not MODEL_RE.match(model):
                     log.write(f"invalid id skipped: {model!r}\n")
                     continue
+                started = time.monotonic()
                 code, body = probe(base, key, model, args.timeout)
+                latency_ms = int((time.monotonic() - started) * 1000)
+                liveness_codes.append(code)
                 log.write(f"stage=liveness model={model} http={code} "
-                          f"body={redact(body, key)}\n")
+                          f"latency_ms={latency_ms} body={redact(body, key)}\n")
                 log.flush()
+                consecutive_zero = consecutive_zero + 1 if code == 0 else 0
                 if code == 200:
                     survivors.append(model)
+                if consecutive_zero >= RELAY_UNREACHABLE_STREAK and not survivors:
+                    # ISC-3 short-circuit: three consecutive network failures are
+                    # already proof — but ONLY while nothing has succeeded. Once a
+                    # route answered 200 the relay is demonstrably up, so a later
+                    # streak is a fact about those routes, not a dead relay: keep
+                    # probing and let the survivors through (a false verdict here
+                    # emptied the alive file and published "relay unreachable" on a
+                    # run whose first route had answered 200).
+                    log.write("verdict=relay_unreachable\n")
+                    log.flush()
+                    with open(args.out, "w", encoding="utf-8"):
+                        pass
+                    return 3
+            if liveness_codes and all(code == 0 for code in liveness_codes):
+                # ISC-3: not one id got an HTTP status — the relay is unreachable,
+                # not "the models lack vision". Name it and stop: the caller marks
+                # llm-vision WARN and skips every Artemis attempt instead of burning
+                # the whole step on six certain timeouts.
+                log.write("verdict=relay_unreachable\n")
+                log.flush()
+                with open(args.out, "w", encoding="utf-8"):
+                    pass
+                return 3
             if survivors and probe_bytes:
                 image = base64.b64encode(
                     synthetic_png(probe_bytes)).decode("ascii")
@@ -221,9 +283,12 @@ def main(argv=None):
                     # run 40602473815 — one sample would call it healthy.
                     codes = []
                     for sample in (1, 2):
+                        started = time.monotonic()
                         code, body = probe(base, key, model, args.timeout, image)
+                        latency_ms = int((time.monotonic() - started) * 1000)
                         log.write(f"stage=realistic model={model} sample={sample} "
-                                  f"http={code} body={redact(body, key)}\n")
+                                  f"http={code} latency_ms={latency_ms} "
+                                  f"body={redact(body, key)}\n")
                         log.flush()
                         codes.append(code)
                         if code != 200:

@@ -457,12 +457,16 @@ masked_tail() {
 # tôt désactiverait Artemis pour tout le run. Une série invalide, elle, désactive
 # Artemis sans casser le harnais : taps + API restent la voie de secours.
 ARTEMIS_SERIAL="${ARTEMIS_SERIAL:-${ANDROID_SERIAL:-}}"
+# Max m1: every disable site names ITS cause, so the skip line never claims
+# "smoke failed" for a relay that was down or a serial that was invalid.
+ARTEMIS_SKIP_CAUSE="${ARTEMIS_SKIP_CAUSE:-smoke failed}"
 case "$ARTEMIS_SERIAL" in
   ""|unknown) ;;  # résolue (ou refusée) au premier artemis_run
   *[!A-Za-z0-9._:-]*)
     log "artemis: série invalide ('$ARTEMIS_SERIAL') — smoke désactivé, taps + API"
     ARTEMIS_SERIAL=""
-    ARTEMIS_OK=0 ;;
+    ARTEMIS_OK=0
+    ARTEMIS_SKIP_CAUSE="série invalide" ;;
 esac
 ARTEMIS_OK="${ARTEMIS_OK:-1}"
 artemis_serial() {
@@ -478,15 +482,15 @@ artemis_run() {
   # name goal timeout_s [locked_pkg]
   local name="$1" goal="$2" tmo="${3:-240}" pkg="${4:-}"
   if [ "$ARTEMIS_OK" != "1" ]; then
-    log "artemis skip: $name (smoke failed)"
+    log "artemis skip: $name (${ARTEMIS_SKIP_CAUSE:-smoke failed})"
     return 2
   fi
   if ! artemis_serial >/dev/null; then
     log "artemis: aucune série exploitable — smoke désactivé, taps + API"
     ARTEMIS_OK=0
+    ARTEMIS_SKIP_CAUSE="série introuvable"
     return 2
   fi
-
   # Chaîne de repli ordonnée. Absente ou à UN modèle => un seul essai, comportement
   # historique (les tests unitaires du harnais reposent sur cet argv unique).
   local chain_file="${ARTEMIS_CHAIN_FILE:-}"
@@ -591,13 +595,70 @@ artemis_run() {
     # 60 s — `ModelEndpoint` n'expose aucun `max_retries` (router.py:87-113). Le seul
     # levier est le timeout PAR REQUÊTE : il est calculé pour que (1 + réessais SDK)
     # appels + marge tiennent DANS la part de cet essai.
-    local req_timeout=""
-    req_timeout=$("$PY" e2e/model_chain.py request-timeout --share "$tmo_left" \
-                    --sdk-retries "${RELAY_SDK_RETRIES:-2}" 2>>"$OUT/run.log") \
-      || req_timeout=""
-    case "$req_timeout" in ''|*[!0-9]*) req_timeout=5 ;; esac
+    # ISC-5 : le plancher est PAR MODÈLE. Chaque route vivante mesurée par le
+    # préflight a SA ligne `model=<id> floor=<ceil_s>` dans vision-floor.txt ;
+    # l'ancien MAX sur toute la chaîne refusait TOUTES les tentatives dès qu'une
+    # route lente y figurait (chaîne [gpt-4.1 2 s, gpt-4o 15 s] => plancher 15 =>
+    # la route rapide était refusée dès l'essai 1). Un modèle sans mesure (ou
+    # aucune mesure du tout) => 0 => argv historique, comportement inchangé.
+    local lat_floor=0
+    local floor_map="$OUT/artemis/vision-floor.txt"
+    if [ "$chain_n" -gt 0 ] && [ -s "$floor_map" ]; then
+      lat_floor=$(awk -v want="$model" '
+        split($1, a, "=") == 2 && a[1] == "model" && a[2] == want {
+          split($2, b, "=")
+          if (b[1] == "floor" && b[2] ~ /^[0-9]+$/) { print b[2]; exit }
+        }
+      ' "$floor_map" 2>/dev/null) || lat_floor=0
+    fi
+    case "$lat_floor" in ''|*[!0-9]*) lat_floor=0 ;; esac
+    local -a rt_floor_args=()
+    [ "$lat_floor" -gt 0 ] && rt_floor_args=(--latency-floor "$lat_floor")
+    # ISC-4 : le code de sortie distingue les DEUX causes de T=0. rc=4 = refus
+    # de plancher ; rc=0 + T=0 = cas historique (part qui ne finance aucun appel
+    # borné, le timeout extérieur gouverne). Les confondre étiquetait un cas
+    # legacy en `latency_floor` (audit R5).
     local sdk_retries="${RELAY_SDK_RETRIES:-2}"
     case "$sdk_retries" in ''|*[!0-9]*) sdk_retries=2 ;; esac
+    local req_timeout="" req_rc=0 rt_err="$OUT/artemis/request-timeout.err"
+    req_timeout=$("$PY" e2e/model_chain.py request-timeout --share "$tmo_left" \
+                    --sdk-retries "$sdk_retries" \
+                    ${rt_floor_args[@]+"${rt_floor_args[@]}"} 2> "$rt_err") \
+      || req_rc=$?
+    [ -s "$rt_err" ] && cat "$rt_err" >> "$OUT/run.log"
+    if [ "$req_rc" -eq 4 ]; then
+      # La VRAIE comparaison est borne finançable vs plancher — jamais
+      # "part < latence mesurée", qui était arithmétiquement faux. La borne est
+      # lue dans le message du CLI (`bound=<n>s`), même formule, rien d'inventé.
+      local funded_bound=""
+      funded_bound=$(sed -n 's/.*bound=\([0-9][0-9]*\)s.*/\1/p' "$rt_err" 2>/dev/null \
+                       | tail -n 1)
+      case "$funded_bound" in ''|*[!0-9]*) funded_bound=0 ;; esac
+      log "artemis timeout: $name timeout par requête ${funded_bound}s <= plancher ${lat_floor}s — AUCUN essai sur cette route (part=${tmo_left}s, sdk_retries=$sdk_retries, route trop lente pour le budget par requête)"
+      # Le champ modèle (3e colonne du ledger) porte LA ROUTE REFUSÉE : elle est
+      # connue ici, et un refus anonyme ne dit pas quelle route était trop lente.
+      printf '%s|%s|%s|%s|%s|%s|%s\n' "$name" "$attempt" "$model" "-" "$tmo_left" \
+        "latency_floor" "latency_floor" >> "$OUT/artemis/attempts.txt"
+      # Comme `budget` : aucun essai n'a tourné sur CETTE tentative => rc=2 si
+      # aucun essai n'a tourné du tout ; sinon le rc de l'essai précédent reste.
+      [ "$attempts_run" -gt 0 ] || rc=2
+      # Le plancher est PAR ROUTE : un refus sur la route lente ne tue pas la
+      # chaîne, la rotation passe à la suivante dont le plancher peut financer
+      # l'appel (l'ancien arrêt inconditionnel laissait la route rapide intacte).
+      # Le refus n'entre pas dans attempts_run (aucun essai lancé) ; la borne
+      # max_attempts ferme la boucle, jamais un refus.
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        log "artemis end: $name dernier essai $attempt/$max_attempts refusé (plancher ${lat_floor}s) — arrêt de la chaîne"
+        break
+      fi
+      local next_floor_model="${chain[$attempt]}"
+      log "artemis retry: $name switch from=$model to=${next_floor_model:-next} cause=latency_floor (attempt $((attempt + 1))/$max_attempts, aucun essai lancé)"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    # Tout autre rc : échec de calcul => repli historique (T=0 => défaut 5).
+    [ "$req_rc" -eq 0 ] || req_timeout=""
+    case "$req_timeout" in ''|*[!0-9]*) req_timeout=5 ;; esac
     # R2 : une part trop petite pour financer un seul appel borné (T=0) n'écrit
     # AUCUNE clé `timeout` — le timeout extérieur de l'essai gouverne. La rotation
     # de chaîne reste faite, sinon l'essai partirait sur le mauvais modèle.
@@ -630,6 +691,11 @@ artemis_run() {
                    --standalone --device-serial "$ARTEMIS_SERIAL")
     [ -n "$pkg" ] && args+=(--locked-app "$pkg")
     log "artemis start: $name attempt $attempt/$max_attempts primary=$model fallback=$next_model offset=$offset timeout=${tmo_left}s affordable=${attempts_left} device=$ARTEMIS_SERIAL"
+    # F1 : `attempts_run` compte les LANCEMENTS réels, jamais l'indice de créneau.
+    # Publier $attempt annonçait 2/3 essais après un refus de plancher alors qu'un
+    # seul Artemis avait démarré. Incrémenté AVANT le lancement : l'invocation a
+    # bien eu lieu même si le binaire échoue.
+    attempts_run=$((attempts_run + 1))
     ( cd vendor/artemis && timeout "$tmo_left" "./.venv/bin/artemis" "${args[@]}" ) \
       > "$attempt_log" 2>&1
     rc=$?
@@ -638,7 +704,6 @@ artemis_run() {
     cp "$attempt_log" "$OUT/artemis/$name.log" 2>/dev/null || true
     local events=0
     events=$(grep -E -c 'Falling back|llm_fallback' "$attempt_log" 2>/dev/null) || events=0
-    attempts_run="$attempt"
     last_primary="$model"
     last_fallback="$next_model"
     last_events="$events"
@@ -999,6 +1064,54 @@ if ! "$PY" e2e/model_chain.py "${chain_args[@]}" > "$CHAIN_REQUESTED" \
   fi
 fi
 : > "$ARTEMIS_CHAIN_FILE"
+# ISC-5 : le plancher est PAR MODÈLE, jamais un MAX sur la chaîne. Le préflight
+# mesure chaque route vivante ; on écrit une ligne par route mesurée dans
+# `$OUT/artemis/vision-floor.txt` :
+#     model=<id> floor=<ceil_s>
+# `artemis_run` lit le plancher de LA route qu'il s'apprête à lancer.
+# Parsing POSITIONNEL : seuls les champs fixes de tête d'une ligne `stage=realistic`
+# comptent (stage, model, sample, http, latency_ms) ; tout ce qui suit le premier
+# `body=` vient du relais et est ignoré — un body contenant « http=200
+# latency_ms=99000 » ne doit jamais devenir un plancher.
+vision_floor_map() {
+  local log="${1:-}" chain="${2:-}" out="${3:-}"
+  if [ -z "$out" ]; then
+    printf '0'
+    return 0
+  fi
+  : > "$out"
+  if [ ! -s "$log" ] || [ ! -s "$chain" ]; then
+    printf '0'
+    return 0
+  fi
+  awk '
+    NR == FNR {
+      if (length($0) > 0) { order[++n] = $0; alive[$0] = 1 }
+      next
+    }
+    $1 == "stage=realistic" {
+      split($2, f, "="); if (f[1] != "model") next
+      model = f[2]
+      split($3, f, "="); if (f[1] != "sample") next
+      split($4, f, "="); if (f[1] != "http") next
+      http = f[2]
+      split($5, f, "="); if (f[1] != "latency_ms") next
+      lat = f[2]
+      if (http == "200" && lat ~ /^[0-9]+$/ && (model in alive) && lat + 0 > max[model])
+        max[model] = lat + 0
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        m = order[i]
+        if (m in max) printf "model=%s floor=%d\n", m, int((max[m] + 999) / 1000)
+      }
+    }
+  ' "$chain" "$log" > "$out" 2>/dev/null || : > "$out"
+  local count=0
+  count=$(grep -c . "$out" 2>/dev/null) || count=0
+  printf '%s' "$count"
+}
+VISION_UNREACHABLE=0
 if [ -s "$CHAIN_REQUESTED" ]; then
   # VISION_PROBE_TIMEOUT borne UNE sonde : une route qui pend est morte, elle ne
   # doit pas manger le budget du step (le défaut 20 s est documenté dans le log).
@@ -1009,44 +1122,102 @@ if [ -s "$CHAIN_REQUESTED" ]; then
   VISION_PROBE_BYTES="${VISION_PROBE_BYTES:-307200}"
   case "$VISION_PROBE_BYTES" in ''|*[!0-9]*) VISION_PROBE_BYTES=307200 ;; esac
   log "llm-vision: préflight timeout=${VISION_PROBE_TIMEOUT}s payload=${VISION_PROBE_BYTES}o par modèle ($(grep -c . "$CHAIN_REQUESTED" 2>/dev/null || echo 0) demandé(s))"
-  if ! "$PY" e2e/vision_preflight.py --chain-file "$CHAIN_REQUESTED" \
+  if "$PY" e2e/vision_preflight.py --chain-file "$CHAIN_REQUESTED" \
          --out "$ARTEMIS_CHAIN_FILE" --log "$OUT/artemis/vision-preflight.txt" \
          --timeout "$VISION_PROBE_TIMEOUT" \
          --probe-bytes "$VISION_PROBE_BYTES" \
          >> "$OUT/run.log" 2>&1; then
-    log "llm-vision: préflight en erreur (voir artemis/vision-preflight.txt)"
+    :
+  else
+    vision_rc=$?
+    if [ "$vision_rc" -eq 3 ]; then
+      # ISC-8 : exit 3 = relais injoignable (0 sonde réseau n'a de statut HTTP).
+      # Nommer la cause et ne PAS lancer un seul essai Artemis.
+      VISION_UNREACHABLE=1
+      log "llm-vision: relay unreachable — toutes les sondes http=0 (voir artemis/vision-preflight.txt)"
+    else
+      log "llm-vision: préflight en erreur (rc=$vision_rc, voir artemis/vision-preflight.txt)"
+    fi
   fi
 fi
-VISION_MODEL=$(head -n 1 "$ARTEMIS_CHAIN_FILE" 2>/dev/null | tr -d '\r\n')
-printf '%s' "$VISION_MODEL" > "$OUT/artemis/vision-model.txt"
-ARTEMIS_CHAIN_N=$(grep -c . "$ARTEMIS_CHAIN_FILE" 2>/dev/null || true)
-[ -n "$ARTEMIS_CHAIN_N" ] || ARTEMIS_CHAIN_N=0
-if [ -z "$VISION_MODEL" ]; then
-  mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
+VISION_FLOOR_COUNT=$(vision_floor_map "$OUT/artemis/vision-preflight.txt" \
+  "$ARTEMIS_CHAIN_FILE" "$OUT/artemis/vision-floor.txt")
+case "$VISION_FLOOR_COUNT" in ''|*[!0-9]*) VISION_FLOOR_COUNT=0 ;; esac
+if [ "$VISION_FLOOR_COUNT" -gt 0 ]; then
+  log "llm-vision: plancher de latence par modèle ($VISION_FLOOR_COUNT route(s) mesurée(s), stage réaliste http=200) -> artemis/vision-floor.txt"
+fi
+if [ "$VISION_UNREACHABLE" = "1" ]; then
+  mark llm-vision WARN "relay unreachable (toutes les sondes http=0) (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
-elif ! printf '%s' "$VISION_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]{1,80}$'; then
-  # B6: l'id vient d'une sonde distante. Refuse tout ce qui pourrait devenir un
-  # token sed/shell au lieu de l'injecter dans une ligne de commande.
-  mark llm-vision FAIL "VISION_MODEL rejeté (caractères non sûrs): $(printf '%s' "$VISION_MODEL" | tr -c 'A-Za-z0-9._:/-\n' '?')"
-  ARTEMIS_OK=0
+  ARTEMIS_SKIP_CAUSE="relay unreachable"
 else
-  export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
-  # Config runtime réécrite DANS $OUT (vendor/ jamais modifié), puis vérifiée: le
-  # modèle de tête doit bien être présent dans le fichier produit.
-  if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" --out "$ARTEMIS_CONFIG_RUNTIME" \
-       --chain-file "$ARTEMIS_CHAIN_FILE" --offset 0 >> "$OUT/run.log" 2>&1 \
-     && "$PY" e2e/set_model.py --check "$ARTEMIS_CONFIG_RUNTIME" "$VISION_MODEL" >/dev/null; then
-    grep -c -F "\"model\": \"$VISION_MODEL\"" "$ARTEMIS_CONFIG_RUNTIME" > "$OUT/artemis/profile-model-count.txt" || true
-    export ARTEMIS_ARTEMIS_JSONC="$ARTEMIS_CONFIG_RUNTIME"
-    mark llm-vision PASS "chaîne vision (${ARTEMIS_CHAIN_N}): $(paste -sd, "$ARTEMIS_CHAIN_FILE")"
-  else
-    mark llm-vision FAIL "réécriture de la config Artemis refusée"
+  VISION_MODEL=$(head -n 1 "$ARTEMIS_CHAIN_FILE" 2>/dev/null | tr -d '\r\n')
+  printf '%s' "$VISION_MODEL" > "$OUT/artemis/vision-model.txt"
+  ARTEMIS_CHAIN_N=$(grep -c . "$ARTEMIS_CHAIN_FILE" 2>/dev/null || true)
+  [ -n "$ARTEMIS_CHAIN_N" ] || ARTEMIS_CHAIN_N=0
+  if [ -z "$VISION_MODEL" ]; then
+    # Max m5: an empty alive file has two causes. When EVERY probe got an HTTP
+    # status (none 200, no network failure) the relay answered and refused — that
+    # is not a capability fact about the models. Only that case gets the new
+    # sentence; the http=0 verdict (ISC-3/ISC-8) is untouched.
+    vision_http_codes=$(awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^body=/) break
+          if ($i ~ /^http=[0-9]+$/) {
+            n++
+            if ($i == "http=0") z++
+            if ($i == "http=200") k++
+          }
+        }
+      }
+      END { printf "%d %d %d", n + 0, z + 0, k + 0 }
+    ' "$OUT/artemis/vision-preflight.txt" 2>/dev/null) || vision_http_codes="0 0 0"
+    case "$vision_http_codes" in
+      [0-9]*" "[0-9]*" "[0-9]*) ;;
+      *) vision_http_codes="0 0 0" ;;
+    esac
+    read -r vision_probes vision_http0 vision_http200 <<< "$vision_http_codes"
+    if [ "$vision_probes" -gt 0 ] && [ "$vision_http0" -eq 0 ] \
+       && [ "$vision_http200" -eq 0 ]; then
+      mark llm-vision WARN "aucun modèle n'a répondu 200 (clé invalide ou service dégradé — voir artemis/vision-preflight.txt)"
+      ARTEMIS_SKIP_CAUSE="aucun modèle n'a répondu 200"
+    else
+      mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
+      ARTEMIS_SKIP_CAUSE="aucun modèle vision"
+    fi
     ARTEMIS_OK=0
+  elif ! printf '%s' "$VISION_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]{1,80}$'; then
+    # B6: l'id vient d'une sonde distante. Refuse tout ce qui pourrait devenir un
+    # token sed/shell au lieu de l'injecter dans une ligne de commande.
+    mark llm-vision FAIL "VISION_MODEL rejeté (caractères non sûrs): $(printf '%s' "$VISION_MODEL" | tr -c 'A-Za-z0-9._:/-\n' '?')"
+    ARTEMIS_OK=0
+    ARTEMIS_SKIP_CAUSE="VISION_MODEL rejeté"
+  else
+    export ARTEMIS_DEFAULT_MODEL="$VISION_MODEL"
+    # Config runtime réécrite DANS $OUT (vendor/ jamais modifié), puis vérifiée: le
+    # modèle de tête doit bien être présent dans le fichier produit.
+    if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" --out "$ARTEMIS_CONFIG_RUNTIME" \
+         --chain-file "$ARTEMIS_CHAIN_FILE" --offset 0 >> "$OUT/run.log" 2>&1 \
+       && "$PY" e2e/set_model.py --check "$ARTEMIS_CONFIG_RUNTIME" "$VISION_MODEL" >/dev/null; then
+      grep -c -F "\"model\": \"$VISION_MODEL\"" "$ARTEMIS_CONFIG_RUNTIME" > "$OUT/artemis/profile-model-count.txt" || true
+      export ARTEMIS_ARTEMIS_JSONC="$ARTEMIS_CONFIG_RUNTIME"
+      mark llm-vision PASS "chaîne vision (${ARTEMIS_CHAIN_N}): $(paste -sd, "$ARTEMIS_CHAIN_FILE")"
+    else
+      mark llm-vision FAIL "réécriture de la config Artemis refusée"
+      ARTEMIS_OK=0
+      ARTEMIS_SKIP_CAUSE="config Artemis refusée"
+    fi
   fi
 fi
 if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 200; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
+  # Only a smoke call that actually RAN can be "smoke failed": every earlier
+  # disable keeps the cause it set (Max m1).
+  if [ "$ARTEMIS_OK" = "1" ]; then
+    ARTEMIS_SKIP_CAUSE="smoke failed"
+  fi
   ARTEMIS_OK=0
   # B10 (run 40177022780): le smoke timeout systématique (rc=124 sur ce runner,
   # déjà observing le 39992138248) ne doit pas verrouiller le verdict: Artemis

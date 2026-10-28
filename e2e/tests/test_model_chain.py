@@ -516,12 +516,14 @@ def test_preflight_honours_the_timeout_flag():
         env.pop("OPENAI_API_KEY", None)
         proc = py(PREFLIGHT, ("--chain-file", chain, "--out", out, "--log", log,
                              "--timeout", "0.05"), env=env)
-        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        # a relay that only ever hangs is UNREACHABLE (ISC-3): verdict + exit 3
+        assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
         assert text(out).strip() == "", text(out)
         body = text(log)
         assert "timeout: 0.05s" in body, body
         assert body.count("http=0") == 2, body
         assert "http=200" not in body, body
+        assert body.rstrip().endswith("verdict=relay_unreachable"), body
         assert SECRET not in body
     finally:
         server.shutdown()
@@ -1421,6 +1423,613 @@ def test_preflight_block_with_every_route_down_degrades_to_warn():
         assert os.path.isabs(stdout_field(proc.stdout, "RUNTIME")), proc.stdout
         assert not os.path.exists(os.path.join(art, "artemis.jsonc")), \
             "pas de config runtime sans modèle vivant"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# ------------------------------------------- 8. latency floor (ISC-4/ISC-5/8)
+def write_floor_map(tmp, rows):
+    """`$OUT/artemis/vision-floor.txt`: one `model=<id> floor=<s>` line per route."""
+    path = os.path.join(tmp, "artemis", "vision-floor.txt")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write(path, "".join(f"model={m} floor={f}\n" for m, f in rows))
+    return path
+
+
+def run_preflight_block_then_artemis(env, cwd=REPO, tmo="5"):
+    """The real preflight block, THEN one artemis_run: the exit-3 wiring, end to end."""
+    script = (
+        "set -uo pipefail\n"
+        'log() { printf "[e2e] %s\\n" "$*" >> "$OUT/run.log"; }\n'
+        'mark() { printf "MARK %s %s %s\\n" "$1" "$2" "$3" >> "$OUT/marks.txt"; }\n'
+        "adb() { :; }\n"
+        "ARTEMIS_OK=1\n"
+        'mkdir -p "$OUT/artemis"\n'
+        + init_block() + "\n"
+        + preflight_block() + "\n"
+        'eval "$1"\n'
+        'artemis_run smoke "open settings" ' + tmo + "\n"
+        'printf "RC=%s\\n" "$?"\n'
+        'printf "CHAIN=%s\\n" "$(paste -sd, "$ARTEMIS_CHAIN_FILE" 2>/dev/null)"\n'
+        'printf "RUNTIME=%s\\n" "$ARTEMIS_CONFIG_RUNTIME"\n'
+        'printf "EXPORT=%s\\n" "${ARTEMIS_ARTEMIS_JSONC:-}"\n'
+        'printf "OK=%s\\n" "$ARTEMIS_OK"\n'
+    )
+    return bash(script, (extract_fn(RUN, "artemis_run"),), env=env, cwd=cwd)
+
+
+@case
+def test_request_timeout_refuses_a_route_slower_than_the_latency_floor():
+    """ISC-4: a route whose measured latency exceeds the fundable bound is refused."""
+    proc = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2",
+                            "--latency-floor", "20"))
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "0", proc.stdout
+    assert proc.stderr.strip(), "un refus doit s'expliquer sur stderr"
+    assert "20" in proc.stderr and "13" in proc.stderr, proc.stderr
+    assert "bound=13s" in proc.stderr, proc.stderr
+    assert "latency" in proc.stderr or "latence" in proc.stderr, proc.stderr
+
+
+@case
+def test_request_timeout_exit_code_separates_floor_refusal_from_legacy_t0():
+    """ISC-4: rc=4 = floor refusal ONLY; an unfunded share stays rc=0 + T=0."""
+    # a bound equal to the floor cannot complete inside the floor: refused
+    eq = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2",
+                          "--latency-floor", "13"))
+    assert eq.returncode == 4, (eq.returncode, eq.stdout, eq.stderr)
+    assert eq.stdout.strip() == "0", eq.stdout
+
+    # floor strictly below the bound: normal bound, exit 0
+    ok = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2",
+                          "--latency-floor", "12"))
+    assert ok.returncode == 0 and ok.stdout.strip() == "13", (ok.returncode, ok.stdout)
+
+    # the legacy case (share funds no bounded call) is exit 0, T=0 — the exact
+    # shape that run.sh used to mislabel `latency_floor` (audit R5)
+    for extra in ((), ("--latency-floor", "1")):
+        legacy = py(MODEL_CHAIN, ("request-timeout", "--share", "6",
+                                  "--sdk-retries", "8", *extra))
+        assert legacy.returncode == 0, (extra, legacy.returncode, legacy.stderr)
+        assert legacy.stdout.strip() == "0", (extra, legacy.stdout)
+        assert "funds no bounded call" in legacy.stderr, legacy.stderr
+
+
+@case
+def test_request_timeout_keeps_the_bound_when_the_floor_fits():
+    """ISC-4: floor < bound => budget unchanged; no flag => bit-identical old value."""
+    base = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2"))
+    assert base.returncode == 0, (base.returncode, base.stdout, base.stderr)
+    assert base.stdout.strip() == "13", base.stdout
+    assert base.stderr.strip() == "", base.stderr
+    for floor in ("5", "12"):
+        got = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2",
+                               "--latency-floor", floor))
+        assert got.returncode == 0, (got.returncode, got.stdout, got.stderr)
+        assert got.stdout.strip() == "13", (floor, got.stdout)
+        assert got.stderr.strip() == "", (floor, got.stderr)
+    # floor == bound is refused (a request needing exactly bound s cannot finish)
+    got = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--sdk-retries", "2",
+                           "--latency-floor", "13"))
+    assert got.returncode == 4 and got.stdout.strip() == "0", (got.returncode, got.stdout)
+    # a floor that cannot fit but is below the bound's share still refuses cleanly
+    got = py(MODEL_CHAIN, ("request-timeout", "--share", "45", "--latency-floor", "14"))
+    assert got.returncode == 4 and got.stdout.strip() == "0", got.stdout
+
+
+@case
+def test_request_timeout_never_breaks_the_share_invariant():
+    """Anti-budget: (1+retries)*T + margin <= share, caps and floors untouched."""
+    import model_chain
+
+    # the constants the refusal leans on must not have been raised by the fix
+    assert model_chain.MODEL_TIMEOUT_SEC == 45
+    assert model_chain.MODEL_TIMEOUT_MIN == 5
+    assert model_chain.MODEL_TIMEOUT_MAX == 600
+    assert model_chain.RELAY_SDK_RETRIES == 2
+    assert model_chain.REQUEST_TIMEOUT_MARGIN_SEC == 5
+    assert model_chain.REQUEST_TIMEOUT_FLOOR_SEC == 1
+
+    for share in (0, 1, 4, 6, 9, 10, 13, 22, 30, 45, 60, 120, 600):
+        # a non-positive share falls back to the default 45 s cap, never to 0
+        effective = share if share > 0 else model_chain.MODEL_TIMEOUT_SEC
+        for floor in (0, 1, 5, 14, 20, 600):
+            for retries in (0, 1, 2, 3):
+                tmo = model_chain.request_timeout(share, retries, 5, latency_floor=floor)
+                if tmo == 0:
+                    continue
+                margin = min(5.0, effective * model_chain.REQUEST_TIMEOUT_MARGIN_RATIO)
+                assert (1 + retries) * tmo + margin <= effective, (
+                    share, effective, floor, retries, tmo)
+                assert tmo >= model_chain.REQUEST_TIMEOUT_FLOOR_SEC, tmo
+                # equality is refused, so a kept bound is strictly above the floor
+                assert floor <= 0 or tmo > floor, (share, floor, tmo)
+
+
+@case
+def test_run_sh_writes_a_per_model_floor_map_ignoring_the_relay_body():
+    """ISC-5: ONE line per measured alive model, parsed POSITIONALLY.
+
+    The `body=` tail is relay-controlled: a body carrying "http=200
+    latency_ms=99000" must never inflate a floor (audit R6).
+    """
+    fn = extract_fn(RUN, "vision_floor_map")
+    tmp = tempfile.mkdtemp(prefix="e2e-floor-map-")
+    chain = write(os.path.join(tmp, "chain.txt"), "gpt-4.1\ngpt-4o\n")
+    log = write(os.path.join(tmp, "vision-preflight.txt"), "\n".join([
+        "chain: 3 model(s) requested",
+        "timeout: 20s",
+        "stage=liveness model=gpt-4.1 http=200 latency_ms=210 body=ok",
+        "stage=liveness model=gpt-4o http=200 latency_ms=190 body=ok",
+        "stage=realistic model=gpt-4.1 sample=1 http=200 latency_ms=8200 body=ok",
+        "stage=realistic model=gpt-4.1 sample=2 http=200 latency_ms=8300 body=ok",
+        "stage=realistic model=gpt-4o sample=1 http=200 latency_ms=15000 body=ok",
+        # the relay body tries to inflate gpt-4.1's floor: ignored, positional
+        "stage=realistic model=gpt-4.1 sample=2 http=200 latency_ms=8300 "
+        "body=hello http=200 latency_ms=99000 model=gpt-4o",
+        # not in the alive chain: ignored
+        "stage=realistic model=gemini-2.5-flash sample=1 http=200 latency_ms=99000 body=ok",
+        "stage=realistic model=gpt-4o sample=2 http=429 latency_ms=100 body=no",
+    ]) + "\n")
+    out = os.path.join(tmp, "vision-floor.txt")
+    script = ("set -uo pipefail\n" + fn +
+              '\nprintf "%s" "$(vision_floor_map "$1" "$2" "$3")"\n')
+    proc = bash(script, (log, chain, out))
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip() == "2", proc.stdout
+    lines = [l for l in text(out).splitlines() if l.strip()]
+    assert lines == ["model=gpt-4.1 floor=9", "model=gpt-4o floor=15"], lines
+
+    # exact seconds do not round up; a sub-second measurement rounds up to 1 s
+    for max_ms, want in ((12000, "12"), (12001, "13"), (1, "1")):
+        exact = write(os.path.join(tmp, "exact.txt"),
+                      f"stage=realistic model=gpt-4.1 sample=1 http=200 "
+                      f"latency_ms={max_ms} body=ok\n")
+        one = write(os.path.join(tmp, "one.txt"), "gpt-4.1\n")
+        got = bash(script, (exact, one, out))
+        assert got.stdout.strip() == "1", (max_ms, got.stdout)
+        assert text(out).strip() == f"model=gpt-4.1 floor={want}", (max_ms, text(out))
+
+    # no data => empty map + 0 (the caller then keeps the historical argv)
+    for content in ("", "stage=liveness model=gpt-4.1 http=0 latency_ms=20000 body=x\n"):
+        empty = write(os.path.join(tmp, "empty.txt"), content)
+        got = bash(script, (empty, chain, out))
+        assert got.stdout.strip() == "0", (content, got.stdout)
+        assert text(out) == "", (content, text(out))
+    missing = bash(script, (os.path.join(tmp, "absent.txt"), chain, out))
+    assert missing.stdout.strip() == "0", missing.stdout
+
+
+@case
+def test_run_sh_reads_the_floor_of_the_model_it_is_about_to_run():
+    """ISC-5 per-model: the FAST head runs, the SLOW route is refused at ITS attempt.
+
+    The old MAX-over-chain floor refused attempt 1 too (chain [gpt-4.1 2 s,
+    gemini-2.5-flash 15 s] => floor 15 => bound 4 refused) — the blocker this
+    test pins.
+    """
+    tmp = tempfile.mkdtemp(prefix="e2e-per-model-floor-")
+    env, _chain, _runtime = artemis_tree(tmp, FAKE_SLOW_FAIL, BASE_CHAIN[:2],
+                                         timeout="0 0 0")
+    write_floor_map(tmp, [("gpt-4.1", 2), ("gemini-2.5-flash", 15)])
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    # attempt 1 ran (rc=1), attempt 2 was refused: the prior rc is preserved
+    assert proc.stdout.strip().endswith("RC=1"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    starts = [l for l in log.splitlines() if "artemis start:" in l]
+    assert len(starts) == 1, log
+    assert "primary=gpt-4.1" in starts[0], starts
+    assert "AUCUN essai sur cette route" in log, log
+    assert "plancher 15s" in log, log
+    # the refusal names the REAL comparison (fundable bound vs floor)...
+    refusal = [l for l in log.splitlines() if "AUCUN essai sur cette route" in l][0]
+    bound = re.search(r"timeout par requête (\d+)s <= plancher 15s", refusal)
+    assert bound, refusal
+    assert 1 <= int(bound.group(1)) < 15, refusal
+    # ...never the old, arithmetically false "part < latence mesurée" claim
+    assert "la latence mesurée" not in log, log
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert [r[1] for r in rows] == ["1", "2"], rows
+    assert rows[0][6] == "retryable", rows
+    # the refused row NAMES the route that was too slow (3rd field = model)
+    assert rows[1][2] == "gemini-2.5-flash", rows
+    assert rows[1][3] == "-", rows
+    assert rows[1][5] == "latency_floor" and rows[1][6] == "latency_floor", rows
+    # the refusal happened on the LAST attempt: no route left to rotate to
+    assert "dernier essai 2/2 refusé" in log, log
+
+
+@case
+def test_run_sh_a_refusal_on_the_slow_head_still_runs_the_fast_route():
+    """BLOCKER: the floor is PER ROUTE — a refusal must not end the step.
+
+    Chain [gpt-4.1 floor 15, gemini-2.5-flash floor 2] on a 30 s step: attempt 1
+    is refused (bound 4 <= 15), so attempt 2 RUNS on the fast route and its rc is
+    the step's rc. The old `break` produced zero Artemis starts and rc=2.
+    """
+    tmp = tempfile.mkdtemp(prefix="e2e-refusal-rotates-")
+    env, _chain, _runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    write_floor_map(tmp, [("gpt-4.1", 15), ("gemini-2.5-flash", 2)])
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    # exactly ONE refusal, then the fast route actually started
+    assert log.count("AUCUN essai sur cette route") == 1, log
+    starts = [l for l in log.splitlines() if "artemis start:" in l]
+    assert len(starts) == 1, log
+    assert "primary=gemini-2.5-flash" in starts[0], starts
+    assert "cause=latency_floor" in log, log
+    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
+    assert len(calls) == 1, calls
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert [r[1] for r in rows] == ["1", "2"], rows
+    assert rows[0][2] == "gpt-4.1", rows
+    assert rows[0][5] == "latency_floor" and rows[0][6] == "latency_floor", rows
+    assert rows[1][2] == "gemini-2.5-flash", rows
+    assert rows[1][3] == "0" and rows[1][6] == "success", rows
+    # the serving attempt is attempt 2 (the refusal is not an attempt: it has no
+    # rc and no model served), so the usage line reports the attempt that ran
+    usage = text(os.path.join(tmp, "artemis", "model-usage.txt")).strip()
+    # F1: ONE real launch in slot 2 (slot 1 refused) — published 2/2 before
+    # the fix, i.e. a launch that never happened.
+    assert "|1|2|" in usage and "rc=0" in usage, usage
+    assert "served_model=gemini-2.5-flash" in usage, usage
+
+
+@case
+def test_run_sh_every_route_refused_writes_one_row_per_route_and_rc2():
+    """All routes too slow: one refusal row PER REFUSED ROUTE, zero Artemis
+    starts, rc=2 (nothing ran, so no rc may be borrowed from a real attempt)."""
+    tmp = tempfile.mkdtemp(prefix="e2e-all-refused-")
+    env, _chain, _runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    write_floor_map(tmp, [("gpt-4.1", 15), ("gemini-2.5-flash", 15)])
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=2"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    assert log.count("AUCUN essai sur cette route") == 2, log
+    assert "artemis start:" not in log, log
+    assert not os.path.exists(env["CALLS"]), "aucun essai ne doit démarrer"
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert [r[1] for r in rows] == ["1", "2"], rows
+    assert [r[2] for r in rows] == ["gpt-4.1", "gemini-2.5-flash"], rows
+    assert [r[5] for r in rows] == ["latency_floor", "latency_floor"], rows
+    assert [r[6] for r in rows] == ["latency_floor", "latency_floor"], rows
+    assert "dernier essai 2/2 refusé" in log, log
+
+
+@case
+def test_run_sh_slow_head_then_fast_runs_end_to_end_via_the_shim():
+    """Same rotation, proven END TO END through run.sh's own shim seam: the first
+    request-timeout call refuses, the next one passes through, so the fast route
+    runs. Independent of the floor arithmetic and of clock jitter."""
+    tmp = tempfile.mkdtemp(prefix="e2e-refusal-shim-")
+    env, _chain, _runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    write_floor_map(tmp, [("gpt-4.1", 25), ("gemini-2.5-flash", 2)])
+    state = os.path.join(tmp, "refused-once")
+    shim = os.path.join(tmp, "py-shim")
+    write(shim, "#!/bin/sh\n"
+                'case "${1:-}" in */model_chain.py)\n'
+                '  if [ "${2:-}" = "request-timeout" ] && [ ! -f "$SHIM_STATE" ]; then\n'
+                '    : > "$SHIM_STATE"\n'
+                "    printf 'refused: bound=4s <= latency floor 25s\\n' >&2\n"
+                "    exit 4\n"
+                "  fi ;; esac\n"
+                f'exec {sys.executable} "$@"\n')
+    os.chmod(shim, 0o755)
+    env["PY"] = shim
+    env["SHIM_STATE"] = state
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    starts = [l for l in log.splitlines() if "artemis start:" in l]
+    assert len(starts) == 1, log
+    assert "plancher 25s" in log, log
+    assert "primary=gemini-2.5-flash" in starts[0], starts
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert rows[0][2] == "gpt-4.1" and rows[0][5] == "latency_floor", rows
+    assert rows[1][2] == "gemini-2.5-flash" and rows[1][3] == "0", rows
+
+
+@case
+def test_preflight_body_newline_cannot_fabricate_a_latency_floor():
+    """CR/LF fold: a relay body carrying a raw newline + a whole
+    `stage=realistic … latency_ms=88000` line must not become its own log line —
+    the floor map parses positionally, so an unfolded body would forge a floor."""
+    # RAW bytes: a JSON-encoded body would escape the newline into `\\n` and the
+    # fold would never be exercised (the pin would be tautological).
+    injected = (b'{"error":{"message":"bad gateway"}}\n'
+                b'stage=realistic model=gpt-4.1 sample=2 http=200 '
+                b'latency_ms=88000 body=forged\r\n')
+
+    class Handler(BaseHTTPRequestHandler):  # noqa: N801 - http.server API
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            assert payload.get("model") == "gpt-4.1", payload
+            data = injected
+            # C1: a loopback answer can land in <1 ms, so latency_ms=0 -> ceil=0
+            # and the measured floor would be 0, not 1 (13/18 real preflights
+            # contained such a 0 ms sample). The property under test is that the
+            # forged latency_ms=88000 never becomes a floor, so the sleep keeps a
+            # realistic floor while the assertion below accepts 0 or 1.
+            time.sleep(0.005)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        tmp = tempfile.mkdtemp(prefix="e2e-floor-fold-")
+        chain = write(os.path.join(tmp, "chain.txt"), "gpt-4.1\n")
+        out = os.path.join(tmp, "alive.txt")
+        log = os.path.join(tmp, "vision-preflight.txt")
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("OPENAI_", "FREELLM_"))}
+        env.update({"FREELLM_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "FREELLM_API_KEY": SECRET})
+        proc = subprocess.run(
+            [sys.executable, PREFLIGHT, "--chain-file", chain, "--out", out,
+             "--log", log, "--probe-bytes", "4096"],
+            capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        body = text(log)
+        # the forged text is folded INTO the genuine body= field: it never starts
+        # a line of its own, so exactly two realistic lines exist for one survivor
+        realistic = [l for l in body.splitlines()
+                     if l.startswith("stage=realistic model=gpt-4.1")]
+        assert len(realistic) == 2, realistic
+        assert not any(l.startswith("stage=realistic model=gpt-4.1 sample=2 "
+                                    "http=200 latency_ms=88000")
+                       for l in body.splitlines()), body
+
+        fn = extract_fn(RUN, "vision_floor_map")
+        floor_out = os.path.join(tmp, "vision-floor.txt")
+        script = ("set -uo pipefail\n" + fn +
+                  '\nprintf "%s" "$(vision_floor_map "$1" "$2" "$3")"\n')
+        got = bash(script, (log, out, floor_out))
+        assert got.returncode == 0, (got.returncode, got.stdout, got.stderr)
+        # 0 is a legal measurement for a sub-millisecond loopback answer; 1 is the
+        # usual ceil. Anything >= 2 means the forged 88000 was parsed (88 s).
+        assert got.stdout.strip() in ("0", "1"), got.stdout
+        assert text(floor_out).strip() in ("model=gpt-4.1 floor=0",
+                                           "model=gpt-4.1 floor=1"), text(floor_out)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@case
+def test_artemis_skip_line_names_the_real_cause():
+    """Max m1: `(smoke failed)` fired for every disable path. The skip line must
+    carry the cause the disable site recorded, and keep the historical sentence
+    only when nothing recorded one."""
+    tmp = tempfile.mkdtemp(prefix="e2e-artemis-skip-cause-")
+    logf = os.path.join(tmp, "run.log")
+    fn = extract_fn(RUN, "artemis_run")
+    for cause, expected in ((None, "(smoke failed)"),
+                            ("relay unreachable", "(relay unreachable)"),
+                            ("série invalide", "(série invalide)")):
+        open(logf, "w").close()
+        prefix = ("ARTEMIS_SKIP_CAUSE=%r\n" % cause) if cause else ""
+        script = ("set -uo pipefail\n"
+                  'log() { printf "[e2e] %s\\n" "$*" >> "${E2E_LOGF:?}"; }\n'
+                  "ARTEMIS_OK=0\n"
+                  + prefix + fn + "\n"
+                  'artemis_run smoke "open settings" 5\n'
+                  'printf "RC=%s\\n" "$?"\n')
+        got = bash(script, env=dict(os.environ, E2E_LOGF=logf))
+        log = text(logf)
+        assert got.returncode == 0, (got.returncode, got.stdout, got.stderr)
+        assert got.stdout.strip() == "RC=2", got.stdout
+        assert f"artemis skip: smoke {expected}" in log, log
+
+
+@case
+def test_preflight_all_http_refusals_name_the_real_cause_not_a_capability_fact():
+    """Max m5: every probe answered an HTTP status (429) and none was 200. The
+    relay answered, so the mark must not claim the models lack image support —
+    it names the 401/429/degraded class and keeps the http=0 verdict untouched."""
+    tmp = tempfile.mkdtemp(prefix="e2e-preflight-refused-")
+    server, _handler = _serve(set())  # every model gets 429
+    try:
+        env = preflight_tree(tmp, f"http://127.0.0.1:{server.server_port}")
+        proc = run_preflight_block_then_artemis(env, cwd=tmp)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        marks = text(os.path.join(tmp, "e2e-out", "marks.txt"))
+        assert "aucun modèle n'a répondu 200" in marks, marks
+        assert "n'accepte les images" not in marks, marks
+        assert "relay unreachable" not in marks, marks
+        assert "OK=0" in proc.stdout, proc.stdout
+        # the probe log proves no classic relay failure: not one http=0
+        preflight = text(os.path.join(tmp, "e2e-out", "artemis",
+                                      "vision-preflight.txt"))
+        assert "verdict=relay_unreachable" not in preflight, preflight
+        assert "http=429" in preflight, preflight
+        log = text(os.path.join(tmp, "e2e-out", "run.log"))
+        assert "artemis skip: smoke (aucun modèle n'a répondu 200)" in log, log
+        assert "artemis start:" not in log, log
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@case
+def test_run_sh_never_labels_a_legacy_unfunded_share_as_latency_floor():
+    """ISC-4: T=0 from an unfunded share is LEGACY (exit 0), not a floor refusal.
+
+    Reproduces the audit R5 case: RELAY_SDK_RETRIES=8 on a 6 s share funds no
+    bounded call while a floor exists — the row must not read `latency_floor`.
+    """
+    tmp = tempfile.mkdtemp(prefix="e2e-legacy-unfunded-")
+    env, _chain, _runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    write_floor_map(tmp, [("gpt-4.1", 1), ("gemini-2.5-flash", 1)])
+    env["RELAY_SDK_RETRIES"] = "8"
+    proc = run_artemis(env, tmp, tmo="12")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    assert "ne finance aucun appel borné" in log, log
+    assert "AUCUN essai sur cette route" not in log, log
+    assert "artemis start:" in log, log
+    rows = [r.split("|") for r in
+            text(os.path.join(tmp, "artemis", "attempts.txt")).strip().splitlines()]
+    assert len(rows) == 1, rows
+    assert rows[0][5] != "latency_floor" and rows[0][6] != "latency_floor", rows
+    assert rows[0][6] == "success", rows
+
+
+@case
+def test_run_sh_starts_artemis_when_the_bound_funds_the_measured_floor():
+    """ISC-4 contrast: floor <= bound => the attempt DOES start, with a vendor timeout."""
+    tmp = tempfile.mkdtemp(prefix="e2e-latency-floor-fits-")
+    env, _chain, runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    # 30 s step / 2 routes = 15 s share -> T = (15 - 3) // 3 = 4 s; floor 3 < 4
+    # fits (equality is a refusal since audit R5)
+    write_floor_map(tmp, [("gpt-4.1", 3), ("gemini-2.5-flash", 3)])
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    assert "request_timeout=4s" in log, log
+    assert "AUCUN essai sur cette route" not in log, log
+    assert "artemis start:" in log, log
+    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
+    assert len(calls) == 1, calls
+    cfg = json.loads(text(runtime))
+    assert cfg["default"]["timeout"] == 4, cfg["default"]
+
+
+@case
+def test_run_sh_keeps_todays_behavior_when_no_latency_was_measured():
+    """Legacy T=0 with NO floor (nothing measured): the attempt continues, outer governs."""
+    tmp = tempfile.mkdtemp(prefix="e2e-latency-legacy-")
+    env, _chain, runtime = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:2], timeout="0 0 0")
+    # force T=0 the way a tiny share would, so the legacy branch is exercised even
+    # though artemis_run's own 5 s floor makes it unreachable in a normal step
+    shim = os.path.join(tmp, "py-shim")
+    write(shim, "#!/bin/sh\n"
+                'case "${1:-}" in */model_chain.py) '
+                'if [ "${2:-}" = "request-timeout" ]; then printf "0\\n"; exit 0; fi ;; esac\n'
+                f'exec {sys.executable} "$@"\n')
+    os.chmod(shim, 0o755)
+    env["PY"] = shim
+    proc = run_artemis(env, tmp, tmo="30")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert proc.stdout.strip().endswith("RC=0"), proc.stdout
+    log = text(os.path.join(tmp, "run.log"))
+    assert "ne finance aucun appel borné" in log, log
+    assert "AUCUN essai sur cette route" not in log, log
+    assert "request_timeout=none" in log, log
+    assert "artemis start:" in log, log
+    calls = [l for l in text(env["CALLS"]).splitlines() if l.strip()]
+    assert len(calls) == 1, calls
+    cfg = json.loads(text(runtime))
+    assert "timeout" not in cfg["default"], cfg["default"]
+
+
+@case
+def test_run_sh_floor_refusal_precedes_every_artemis_start():
+    """Static: rc=4 is the ONLY refusal trigger; it ledgers the refused route,
+    then ROTATES to the next attempt — `break` is bounded by max_attempts.
+
+    A `break` on every refusal killed the chain: one slow head (floor 15) on
+    attempt 1 ended the step while the fast route (floor 2) had not even been
+    tried, so Artemis never started at all.
+    """
+    fn = extract_fn(RUN, "artemis_run")
+    i_call = fn.index("request-timeout")
+    i_refuse = fn.index("AUCUN essai sur cette route")
+    i_legacy = fn.index("ne finance aucun appel borné")
+    assert i_call < i_refuse < i_legacy, fn[i_refuse:]
+    guard = fn[i_call:i_refuse]
+    assert "req_rc" in guard and "-eq 4" in guard, guard
+    assert "lat_floor" in guard and "funded_bound" in guard, guard
+    zone = fn[i_refuse:i_legacy]
+    assert "attempts.txt" in zone, zone
+    # the refused route, not a placeholder: the model is known right here
+    assert '"$model" "-"' in zone, zone
+    assert "rc=2" in zone, zone
+    # rotation, bounded by the loop's own max_attempts
+    assert "continue" in zone, zone
+    assert "attempt=$((attempt + 1))" in zone, zone
+    assert '"$attempt" -ge "$max_attempts"' in zone, zone
+    assert "break" in zone, zone
+    # ordering on CODE only: the comment explains the old unconditional stop
+    code = "\n".join(l for l in zone.splitlines() if not l.lstrip().startswith("#"))
+    assert code.index('"$attempt" -ge "$max_attempts"') < code.index("break"), code
+    assert fn.index("artemis start:") > i_refuse, fn[i_refuse:]
+    # the per-model map is what feeds the floor, never a chain-wide max
+    assert "vision-floor.txt" in fn, fn
+    assert "ARTEMIS_LATENCY_FLOOR" not in fn, "l'ancien plancher global est resté"
+    body = text(RUN)
+    assert "vision_latency_floor" not in body, "l'ancien MAX sur la chaîne est resté"
+
+
+@case
+def test_preflight_relay_unreachable_is_warn_and_runs_zero_artemis_attempts():
+    """ISC-8: exit 3 => WARN relay unreachable, ARTEMIS_OK=0, no attempt at all."""
+    tmp = tempfile.mkdtemp(prefix="e2e-preflight-unreachable-")
+    env = preflight_tree(tmp, "http://127.0.0.1:9")
+    proc = run_preflight_block_then_artemis(env, cwd=tmp)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    art = os.path.join(tmp, "e2e-out", "artemis")
+    marks = text(os.path.join(tmp, "e2e-out", "marks.txt"))
+    assert ('MARK llm-vision WARN relay unreachable (toutes les sondes http=0) '
+            "(voir artemis/vision-preflight.txt)") in marks, marks
+    assert marks.count("MARK llm-vision "), marks
+    assert marks.count("MARK llm-vision ") == 1, f"double marque llm-vision: {marks}"
+    assert "OK=0" in proc.stdout, proc.stdout
+    assert stdout_field(proc.stdout, "CHAIN") == "", proc.stdout
+    assert stdout_field(proc.stdout, "EXPORT") == "", proc.stdout
+    assert not os.path.exists(os.path.join(art, "artemis.jsonc")), \
+        "aucune config runtime ne doit être écrite sans modèle vivant"
+    log = text(os.path.join(tmp, "e2e-out", "run.log"))
+    assert "relay unreachable" in log, log
+    assert "artemis skip: smoke (relay unreachable)" in log, log
+    assert "artemis start:" not in log, log
+    assert text(os.path.join(art, "vision-preflight.txt")).rstrip().endswith(
+        "verdict=relay_unreachable"), "le log preflight ne nomme pas le verdict"
+
+
+@case
+def test_preflight_failure_other_than_unreachable_keeps_todays_behavior():
+    """An exit 1/2 is still 'préflight en erreur' — never a dead-relay verdict."""
+    tmp = tempfile.mkdtemp(prefix="e2e-preflight-rc2-")
+    server, _handler = _serve({"gpt-4.1"})
+    try:
+        env = preflight_tree(tmp, f"http://127.0.0.1:{server.server_port}")
+        shim = os.path.join(tmp, "py-shim")
+        write(shim, "#!/bin/sh\n"
+                    "case \"${1:-}\" in *vision_preflight.py) exit 2 ;; esac\n"
+                    f"exec {sys.executable} \"$@\"\n")
+        os.chmod(shim, 0o755)
+        env["PY"] = shim
+        proc = run_preflight_block_then_artemis(env, cwd=tmp)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        marks = text(os.path.join(tmp, "e2e-out", "marks.txt"))
+        assert "MARK llm-vision WARN" in marks, marks
+        assert "relay unreachable" not in marks, marks
+        assert "aucun modèle freellmapi" in marks, marks
+        assert "OK=0" in proc.stdout, proc.stdout
+        log = text(os.path.join(tmp, "e2e-out", "run.log"))
+        assert "préflight en erreur" in log, log
+        assert "artemis skip: smoke" in log, log
+        assert "artemis start:" not in log, log
     finally:
         server.shutdown()
         server.server_close()

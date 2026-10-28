@@ -223,7 +223,18 @@ MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
 # that reaches report.json or summary.md goes through one of these allowlists:
 # a poisoned row must not be able to inject markdown/HTML into the verdict.
 SERVED_VALUES = ("primary", "fallback", "none", "unknown")
-OUTCOME_VALUES = ("success", "retryable", "terminal", "budget")
+# `budget` and `latency_floor` are the two "no attempt ran" outcomes: run.sh
+# refuses the attempt and records why, instead of burning a certain timeout.
+OUTCOME_VALUES = ("success", "retryable", "terminal", "budget", "latency_floor")
+# `%OUT/artemis/vision-floor.txt`: one measured floor per live route (run.sh
+# vision_floor_map). Strict shape: a poisoned line contributes no floor at all.
+FLOOR_ROW_RE = re.compile(r"^model=([A-Za-z0-9._:/-]{1,80}) floor=([0-9]{1,6})$")
+# run.sh `log()` prefixes every line with `[e2e HH:MM:SS] `, so these are searched
+# (not matched) and only ever yield a run name + a bounded integer.
+_CONFIG_BOUND_RE = re.compile(
+    r"artemis config: (\S+) .*request_timeout=([0-9]{1,6})s")
+_REFUSAL_BOUND_RE = re.compile(
+    r"artemis timeout: (\S+) timeout par requête ([0-9]{1,6})s")
 
 
 def _model_id(value):
@@ -268,6 +279,57 @@ def _read_pipe_rows(path):
         return []
 
 
+def _read_floors(out_dir):
+    """Measured latency floor per model, from artemis/vision-floor.txt only."""
+    floors = {}
+    for row in _read_pipe_rows(os.path.join(out_dir, "artemis", "vision-floor.txt")):
+        m = FLOOR_ROW_RE.match(row.strip())
+        if m:
+            floors[m.group(1)] = int(m.group(2))
+    return floors
+
+
+def _read_run_bounds(out_dir):
+    """Funded per-request bound per run, read from $OUT/run.log.
+
+    Nothing is recomputed: run.sh logs the bound it actually configured
+    (`artemis config: … request_timeout=Ns`) or the one it compared against the
+    floor (`artemis timeout: … timeout par requête Ns`). Last line wins, so a
+    refusal followed by a funded retry reports the retry's real bound.
+    """
+    bounds = {}
+    try:
+        with open(os.path.join(out_dir, "run.log"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return bounds
+    for line in lines:
+        m = _CONFIG_BOUND_RE.search(line) or _REFUSAL_BOUND_RE.search(line)
+        if m:
+            bounds[_safe_token(m.group(1))] = int(m.group(2))
+    return bounds
+
+
+def run_floor(run, artemis):
+    """`(model, floor)` that explains this run, from the measured map only.
+
+    Priority: the served model, then the run's attempts (last first), then the
+    chain it was given. A model absent from vision-floor.txt has no measurement,
+    so nothing is printed for it — the report never invents a floor.
+    """
+    floors = artemis["floors"]
+    candidates = []
+    if run["served_model"] != "unknown":
+        candidates.append(run["served_model"])
+    candidates += [a["model"] for a in reversed(artemis["attempts"])
+                   if a["name"] == run["name"] and a["model"] != "-"]
+    candidates += run["chain"]
+    for model in candidates:
+        if model in floors:
+            return model, floors[model]
+    return None
+
+
 def read_artemis(out_dir):
     """Artemis audit trail: which model really served, with which budget.
 
@@ -310,6 +372,7 @@ def read_artemis(out_dir):
 
     attempts = []
     budget_exhausted = []
+    latency_floor_refused = []
     for row in _read_pipe_rows(os.path.join(adir, "attempts.txt")):
         fields = row.split("|")
         if len(fields) != 7:
@@ -323,6 +386,10 @@ def read_artemis(out_dir):
                          "outcome": _enum(outcome, OUTCOME_VALUES)})
         if outcome == "budget" and safe_name not in budget_exhausted:
             budget_exhausted.append(safe_name)
+        # Same family, different cause: the route was measured slower than the
+        # per-attempt budget, so the run refused to launch a doomed attempt.
+        if outcome == "latency_floor" and safe_name not in latency_floor_refused:
+            latency_floor_refused.append(safe_name)
 
     chain = [m for m in (_model_id(x) for x in
                          _read_pipe_rows(os.path.join(adir, "vision-chain.txt"))) if m]
@@ -335,7 +402,10 @@ def read_artemis(out_dir):
                        if m]
     return {"runs": runs, "attempts": attempts, "chain": chain,
             "requested_chain": requested_chain,
-            "budget_exhausted": budget_exhausted}
+            "budget_exhausted": budget_exhausted,
+            "latency_floor_refused": latency_floor_refused,
+            "floors": _read_floors(out_dir),
+            "bounds": _read_run_bounds(out_dir)}
 
 
 def build(out_dir, p0=None):
@@ -483,9 +553,43 @@ def build(out_dir, p0=None):
             lines += [f"- {run['name']}: served_model={run['served_model']} "
                       f"attempts={run['attempts']}/{run['max_attempts']} "
                       f"signals={run['signals']} rc={run['rc']}"]
+            # Max M2: a run that DID attempt and still reads served=unknown can
+            # look causeless. Next to it, the floor that was measured and the
+            # bound that funded the attempt tell the reader why it timed out.
+            # Each half prints only when a file actually carries it.
+            measured = run_floor(run, artemis)
+            bound = artemis["bounds"].get(run["name"])
+            facts = []
+            if measured is not None:
+                facts.append(f"latence mesurée {measured[1]}s ({measured[0]})")
+            if bound is not None:
+                facts.append(f"borne {bound}s")
+            if facts:
+                lines += [f"  - {', '.join(facts)}"]
         if artemis["budget_exhausted"]:
-            lines += [f"- budget épuisé (aucune tentative): "
-                      f"{', '.join(artemis['budget_exhausted'])}"]
+            # Factual only: the budget stopped the step, which can happen AFTER a
+            # real attempt ran. "(aucune tentative)" asserted zero attempts that
+            # the `attempts=`/`rc=` lines above contradict.
+            lines += [f"- budget épuisé: {', '.join(artemis['budget_exhausted'])}"]
+        if artemis["latency_floor_refused"]:
+            # Name the REFUSED ROUTES (3rd ledger field, parsed into the attempt
+            # rows), never the step: "(2 route(s) trop lente(s): smoke)" named a
+            # step and zero routes. The count is the distinct refused routes and
+            # makes no claim about how many attempts ran.
+            routes = []
+            for a in artemis["attempts"]:
+                if a["outcome"] == "latency_floor" and a["model"] != "-" \
+                        and a["model"] not in routes:
+                    routes.append(a["model"])
+            if routes:
+                lines += [f"- plancher de latence refusé ({len(routes)}): "
+                          f"{', '.join(routes)}"]
+            else:
+                # Field 3 carried no route name: publish the count only. Falling
+                # back to the step names put step names on a route-naming line
+                # (Max m2).
+                lines += [f"- plancher de latence refusé "
+                          f"({len(artemis['latency_floor_refused'])})"]
     if duplicates:
         lines += ["", "## Duplicate captures", ""]
         lines += [f"- {d['name']} repeats {d['duplicate_of']}" for d in duplicates]

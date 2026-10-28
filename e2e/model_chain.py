@@ -23,10 +23,16 @@ across nodes and (b) restart the step on the next model. This module owns both:
 
 CLI (argv only, no shell strings):
   chain   --base "a,b,c" [--override X]                 -> ids, one per line (rc=2 invalid)
-  apply   --in F --out F --chain-file F [--offset N]    -> writes nothing on invalid input
+  apply   --in F --out F --chain-file F [--offset N]
+          [--request-timeout S] [--sdk-retries N]       -> writes nothing on invalid input
   classify --rc N [--log F]                             -> signal on stdout, rc=0 if retryable
   attempt-timeout --remaining S --left N [--cap S]      -> seconds this attempt may use
   attempts-affordable --remaining S --left N [--min S]  -> attempts that can still use >= min s
+  request-timeout --share S [--sdk-retries N] [--margin S] [--latency-floor S]
+                                                       -> per-request seconds for THIS route
+                                                          (0 = share funds no bounded call);
+                                                          rc=4 = THIS route refused by the
+                                                          floor — rotate, nothing run here
 """
 import argparse
 import hashlib
@@ -395,13 +401,25 @@ def _nonneg_float(value, default):
     return got
 
 
-def request_timeout(share, sdk_retries=RELAY_SDK_RETRIES, margin=REQUEST_TIMEOUT_MARGIN_SEC):
-    """Per-request `timeout` keeping (1 + retries) calls + margin inside `share`.
+def request_timeout_detail(share, sdk_retries=RELAY_SDK_RETRIES,
+                           margin=REQUEST_TIMEOUT_MARGIN_SEC, latency_floor=0):
+    """(bound, reason) — reason is "ok", "unfunded" or "floor".
 
-    The margin is min(margin, share * REQUEST_TIMEOUT_MARGIN_RATIO) — a flat 5 s
-    on a 6 s share eats the whole budget. The answer is 0 when the share funds no
-    bounded call: the caller then writes NO vendor timeout and the outer timeout
-    governs, because a 1 s value kills the request before it can log a line.
+    T=0 has TWO causes and they are NOT the same thing (audit R5: run.sh stamped
+    a legacy share case as `latency_floor`):
+
+      * "unfunded" — the HISTORICAL case: the share funds no bounded call, so the
+        caller writes NO vendor timeout and the outer timeout governs (a 1 s value
+        would kill the request before it could log a line). Exit 0, T=0.
+      * "floor" — a REFUSAL: the route was measured slower than what this share
+        can fund, so the attempt must not start at all. The CLI exits 4 on it and
+        run.sh ledgers `latency_floor`.
+
+    `latency_floor` is the latency MEASURED on THIS route by the vision preflight.
+    A bound EQUAL to the floor is refused too: a request needing exactly `bound`
+    seconds cannot complete inside `bound` seconds. The bound itself is never
+    raised, so the share invariant below is untouched.
+
     Invariant: for every share, either (1 + retries) * T + margin <= share, or T == 0.
     """
     share_sec = _nonneg_float(share, float(MODEL_TIMEOUT_SEC))
@@ -417,8 +435,25 @@ def request_timeout(share, sdk_retries=RELAY_SDK_RETRIES, margin=REQUEST_TIMEOUT
             "request-timeout: %.0fs share funds no bounded call (%d call(s) x >= %ds "
             "+ %.1fs margin) — no vendor timeout, the outer timeout governs\n"
             % (share_sec, calls, REQUEST_TIMEOUT_FLOOR_SEC, margin_sec))
-        return 0
-    return bound
+        return 0, "unfunded"
+    floor_sec = _nonneg_float(latency_floor, 0)
+    if floor_sec > 0 and bound <= floor_sec:
+        sys.stderr.write(
+            "request-timeout: latency floor %.1fs >= bound=%ds (a %.0fs share funds "
+            "%d call(s) + %.1fs margin) — route too slow, no Artemis attempt\n"
+            % (floor_sec, bound, share_sec, calls, margin_sec))
+        return 0, "floor"
+    return bound, "ok"
+
+
+def request_timeout(share, sdk_retries=RELAY_SDK_RETRIES, margin=REQUEST_TIMEOUT_MARGIN_SEC,
+                    latency_floor=0):
+    """Per-request `timeout` keeping (1 + retries) calls + margin inside `share`.
+
+    Returns 0 for BOTH T=0 causes (see `request_timeout_detail`); the CLI is the
+    only place that needs to tell them apart, and it does so through the exit code.
+    """
+    return request_timeout_detail(share, sdk_retries, margin, latency_floor)[0]
 
 
 def timeout_value(seconds):
@@ -556,8 +591,12 @@ def _cmd_attempt_timeout(args):
 
 
 def _cmd_request_timeout(args):
-    sys.stdout.write(f"{request_timeout(args.share, args.sdk_retries, args.margin)}\n")
-    return 0
+    bound, reason = request_timeout_detail(
+        args.share, args.sdk_retries, args.margin, args.latency_floor)
+    sys.stdout.write(f"{bound}\n")
+    # ISC-4: exit 4 is the FLOOR REFUSAL and nothing else. T=0 for an unfunded
+    # share stays exit 0 (the historical legacy path run.sh must keep).
+    return 4 if reason == "floor" else 0
 
 
 def _cmd_attempts_affordable(args):
@@ -602,6 +641,8 @@ def _parser():
     relay_p.add_argument("--share", required=True)
     relay_p.add_argument("--sdk-retries", default=RELAY_SDK_RETRIES)
     relay_p.add_argument("--margin", default=REQUEST_TIMEOUT_MARGIN_SEC)
+    relay_p.add_argument("--latency-floor", default=0,
+                         help="measured route latency (s): refuse a bound below it")
     relay_p.set_defaults(func=_cmd_request_timeout)
 
     affordable_p = sub.add_parser(

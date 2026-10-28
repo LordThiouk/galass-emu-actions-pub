@@ -151,8 +151,56 @@ def create_ride():
     return ride.get("id")
 
 
+def _ride_int(ride, key, default=0):
+    """Backend integers are sometimes strings; a missing/unparsable one is `default`.
+
+    `default=0` is the value the backend itself means by "not set" — see
+    `open_rides`: a ride the backend did not price yet is still pending payment
+    (payment_status 0), so it stays adoptable. Callers that must NOT read an
+    absent field as 0 pass their own default.
+    """
+    try:
+        return int(ride.get(key))
+    except (TypeError, ValueError):
+        return default
+
+
+def _present_int(ride, key):
+    """`(known, value)` for a numeric ride field, absence vs garbage split.
+
+    Absent or null keeps the backend's own 0 default — there is nothing to judge.
+    A PRESENT value that does not parse is UNKNOWN, never 0: coercing it made an
+    exotic `payment_status` look unpaid and an exotic `driver_id` look driverless,
+    so such a ride was adopted AND cancelled (the old loud ValueError was safer).
+    """
+    if key not in ride or ride.get(key) is None:
+        return True, 0
+    try:
+        return True, int(ride.get(key))
+    except (TypeError, ValueError):
+        return False, None
+
+
+def _ride_label(ride, key):
+    """Published form of a numeric ride field: the number, or `-` when unknown.
+
+    Never prints the 0 default for a value that was present and unparsable —
+    that 0 is exactly the claim `adoptable()` refuses to make.
+    """
+    known, value = _present_int(ride, key)
+    return value if known else "-"
+
+
 def open_rides():
-    """Rides still waiting/active for the rider, newest first."""
+    """Rides still waiting/active for the rider, newest first.
+
+    `status` and `payment_status` are normalised to int here, so every caller
+    judges the SAME values the backend sent (run 40669473919 read status=3
+    payment_status=3 and still adopted it). A missing payment_status reads as 0:
+    a ride the backend did not price yet is still pending payment. An UNPARSABLE
+    payment_status keeps its raw value: `adoptable()` must be able to see that it
+    was never proven unpaid.
+    """
     c, j = call("GET", "ride/list", RT)
     rides = (((j.get("data") or {}).get("rides") or {}).get("data")) or []
     out = []
@@ -162,44 +210,140 @@ def open_rides():
         except (TypeError, ValueError):
             continue
         if status in (0, 2, 3):  # pending / active / running
-            out.append(r)
+            ride = dict(r)
+            ride["status"] = status
+            known, payment_status = _present_int(ride, "payment_status")
+            if known:
+                ride["payment_status"] = payment_status
+            out.append(ride)
     out.sort(key=lambda r: int(r.get("id") or 0), reverse=True)
     return out
 
 
+def adoptable(ride):
+    """The ONLY adoptable shape: pending, unpaid, no driver (ISC-6).
+
+    Anything else belongs to another run: status 2/3 is an active/terminal ride
+    and a non-zero payment_status is money already moved. Adopting either replays
+    a dead ride (run 40669473919 reused ride 230, status=3 payment_status=3).
+
+    A present-but-unparsable field lands on the SAFE side, never on 0: an
+    unparsable payment_status is not proven unpaid (so it is not adopted), and an
+    unparsable driver_id is not proven driverless — it may name a real driver, so
+    the ride is neither adopted nor cancelled. Absent fields keep their 0 default.
+    """
+    if _ride_int(ride, "status") != 0:
+        return False
+    pay_known, pay = _present_int(ride, "payment_status")
+    drv_known, drv = _present_int(ride, "driver_id")
+    return pay_known and pay == 0 and drv_known and drv == 0
+
+
+def record_fresh_ride(rid, ride, source):
+    """Publish the ride THIS run works on, on both the adopted and created paths."""
+    status = _ride_int(ride, "status")
+    payment_status = _ride_int(ride, "payment_status")
+    st["fresh_ride_id"] = str(rid)
+    st["fresh_ride_status"] = status
+    st["fresh_payment_status"] = payment_status
+    st["fresh_ride_source"] = source
+    save()
+    smoke_emit(f"fresh_ride_id={rid} status={status} "
+               f"payment_status={payment_status} source={source}")
+    return status, payment_status
+
+
+def record_no_fresh_ride():
+    """No ride survived this run (adopt rejected AND create failed): prove it.
+
+    Same sanitized smoke line as the two real paths, with `none`/`-` values, so
+    every run carries the proof line and no later step can replay a stale ride.
+    """
+    st["fresh_ride_id"] = "none"
+    st["fresh_ride_status"] = "-"
+    st["fresh_payment_status"] = "-"
+    st["fresh_ride_source"] = "none"
+    save()
+    smoke_emit("fresh_ride_id=none status=- payment_status=- source=none")
+
+
 def reset_rides():
-    """Cancel pending no-driver rides left by an earlier run (called BEFORE composition)."""
+    """Cancel stale rides left by an earlier run (called BEFORE composition).
+
+    "Stale" is exactly `adoptable()`: pending (status 0), unpaid (payment_status
+    0) and driverless. The old inline `int(driver_id)` cast crashed on a
+    non-numeric driver_id and ignored payment_status entirely.
+    """
     for r in open_rides():
-        if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0):
+        if adoptable(r):
             c, _ = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E reset"})
             print("CANCEL_STALE", r["id"], c, flush=True)
 
 
 def pick_ride():
-    """Adopt the newest pending/active rider ride (created by the UI), else create one.
+    """Adopt the newest FRESH rider ride (created by the UI), else create one.
 
-    A ride just composed in the app has status 0 and no driver yet: it must be adopted,
-    never cancelled. Only OLDER pending no-driver rides are treated as stale.
+    A ride just composed in the app has status 0, payment_status 0 and no driver:
+    that is the ONLY adoptable shape. The NEWEST adoptable ride wins — not
+    `rides[0]`, because the list is not guaranteed id-descending and a
+    non-adoptable newest ride used to make the loop cancel an adoptable OLDER
+    one (then create, abandoning a perfectly good ride). Only a stale adoptable
+    ride with an id LOWER than the adopted one is cancelled; status 2/3
+    (active/terminal) and any paid ride are never cancelled (ISC-6).
     """
     rides = open_rides()
     if rides:
-        keep = rides[0]
-        for r in rides[1:]:
-            if int(r.get("status") or 0) == 0 and not int(r.get("driver_id") or 0):
-                c, _ = call("POST", f"ride/cancel/{int(r['id'])}", RT, {"cancel_reason": "E2E stale ride"})
-                print("CANCEL_STALE", r["id"], c, flush=True)
-        rid = int(keep["id"])
-        st["ride_id"] = rid
-        st["ride_picked"] = keep
-        # B8: an adopted ride was composed in the app; a created one was not.
-        st["ride_source"] = "ui"
-        save()
-        print("PICKED_RIDE", rid, "status", keep.get("status"), flush=True)
-        return rid
+        adopt = None
+        for r in rides:
+            if adoptable(r) and (adopt is None or int(r["id"]) > int(adopt["id"])):
+                adopt = r
+        adopted_id = int(adopt["id"]) if adopt is not None else None
+        for r in rides:
+            if adopt is not None and r is adopt:
+                continue
+            ride_id_int = int(r["id"])
+            if adoptable(r) and (adopted_id is None or ride_id_int < adopted_id):
+                # Stale pending-unpaid-driverless ride behind the adopted one.
+                c, _ = call("POST", f"ride/cancel/{ride_id_int}", RT,
+                            {"cancel_reason": "E2E stale ride"})
+                print("CANCEL_STALE", ride_id_int, c, flush=True)
+            else:
+                # active / terminal / paid / driver not proven absent (or newer
+                # than the adopted ride): never cancelled, just left alone.
+                print("TOMBSTONE_RIDE", ride_id_int, "status", _ride_int(r, "status"),
+                      "payment_status", _ride_label(r, "payment_status"),
+                      "(active, terminale, payée ou conducteur non prouvé — "
+                      "jamais annulée)", flush=True)
+        if adopt is not None:
+            rid = adopted_id
+            st["ride_id"] = rid
+            st["ride_picked"] = adopt
+            # B8: an adopted ride was composed in the app; a created one was not.
+            st["ride_source"] = "ui"
+            save()
+            record_fresh_ride(rid, adopt, "ui")
+            print("PICKED_RIDE", rid, "status", adopt.get("status"), flush=True)
+            return rid
+        # Nothing adoptable: name the newest listed ride, never adopt it.
+        rejected = rides[0]
+        print("REJECTED_RIDE", rejected["id"],
+              f"status={_ride_int(rejected, 'status')}",
+              f"payment_status={_ride_label(rejected, 'payment_status')}",
+              "(non fraîche — jamais adoptée)", flush=True)
     rid = create_ride()
     st["ride_source"] = "api"
     save()
     print("CREATED_RIDE", rid, flush=True)
+    if rid:
+        record_fresh_ride(rid, st.get("ride_create") or {}, "api")
+    else:
+        # A rejected newest ride + a failed create must not leave a terminal
+        # ride in state: later steps would replay it.
+        st.pop("ride_id", None)
+        st.pop("ride_picked", None)
+        st.pop("ride_create", None)
+        save()
+        record_no_fresh_ride()
     return rid
 
 
