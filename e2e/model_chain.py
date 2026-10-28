@@ -51,11 +51,17 @@ BASE_CHAIN = [
     "gpt-4.1",
     "gemini-2.5-flash",
     "gpt-4o",
+]
+# 2026-10-28 probes (FreeLLMAPI :3001): every flash-lite route is dead or
+# exhausted (2.5/2.0-flash-lite 404; 3.5-flash-lite 502; 3.1/flash-lite 429).
+DEAD_MODELS = frozenset({
+    "llama-3.2-11b-vision",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-flash-lite",
-]
-DEAD_MODELS = frozenset({"llama-3.2-11b-vision"})
+})
 
 # Auxiliary model keys the old set_model.py used to rewrite with a single id.
 AUX_MODEL_PATHS = (

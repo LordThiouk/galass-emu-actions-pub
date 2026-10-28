@@ -21,7 +21,7 @@ ARTEMIS_BIN="${ARTEMIS_BIN:-vendor/artemis/.venv/bin/artemis}"
 # Chaîne de repli ORDONNÉE de modèles vision (FreeLLMAPI, vérifiés le 2026-10-27).
 # L'override workflow (ARTEMIS_DEFAULT_MODEL) passe en TÊTE, dédoublonné.
 # La route llama vision est MORTE (429 « lacks vision ») : jamais dans la chaîne.
-ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite}"
+ARTEMIS_BASE_CHAIN="${ARTEMIS_BASE_CHAIN:-gpt-4.1,gemini-2.5-flash,gpt-4o}"
 ARTEMIS_BACKOFF="${ARTEMIS_BACKOFF:-5 15 30}"
 # Vide = un essai par modèle de la chaîne ; toute valeur est bornée à la chaîne.
 ARTEMIS_MAX_ATTEMPTS="${ARTEMIS_MAX_ATTEMPTS:-}"

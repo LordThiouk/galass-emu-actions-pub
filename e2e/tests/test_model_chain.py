@@ -41,8 +41,11 @@ PREFLIGHT = os.path.join(ROOT, "vision_preflight.py")
 SET_MODEL = os.path.join(ROOT, "set_model.py")
 sys.path.insert(0, ROOT)
 
-BASE_CHAIN = ["gpt-4.1", "gemini-2.5-flash", "gpt-4o", "gemini-3.5-flash-lite",
-              "gemini-3.1-flash-lite", "gemini-flash-lite"]
+# Synthetic 6-route fixture (spread/budget math needs 6 slots). The real default
+# chain is 3 routes since 2026-10-28: every flash-lite route was dead (see
+# DEAD_MODELS); test_default_chain_has_no_dead_flash_lite pins that.
+BASE_CHAIN = ["gpt-4.1", "gemini-2.5-flash", "gpt-4o", "fixture-route-4",
+              "fixture-route-5", "fixture-route-6"]
 BASE_STR = ",".join(BASE_CHAIN)
 DEAD = "llama-3.2-11b-vision"
 
@@ -1213,7 +1216,7 @@ def test_run_sh_wires_the_chain_and_never_writes_vendor():
                    "e2e/model_chain.py", "e2e/vision_preflight.py",
                    "e2e/set_model.py", "vision-chain.txt"):
         assert needle in body, needle
-    assert "gpt-4.1" in body and "gemini-flash-lite" in body, "chaîne par défaut absente"
+    assert "gpt-4.1" in body and "gpt-4o" in body and "flash-lite" not in body, "chaîne par défaut absente"
     assert DEAD not in body, "route morte dans run.sh"
     assert 'export ARTEMIS_ARTEMIS_JSONC="$ARTEMIS_CONFIG_RUNTIME"' in body, \
         "la config runtime n'est pas exportée vers Artemis"
@@ -2048,6 +2051,16 @@ def main():
             print(f"ok   {fn.__name__}")
     print(f"\n{len(CASES) - failed}/{len(CASES)} model-chain cases passed")
     return 1 if failed else 0
+
+
+@case
+def test_default_chain_has_no_dead_flash_lite():
+    import model_chain
+    assert model_chain.BASE_CHAIN == ["gpt-4.1", "gemini-2.5-flash", "gpt-4o"]
+    for m in ("gemini-2.5-flash-lite", "gemini-2.0-flash-lite",
+              "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite"):
+        assert m in model_chain.DEAD_MODELS, m
+        assert m not in model_chain.BASE_CHAIN, m
 
 
 if __name__ == "__main__":
