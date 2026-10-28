@@ -47,7 +47,14 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
 
 # Verified against FreeLLMAPI on 2026-10-27 (each answers 200 with an image).
 # llama-3.2-11b-vision is DELIBERATELY absent: 429 "lacks vision".
+# 2026-10-28 19:50 UTC: gpt-4.1/gpt-4o/gemini-2.5-flash 429 on every key.
+# `auto` = FreeLLMAPI vision-aware router (skips routes that lack vision):
+# 4/4 x 200 with a png (2.3-13 s, served by gemini-3-flash-preview /
+# glm-4.6v-flash). gemma-4-31b-it: 4/4 x 200 (1.9-14 s). The dashboard
+# profile API (/api/profiles) needs an admin session we do not hold.
 BASE_CHAIN = [
+    "auto",
+    "gemma-4-31b-it",
     "gpt-4.1",
     "gemini-2.5-flash",
     "gpt-4o",

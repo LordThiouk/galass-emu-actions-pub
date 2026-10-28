@@ -2056,7 +2056,8 @@ def main():
 @case
 def test_default_chain_has_no_dead_flash_lite():
     import model_chain
-    assert model_chain.BASE_CHAIN == ["gpt-4.1", "gemini-2.5-flash", "gpt-4o"]
+    assert model_chain.BASE_CHAIN == ["auto", "gemma-4-31b-it", "gpt-4.1",
+                                      "gemini-2.5-flash", "gpt-4o"]
     for m in ("gemini-2.5-flash-lite", "gemini-2.0-flash-lite",
               "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite"):
         assert m in model_chain.DEAD_MODELS, m
