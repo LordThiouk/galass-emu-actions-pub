@@ -164,6 +164,32 @@ jobs:
           ls -l /dev/kvm
           echo "Runner: $(nproc) vCPU, $(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo) Mo RAM"
 
+      # Run 40602473815: scrcpy absent de l'image du runner -> aucun screens-reel,
+      # aucun grader d'écran. L'apt de noble ne fournit que scrcpy 1.25, qui refuse
+      # `--video-bit-rate` et `--capture-orientation=@` utilisés par Artemis : on
+      # installe la release upstream épinglée et on ASSERT le plancher >= 3.0.
+      - name: Installer scrcpy (capture d'écran du run)
+        run: |
+          # ffmpeg CLI: requis par Artemis pour convertir les segments scrcpy (mkv -> mp4).
+          # Le binaire scrcpy de la release est lié statiquement (SDL + libav inclus).
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          curl -fsSL --retry 3 -o /tmp/scrcpy.tar.gz \
+            "https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/scrcpy-linux-x86_64-v3.3.4.tar.gz"
+          echo "0305d98c06178c67e12427bbf340c436d0d58c9e2a39bf9ffbbf8f54d7ef95a5  /tmp/scrcpy.tar.gz" | sha256sum -c -
+          sudo mkdir -p /opt/scrcpy-v3.3.4
+          sudo tar -xzf /tmp/scrcpy.tar.gz -C /opt/scrcpy-v3.3.4 --strip-components=1
+          sudo ln -sf /opt/scrcpy-v3.3.4/scrcpy /usr/local/bin/scrcpy
+          rm -f /tmp/scrcpy.tar.gz
+          scrcpy --version
+          # Plancher dur: un scrcpy < 3.0 ignore les flags d'Artemis et produirait
+          # un run complet sans aucune capture — on échoue ici, pas 90 min plus tard.
+          v="$(scrcpy --version | awk 'NR==1 && $1=="scrcpy" {print $2}')"
+          echo "scrcpy version détectée: '${v}'"
+          [ -n "$v" ] || { echo "::error::version scrcpy illisible"; exit 1; }
+          major="${v%%.*}"
+          [ "$major" -ge 3 ] || { echo "::error::scrcpy ${v} < 3.0 — flags Artemis non supportés"; exit 1; }
+
       - uses: astral-sh/setup-uv@v5
 
       - name: Installer Artemis (vendor)

@@ -224,7 +224,7 @@ def _api_flow(stub_extra, env_extra):
 def run_cash_driver(status):
     script = (
         "posts = []\n"
-        "a.call = lambda *x, **k: (posts.append(x[1]), (200, {}))[1]\n"
+        "a.call = lambda *x, **k: (posts.append(x[1]), (200, {'remark': 'cash_confirmed'}))[1]\n"
         "a.payment_status = lambda: %r\n"
         "a.cash_driver()\n"
         "state = json.load(open(a.OUT + '/cash.json'))\n"

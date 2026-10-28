@@ -541,11 +541,71 @@ def cash_wait():
     return 0 if state["requested"] else 3
 
 
+CASH_REFUSAL_TOKENS = ("not_found", "not found")
+# A 200 body only closes the point when it NAMES the success: silence (`{}`, a
+# non-JSON body, an unknown remark) is not consent (audit R5).
+# The endpoint's verdict is an ENUM, matched EXACTLY (lower().strip()) — never as a
+# substring: `unsuccessful`, `cash_received_false` and `success notification sent`
+# all contain a success token and none of them is a confirmation (audit round 3).
+CASH_SUCCESS_VALUES = ("success", "cash_confirmed", "cash_received", "confirmed",
+                       "received", "paid")
+
+
+def _cash_texts(response):
+    """Every string a cash response could carry its verdict in, top level first."""
+    if isinstance(response, str):
+        return [response]
+    if not isinstance(response, dict):
+        return []
+    out = []
+    for key in ("remark", "status", "message", "error", "result", "payment_status"):
+        value = response.get(key)
+        if isinstance(value, dict):
+            value = value.get("message") or value.get("remark") or value.get("status")
+        if isinstance(value, str):
+            out.append(value)
+    data = response.get("data")
+    if isinstance(data, (dict, str)):
+        out += _cash_texts(data)
+    return out
+
+
+def cash_refusal(response):
+    """The backend's own refusal class on received-cash-payment, or "".
+
+    Run 40602473815: the endpoint answered HTTP 200 with `remark: "not_found"` on
+    a separate backend run — the cash was refused. The status code cannot say
+    "cash received" on its own; the body's refusal outranks it.
+    """
+    for value in _cash_texts(response):
+        lowered = value.strip().lower()
+        for token in CASH_REFUSAL_TOKENS:
+            if token in lowered:
+                return "backend_not_found"
+    return ""
+
+
+def cash_confirmation(response):
+    """True only when a scanned field IS one of the enum's success values.
+
+    Exact match closes both directions at once: a success hidden inside prose
+    (`unsuccessful`, `cash_received_false`) is not a success, and a positive
+    sentence (`success notification sent`) is not a refusal either — it is simply
+    not a verdict, so it stays `unknown_body`. `{}` proves nothing.
+    """
+    for value in _cash_texts(response):
+        if value.strip().lower() in CASH_SUCCESS_VALUES:
+            return True
+    return False
+
+
 def cash_driver():
     """Confirm the driver received the cash — ONLY if the rider asked for it.
 
     The label reports what was OBSERVED: a payment_status we could not read is
-    `cash_status_unavailable`, never "the rider did not ask".
+    `cash_status_unavailable`, never "the rider did not ask". And the POST's
+    verdict is the BODY: a 200 carrying a refusal is `backend_not_found`, not a
+    confirmation (the exact false positive of run 40602473815).
     """
     rid = ride_id()
     state = poll_payment_status(payment_status, time.sleep, timeout=0, interval=0)
@@ -564,7 +624,26 @@ def cash_driver():
     c, r = call("POST", f"driver/rides/received-cash-payment/{rid}", DT)
     st["cash_received"] = r
     save()
-    return c == 200
+    refusal = cash_refusal(r)
+    if refusal:
+        cause = refusal
+    elif c != 200:
+        cause = f"http_{c}"
+    elif not cash_confirmation(r):
+        # 200 + anything that is not an exact success value ({}, non-JSON, prose,
+        # `unsuccessful`, `cash_received_false`) is NOT a confirmation.
+        cause = "unknown_body"
+    else:
+        cause = ""
+    if cause:
+        # run.sh reads the cause here: a refusal must be written even on HTTP 200.
+        # A real confirmation leaves the poll label alone (`cash_requested`).
+        state["cause"] = cause
+        write_cash(state)
+        print(f"CASH_FAIL {cause}", flush=True)
+        return False
+    print("CASH_OK", flush=True)
+    return True
 
 
 def pay():
@@ -651,7 +730,7 @@ elif step == "pay_rider":
 elif step == "cash_wait":
     sys.exit(cash_wait())
 elif step == "cash_driver":
-    cash_driver()
+    sys.exit(0 if cash_driver() else 1)
 elif step == "finish":
     if not ride_id():
         pick_ride()

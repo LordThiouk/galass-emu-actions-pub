@@ -243,12 +243,14 @@ def _rewrite_model_block(block, chain, base, index):
     return block
 
 
-def apply_config(config, chain, offset=0):
+def apply_config(config, chain, offset=0, request_timeout_sec=None):
     """Return a new config with every model-bearing block on the ordered chain."""
     if not chain:
         raise ValueError("empty model chain")
     for model in chain:
         _validate(model)
+    if request_timeout_sec is not None:  # validated before any work is done
+        timeout_value(request_timeout_sec)
     if not isinstance(config.get("nodes"), dict) or not config["nodes"]:
         raise ValueError("config has no unified 'nodes' object")
     base = int(offset) % len(chain)
@@ -285,17 +287,21 @@ def apply_config(config, chain, offset=0):
             continue
         cursor[path[-1]] = chain[(base + aux_index) % len(chain)]
 
+    if request_timeout_sec is not None:
+        out = set_request_timeout(out, request_timeout_sec)
     return out
 
 
-def apply(config_in, config_out, chain, offset=0):
+def apply(config_in, config_out, chain, offset=0, request_timeout_sec=None):
     """Validate EVERYTHING first, then write once. No output on invalid input."""
     if not chain:
         raise ValueError("empty model chain")
     for model in chain:
         _validate(model)
+    if request_timeout_sec is not None:
+        timeout_value(request_timeout_sec)
     config = load_jsonc(config_in)
-    out = apply_config(config, chain, offset)
+    out = apply_config(config, chain, offset, request_timeout_sec)
     write_json_atomic(out, config_out)
     return out
 
@@ -357,6 +363,101 @@ def classify(rc, log_text=""):
 MODEL_TIMEOUT_SEC = 45
 MODEL_TIMEOUT_MIN = 5
 MODEL_TIMEOUT_MAX = 600
+
+# ------------------------------------------- per-request budget (relay 502s)
+# Run 40602473815: a ~300 KB capture got 200 then 502 from the FreeLLMAPI relay,
+# and the OpenAI SDK's own "Retrying request" loop burned the whole attempt
+# window on its default 60 s timeout — `ModelEndpoint` has no `max_retries` to
+# bound it (router.py:87-113). The one honoured knob is the per-request
+# `timeout` (llm.py:91-96 -> router.py:300), so it must be small enough that
+# (1 + SDK retries) calls plus a margin still fit the attempt share.
+RELAY_SDK_RETRIES = 2
+REQUEST_TIMEOUT_MARGIN_SEC = 5
+REQUEST_TIMEOUT_MARGIN_RATIO = 0.2   # a flat 5 s margin ate a 6 s share (audit R2)
+REQUEST_TIMEOUT_FLOOR_SEC = 1
+
+
+def _nonneg_int(value, default):
+    try:
+        got = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return got if got >= 0 else default
+
+
+def _nonneg_float(value, default):
+    try:
+        got = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if got != got or got < 0:  # NaN
+        return default
+    return got
+
+
+def request_timeout(share, sdk_retries=RELAY_SDK_RETRIES, margin=REQUEST_TIMEOUT_MARGIN_SEC):
+    """Per-request `timeout` keeping (1 + retries) calls + margin inside `share`.
+
+    The margin is min(margin, share * REQUEST_TIMEOUT_MARGIN_RATIO) — a flat 5 s
+    on a 6 s share eats the whole budget. The answer is 0 when the share funds no
+    bounded call: the caller then writes NO vendor timeout and the outer timeout
+    governs, because a 1 s value kills the request before it can log a line.
+    Invariant: for every share, either (1 + retries) * T + margin <= share, or T == 0.
+    """
+    share_sec = _nonneg_float(share, float(MODEL_TIMEOUT_SEC))
+    if share_sec <= 0:
+        share_sec = float(MODEL_TIMEOUT_SEC)
+    retries = _nonneg_int(sdk_retries, RELAY_SDK_RETRIES)
+    margin_sec = min(_nonneg_float(margin, REQUEST_TIMEOUT_MARGIN_SEC),
+                     share_sec * REQUEST_TIMEOUT_MARGIN_RATIO)
+    calls = 1 + retries
+    bound = int((share_sec - margin_sec) // calls)
+    if bound < REQUEST_TIMEOUT_FLOOR_SEC:
+        sys.stderr.write(
+            "request-timeout: %.0fs share funds no bounded call (%d call(s) x >= %ds "
+            "+ %.1fs margin) — no vendor timeout, the outer timeout governs\n"
+            % (share_sec, calls, REQUEST_TIMEOUT_FLOOR_SEC, margin_sec))
+        return 0
+    return bound
+
+
+def timeout_value(seconds):
+    """Validated per-request timeout: int when whole, float otherwise."""
+    try:
+        value = float(str(seconds).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"request timeout {seconds!r} is not a number")
+    if value != value or value <= 0:
+        raise ValueError(f"request timeout {seconds!r} must be > 0")
+    if value > MODEL_TIMEOUT_MAX:
+        raise ValueError(f"request timeout {seconds!r} exceeds {MODEL_TIMEOUT_MAX}s")
+    return int(value) if value.is_integer() else value
+
+
+def set_request_timeout(config, seconds):
+    """Put the vendor `timeout` on every model-bearing block, never a fallback.
+
+    `fallback` sub-dicts are honoured by the base LLM class, which ignores
+    `timeout` (llm.py:54-66) — the key there is inert, and a stale one is removed.
+    """
+    if not isinstance(config.get("nodes"), dict) or not config["nodes"]:
+        raise ValueError("config has no unified 'nodes' object")
+    value = timeout_value(seconds)
+    out = json.loads(json.dumps(config))
+    blocks = []
+    if isinstance(out.get("default"), dict):
+        blocks.append(out["default"])
+    presets = out.get("presets")
+    if isinstance(presets, dict):
+        blocks += [b for b in presets.values() if isinstance(b, dict)]
+    blocks += [b for b in out["nodes"].values() if isinstance(b, dict)]
+    for block in blocks:
+        block["timeout"] = value
+        fallback = block.get("fallback")
+        if isinstance(fallback, dict):
+            fallback.pop("timeout", None)
+    return out
+
 
 
 def clamp_cap(cap=MODEL_TIMEOUT_SEC):
@@ -427,7 +528,9 @@ def _cmd_chain(args):
 
 def _cmd_apply(args):
     chain = build_chain(_read_chain_file(args.chain_file))
-    apply(args.config_in, args.config_out, chain, args.offset)
+    if args.sdk_retries is not None and _nonneg_int(args.sdk_retries, -1) < 0:
+        raise ValueError(f"sdk retries {args.sdk_retries!r} must be >= 0")
+    apply(args.config_in, args.config_out, chain, args.offset, args.request_timeout)
     sys.stdout.write(f"{len(chain)} models -> {args.config_out}\n")
     return 0
 
@@ -452,6 +555,11 @@ def _cmd_attempt_timeout(args):
     return 0
 
 
+def _cmd_request_timeout(args):
+    sys.stdout.write(f"{request_timeout(args.share, args.sdk_retries, args.margin)}\n")
+    return 0
+
+
 def _cmd_attempts_affordable(args):
     sys.stdout.write(f"{capped_attempts_left(args.remaining, args.left, args.min)}\n")
     return 0
@@ -471,6 +579,10 @@ def _parser():
     apply_p.add_argument("--out", dest="config_out", required=True)
     apply_p.add_argument("--chain-file", required=True)
     apply_p.add_argument("--offset", type=int, default=0)
+    apply_p.add_argument("--request-timeout", default=None,
+                         help="vendor per-request timeout written on every node")
+    apply_p.add_argument("--sdk-retries", default=None,
+                         help="SDK-level retries the bound was computed for")
     apply_p.set_defaults(func=_cmd_apply)
 
     classify_p = sub.add_parser("classify", help="retry signal for a failed attempt")
@@ -483,6 +595,14 @@ def _parser():
     timeout_p.add_argument("--left", required=True)
     timeout_p.add_argument("--cap", default=MODEL_TIMEOUT_SEC)
     timeout_p.set_defaults(func=_cmd_attempt_timeout)
+
+    relay_p = sub.add_parser(
+        "request-timeout",
+        help="per-request timeout that fits (1+sdk retries) inside an attempt share")
+    relay_p.add_argument("--share", required=True)
+    relay_p.add_argument("--sdk-retries", default=RELAY_SDK_RETRIES)
+    relay_p.add_argument("--margin", default=REQUEST_TIMEOUT_MARGIN_SEC)
+    relay_p.set_defaults(func=_cmd_request_timeout)
 
     affordable_p = sub.add_parser(
         "attempts-affordable",

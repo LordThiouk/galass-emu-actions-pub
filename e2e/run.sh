@@ -437,6 +437,20 @@ publish_artemis_log() {
   rm -f "$masked"
 }
 
+# masked_tail path [lines] : queue bornée d'UN essai, prête à publier.
+# Deux fuites à tuer avant publication : le blob base64 (une capture complète dans
+# un journal) et les chemins absolus du runner. Les secrets passent par sanitize.py,
+# comme publish_artemis_log, pour une seule définition du masquage des clés.
+masked_tail() {
+  local src="$1" lines="${2:-40}"
+  [ -f "$src" ] || return 0
+  tail -n "$lines" "$src" 2>/dev/null \
+    | sed -E 's#data:image/[a-z]+;base64,[A-Za-z0-9+/=]+#[B64]#g; s#[A-Za-z0-9+/=]{120,}#[B64]#g; s#(/[A-Za-z0-9._-]+){2,}#[PATH]#g' \
+    | "$PY" e2e/sanitize.py --redact-env OPENAI_API_KEY \
+          --redact-env FREELLM_API_KEY --redact-env OPENAI_BASE_URL \
+          --redact-env FREELLM_BASE_URL 2>/dev/null
+}
+
 # Série épinglée : Artemis doit viser l'émulateur DU JOB, pas un device arbitraire
 # (un runner peut en exposer plusieurs). Résolution PARESSEUSE : au chargement du
 # script l'émulateur peut ne pas être encore visible, et un `adb get-serialno` trop
@@ -505,6 +519,10 @@ artemis_run() {
     fi
   fi
   [ "${#backoff[@]}" -gt 0 ] || backoff=(5 15 30)
+  # Deux essais 502 consécutifs suffisent à couper la chaîne (R3).
+  local relay_streak_max="${RELAY_502_STREAK_MAX:-2}"
+  case "$relay_streak_max" in ''|*[!0-9]*) relay_streak_max=2 ;; esac
+  [ "$relay_streak_max" -lt 1 ] && relay_streak_max=1
 
   # B1: Artemis tourne depuis vendor/artemis; un chemin relatif y serait résolu.
   local out_abs="${OUT_ABS:-}"
@@ -516,7 +534,7 @@ artemis_run() {
   # B2: la piste d'audit décrit le DERNIER essai, pas la chaîne demandée.
   # primary = modèle de cet essai, fallback = son repli Artemis (niveau unique),
   # fallback_events = marqueurs "Falling back"/llm_fallback trouvés dans SON journal.
-  local attempt=1 rc=0 attempts_run=0 signals=""
+  local attempt=1 rc=0 attempts_run=0 signals="" relay_streak=0
   local primary="none" fallback="none" fallback_events=0 served="unknown"
   local last_primary="none" last_fallback="none" last_events=0
   local deadline=0   # posé au premier appel Artemis: la config ne mange pas le budget
@@ -529,22 +547,6 @@ artemis_run() {
       [ "$chain_n" -gt 1 ] && next_model="${chain[$((attempt % chain_n))]}"
     fi
     local offset=$((attempt - 1))
-    # Config runtime régénérée AVANT chaque essai : offset=0 -> tête de chaîne,
-    # offset=1 -> route suivante. vendor/ n'est que lu ($ARTEMIS_CONFIG).
-    if [ "$chain_n" -gt 1 ] && [ -n "${ARTEMIS_CONFIG:-}" ] \
-       && [ -n "${ARTEMIS_CONFIG_RUNTIME:-}" ] && [ -n "$chain_file" ]; then
-      if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" \
-           --out "$ARTEMIS_CONFIG_RUNTIME" --chain-file "$chain_file" \
-           --offset "$offset" >> "$OUT/run.log" 2>&1; then
-        log "artemis config: $name offset=$offset primary=$model fallback=$next_model runtime=$ARTEMIS_CONFIG_RUNTIME"
-      else
-        # Pas de config à l'offset demandé => AUCUNE tentative : lancer Artemis sur
-        # l'ancienne config servirait silencieusement le mauvais modèle.
-        log "artemis config: $name régénération refusée (offset=$offset) — étape abandonnée rc=2"
-        rc=2
-        break
-      fi
-    fi
 
     # Budget PAR TENTATIVE (run 40205373538) : le premier essai recevait TOUT le
     # step, une route pendue consommait la fenêtre et le repli API démarrait après
@@ -582,6 +584,46 @@ artemis_run() {
       break
     fi
 
+    # Config runtime régénérée AVANT chaque essai : offset=0 -> tête de chaîne,
+    # offset=1 -> route suivante. vendor/ n'est que lu ($ARTEMIS_CONFIG).
+    # Run 40602473815 : le relais FreeLLMAPI a répondu 200 puis 502 sur la capture
+    # ~300 Ko, et le SDK a consommé toute la fenêtre avec son timeout par défaut de
+    # 60 s — `ModelEndpoint` n'expose aucun `max_retries` (router.py:87-113). Le seul
+    # levier est le timeout PAR REQUÊTE : il est calculé pour que (1 + réessais SDK)
+    # appels + marge tiennent DANS la part de cet essai.
+    local req_timeout=""
+    req_timeout=$("$PY" e2e/model_chain.py request-timeout --share "$tmo_left" \
+                    --sdk-retries "${RELAY_SDK_RETRIES:-2}" 2>>"$OUT/run.log") \
+      || req_timeout=""
+    case "$req_timeout" in ''|*[!0-9]*) req_timeout=5 ;; esac
+    local sdk_retries="${RELAY_SDK_RETRIES:-2}"
+    case "$sdk_retries" in ''|*[!0-9]*) sdk_retries=2 ;; esac
+    # R2 : une part trop petite pour financer un seul appel borné (T=0) n'écrit
+    # AUCUNE clé `timeout` — le timeout extérieur de l'essai gouverne. La rotation
+    # de chaîne reste faite, sinon l'essai partirait sur le mauvais modèle.
+    local -a rt_args=()
+    local rt_label="none"
+    if [ "$req_timeout" -gt 0 ]; then
+      rt_args=(--request-timeout "$req_timeout" --sdk-retries "$sdk_retries")
+      rt_label="${req_timeout}s"
+    else
+      log "artemis timeout: $name part=${tmo_left}s ne finance aucun appel borné (sdk_retries=$sdk_retries) — pas de timeout vendor, le timeout extérieur gouverne"
+    fi
+    if [ "$chain_n" -gt 0 ] && [ -n "${ARTEMIS_CONFIG:-}" ] \
+       && [ -n "${ARTEMIS_CONFIG_RUNTIME:-}" ] && [ -n "$chain_file" ]; then
+      if "$PY" e2e/model_chain.py apply --in "$ARTEMIS_CONFIG" \
+           --out "$ARTEMIS_CONFIG_RUNTIME" --chain-file "$chain_file" \
+           --offset "$offset" ${rt_args[@]+"${rt_args[@]}"} >> "$OUT/run.log" 2>&1; then
+        log "artemis config: $name offset=$offset primary=$model fallback=$next_model runtime=$ARTEMIS_CONFIG_RUNTIME request_timeout=$rt_label sdk_retries=$sdk_retries"
+      else
+        # Pas de config à l'offset demandé => AUCUNE tentative : lancer Artemis sur
+        # l'ancienne config servirait silencieusement le mauvais modèle.
+        log "artemis config: $name régénération refusée (offset=$offset) — étape abandonnée rc=2"
+        rc=2
+        break
+      fi
+    fi
+
     local attempt_log="$OUT/artemis/$name.attempt$attempt.log"
     local -a args=(run "$goal" --profile flash --test-name "$name"
                    --traces-path "$out_abs/artemis"
@@ -602,6 +644,15 @@ artemis_run() {
     last_events="$events"
     log "artemis llm: $name attempt=$attempt/$max_attempts primary=$model fallback=$next_model fallback_events=$events"
     log "artemis end: $name attempt $attempt/$max_attempts rc=$rc remaining=$((deadline - SECONDS))s"
+    # Relais 502 (run 40602473815) : « 200 puis 502 » ressemble à un modèle mort si
+    # personne ne compte. Chaque essai publie SES compteurs et SA queue masquée.
+    local count502=0 retrying=0 tail_rel="artemis/$name.attempt$attempt.tail.txt"
+    count502=$(grep -c -E '\b502\b' "$attempt_log" 2>/dev/null) || count502=0
+    retrying=$(grep -c 'Retrying request' "$attempt_log" 2>/dev/null) || retrying=0
+    masked_tail "$attempt_log" 40 > "$OUT/$tail_rel" 2>/dev/null || true
+    printf '%s|%s|%s|%s|%s\n' "$name" "$attempt" "$count502" "$retrying" "$tail_rel" \
+      >> "$OUT/artemis/relay-attempts.txt"
+    log "artemis relay: $name attempt=$attempt 502=$count502 retrying=$retrying tail=$tail_rel"
 
     # Journal PAR TENTATIVE (run 40205373538) : qui a tourné, avec quel budget, et
     # comment ça s'est terminé. Le rapport ne devine plus rien à partir du seul rc.
@@ -619,6 +670,25 @@ artemis_run() {
     fi
     printf '%s|%s|%s|%s|%s|%s|%s\n' "$name" "$attempt" "$model" "$rc" "$tmo_left" \
       "${attempt_signal:--}" "$outcome" >> "$OUT/artemis/attempts.txt"
+
+    # Relais 502 (audit R3) : deux essais consécutifs portant une signature 502
+    # suffisent. La policy PROVIDER_UNAVAILABLE du vendor (reliability.py:154-158,
+    # gelée et inatteignable depuis la config) dort 5+10+20 s entre SES réessais :
+    # sur la part de ~33 s observée, ce sleep seul produit rc=124. Un 3e essai ne
+    # peut pas répondre autrement — on coupe et on écrit un verdict, jamais un PASS.
+    if [ "$count502" -gt 0 ] || [ "$retrying" -gt 0 ]; then
+      relay_streak=$((relay_streak + 1))
+    else
+      relay_streak=0
+    fi
+    if [ "$relay_streak" -ge "$relay_streak_max" ] && [ "$rc" -ne 0 ] \
+       && [ "$attempt" -lt "$max_attempts" ]; then
+      [ -n "$attempt_signal" ] && signals="${signals:+$signals,}$attempt_signal"
+      log "artemis chainoff: $name relais 502 sur $relay_streak essais consécutifs — chaîne coupée après $attempt/$max_attempts essais (rc=$rc, aucun PASS)"
+      printf '%s|%s|%s|%s|%s\n' "$name" "$attempt" "$max_attempts" "$rc" "relay_502" \
+        >> "$OUT/artemis/relay-chainoff.txt"
+      break
+    fi
 
     if [ "$rc" -eq 0 ]; then break; fi
     if [ "$attempt" -ge "$max_attempts" ]; then
@@ -933,10 +1003,16 @@ if [ -s "$CHAIN_REQUESTED" ]; then
   # VISION_PROBE_TIMEOUT borne UNE sonde : une route qui pend est morte, elle ne
   # doit pas manger le budget du step (le défaut 20 s est documenté dans le log).
   VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-20}"
-  log "llm-vision: préflight timeout=${VISION_PROBE_TIMEOUT}s par modèle ($(grep -c . "$CHAIN_REQUESTED" 2>/dev/null || echo 0) demandé(s))"
+  # Une sonde 1x1 ne prouve que la vivacité : le relais 502 sur la VRAIE capture
+  # (~300 Ko). La sonde réaliste décide donc l'usage, et une chaîne qui y échoue
+  # part en chain-off avant de brûler le budget du step. 0 = ancien comportement.
+  VISION_PROBE_BYTES="${VISION_PROBE_BYTES:-307200}"
+  case "$VISION_PROBE_BYTES" in ''|*[!0-9]*) VISION_PROBE_BYTES=307200 ;; esac
+  log "llm-vision: préflight timeout=${VISION_PROBE_TIMEOUT}s payload=${VISION_PROBE_BYTES}o par modèle ($(grep -c . "$CHAIN_REQUESTED" 2>/dev/null || echo 0) demandé(s))"
   if ! "$PY" e2e/vision_preflight.py --chain-file "$CHAIN_REQUESTED" \
          --out "$ARTEMIS_CHAIN_FILE" --log "$OUT/artemis/vision-preflight.txt" \
          --timeout "$VISION_PROBE_TIMEOUT" \
+         --probe-bytes "$VISION_PROBE_BYTES" \
          >> "$OUT/run.log" 2>&1; then
     log "llm-vision: préflight en erreur (voir artemis/vision-preflight.txt)"
   fi
@@ -1273,25 +1349,46 @@ PYCOORDS
       return 1 ;;
   esac
   lat="${coords%% *}"; lng="${coords##* }"
-  if ! adb emu geo fix "$lng" "$lat" >/dev/null 2>&1; then
-    log "geofence: adb emu geo fix a échoué (arrêt $n, $lat,$lng)"
-    return 1
-  fi
-  sleep "${GEO_SETTLE_SEC:-3}"
+  # Un `geo fix` rc=0 ne prouve RIEN : l'émulateur accuse réception avant que le
+  # provider GPS ne publie la position (run 40602473815 — rc=0, puis un unique
+  # dumpsys 3 s plus tard encore périmé, arrêt bloqué, complete-stop impossible).
+  # Chaque round RÉINJECTE, attend, relit, et vérifie ; GEO_RETRY_ROUNDS compte les
+  # essais SUPPLÉMENTAIRES (défaut 2, borné 0..5 pour ne pas boucler sans fin).
+  local rounds="${GEO_RETRY_ROUNDS:-2}"
+  case "$rounds" in ''|*[!0-9]*) rounds=2 ;; esac
+  [ "$rounds" -gt 5 ] && rounds=5
+  local total=$((rounds + 1)) k=1 ok=0
   mkdir -p "$OUT/diag"
-  adb shell dumpsys location > "$OUT/diag/geo-stop$n.txt" 2>/dev/null || true
   # Provider FIGÉ sur gps : un knob permettrait de « vérifier » un fix network
   # périmé, exactement le bypass que geo.py existe pour empêcher. La limite reste
-  # réglable, bornée à la plage qui a un sens backend (100..2000 m).
+  # réglable, bornée à la plage qui a un sens backend (100..2000 m). Le retry ne
+  # touche NI l'un NI l'autre : il retente la même preuve, il ne l'affaiblit pas.
   local limit="${GEO_STOP_LIMIT_M:-500}"
   case "$limit" in ''|*[!0-9]*) limit=500 ;; esac
   [ "$limit" -lt 100 ] && limit=100
   [ "$limit" -gt 2000 ] && limit=2000
-  if ! "$PY" e2e/geo.py check --fix "$OUT/diag/geo-stop$n.txt" \
-       --stop-lat "$lat" --stop-lng "$lng" \
-       --limit "$limit" \
-       --provider gps >> "$OUT/run.log" 2>&1; then
-    log "geofence: fix GPS non appliqué pour l'arrêt $n (voir diag/geo-stop$n.txt)"
+  while [ "$k" -le "$total" ]; do
+    if ! adb emu geo fix "$lng" "$lat" >/dev/null 2>&1; then
+      log "geofence: adb emu geo fix a échoué (arrêt $n, $lat,$lng)"
+      return 1
+    fi
+    sleep "${GEO_SETTLE_SEC:-3}"
+    local dump="$OUT/diag/geo-fix-stop$n-r$k.txt"
+    adb shell dumpsys location > "$dump" 2>/dev/null || true
+    # Le dernier relevé garde son nom historique : report et artefacts le publient.
+    cp "$dump" "$OUT/diag/geo-stop$n.txt" 2>/dev/null || true
+    log "geofence: arrêt $n fix GPS essai $k/$total (fix=diag/geo-fix-stop$n-r$k.txt)"
+    if "$PY" e2e/geo.py check --fix "$dump" \
+         --stop-lat "$lat" --stop-lng "$lng" \
+         --limit "$limit" \
+         --provider gps >> "$OUT/run.log" 2>&1; then
+      ok=1
+      break
+    fi
+    k=$((k + 1))
+  done
+  if [ "$ok" -ne 1 ]; then
+    log "geofence: fix GPS non appliqué pour l'arrêt $n après $total essai(s) (voir diag/geo-fix-stop$n-r$total.txt)"
     return 1
   fi
   # Le backend doit voir le chauffeur à l'arrêt : POST seulement APRÈS vérification,
@@ -1418,17 +1515,29 @@ else
   mark driver-cash-confirmed FAIL "${CASH_CAUSE:-cash_status_unavailable}"
   log "cash: ${CASH_CAUSE:-cash_status_unavailable} (rc=$CASH_RC) — tap et received-cash-payment sautés (aucun POST)"
 fi
+CASH_UI_OK=0
 if [ "$CASH_REQUESTED" = "1" ]; then
   if tap_exact "Confirmer le paiement"; then
     if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
-      UI_CASH=1; log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
+      UI_CASH=1; CASH_UI_OK=1
+      log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
+    fi
+  fi
+  if [ "$CASH_UI_OK" != "1" ]; then
+    # Le POST n'est pas la preuve (run 40602473815) : `received-cash-payment` a
+    # répondu 200 avec `remark: "not_found"` — un refus du backend séparé. Le
+    # statut HTTP seul ne peut pas écrire PASS ici : le rc ET la cause relue dans
+    # cash.json décident, et un refus reste un FAIL explicite porteur du cause.
+    CASH_DRIVER_RC=0
+    api cash_driver >> "$OUT/run.log" 2>&1 || CASH_DRIVER_RC=$?
+    CASH_CAUSE=$("$PY" -c 'import json,sys;print((json.load(open(sys.argv[1])) or {}).get("cause") or "")' "$OUT/cash.json" 2>/dev/null || true)
+    if [ "$CASH_DRIVER_RC" != "0" ]; then
+      mark driver-cash-confirmed FAIL "${CASH_CAUSE:-backend_refused}"
+      log "cash: backend a refusé la confirmation (rc=$CASH_DRIVER_RC, cause=${CASH_CAUSE:-inconnue}) — FAIL maintenu"
     else
       mark driver-cash-confirmed FAIL "api fallback: cash"
-      api cash_driver >> "$OUT/run.log" 2>&1
+      log "cash: confirmation par API seulement (UI chauffeur non prouvée) — FAIL maintenu"
     fi
-  else
-    mark driver-cash-confirmed FAIL "api fallback: cash"
-    api cash_driver >> "$OUT/run.log" 2>&1
   fi
 fi
 ride_state

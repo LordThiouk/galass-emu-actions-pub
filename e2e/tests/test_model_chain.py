@@ -453,10 +453,16 @@ def test_preflight_keeps_only_200_in_input_order():
         assert "***" in logged, logged
         assert "429" in logged, logged
         assert "Red" in logged, logged
-        assert len(handler.seen) == len(BASE_CHAIN), handler.seen
         assert all(auth == "Bearer " + SECRET for _m, auth in handler.seen), handler.seen
         models = [m for m, _auth in handler.seen]
-        assert models == BASE_CHAIN, "la sonde doit parcourir TOUTE la chaîne, dans l'ordre"
+        # DEUX étapes (run 40602473815) : la vivacité voit TOUTE la chaîne dans
+        # l'ordre, puis le payload réaliste repasse sur les survivants, dans
+        # l'ordre — un 1x1 seul ne prouve rien sur une capture de 300 Ko. Chaque
+        # survivant est échantillonné DEUX fois (audit R4) : un 200 isolé peut
+        # être la seule réponse saine d'un relais qui 502 juste après.
+        survivors = [m for m in BASE_CHAIN if m in alive]
+        assert models == BASE_CHAIN + [m for m in survivors for _ in (1, 2)], models
+        assert "stage=realistic" in logged, logged
     finally:
         server.shutdown()
         server.server_close()
@@ -715,7 +721,7 @@ def test_artemis_run_retries_the_next_model_and_logs_the_switch():
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-retry-")
     env, _chain_file, runtime = artemis_tree(tmp, FAKE_FAIL_THEN_PASS, BASE_CHAIN[:2],
                                              timeout="0 0 0")
-    # 30s: with 6s the second attempt can trip the `tmo_left -le 5` guard depending
+    # 30s: with 6s the second attempt can trip the `tmo_left -lt 5` guard depending
     # on which side of a second boundary the first attempt landed (review B3).
     proc = run_artemis(env, tmp, tmo="30")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
@@ -1115,7 +1121,10 @@ def test_artemis_run_falls_back_to_default_backoff_when_no_token_is_numeric():
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-backoff-default-")
     env, _chain_file, _runtime = artemis_tree(tmp, FAKE_FAIL_THEN_PASS, BASE_CHAIN[:2])
     env["ARTEMIS_BACKOFF"] = "abc -2"
-    proc = run_artemis(env, tmp, tmo="10")
+    # 30s comme le cas voisin (review B3): avec 10 s, le backoff par défaut de 5 s
+    # laisse ~5 s au second essai et le garde `tmo_left -lt 5` dépend du passage de
+    # la seconde — la contention de la suite complète suffisait à le faire basculer.
+    proc = run_artemis(env, tmp, tmo="30")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     assert "integer expression" not in proc.stderr, proc.stderr
     assert proc.stdout.strip().endswith("RC=0"), proc.stdout
@@ -1351,9 +1360,13 @@ def test_preflight_block_writes_runtime_config_and_exports_it():
         assert requested[0] == "gpt-4o", requested
         expected = ["gpt-4o"] + [m for m in BASE_CHAIN if m != "gpt-4o"]
         assert requested == expected, "l'override passe en tête, la base suit dédoublonnée"
-        assert [m for m, _ in handler.seen] == requested, "la sonde doit voir TOUTE la chaîne demandée"
-
         alive_order = [m for m in requested if m in alive]
+        # vivacité sur toute la chaîne demandée, puis payload réaliste sur les
+        # survivants, chacun DEUX fois (audit R4) — les deux étapes dans l'ordre
+        assert [m for m, _ in handler.seen] == requested + [m for m in alive_order
+                                                            for _ in (1, 2)], \
+            "la sonde doit voir TOUTE la chaîne demandée, puis les survivants (2x)"
+
         assert "CHAIN=" + ",".join(alive_order) in out, out
         marks = text(os.path.join(tmp, "e2e-out", "marks.txt"))
         assert f"MARK llm-vision PASS chaîne vision ({len(alive_order)})" in marks, marks
