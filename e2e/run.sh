@@ -1014,6 +1014,17 @@ if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]
   exit 1
 fi
 mark emulator-boot PASS "$(adb shell getprop ro.build.version.release | tr -d '\r') / API $(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+
+# Nettoyage pré-run (OK Papa 2026-10-29) : ferme/annule par l'API staging les courses non
+# terminées du passager 106 et du chauffeur 23 (ex. n° 249 restée en cours). Jamais de suppression.
+api cleanup > "$OUT/cleanup.txt" 2>&1; CLEAN_RC=$?
+grep -E '^CLEANUP_' "$OUT/cleanup.txt" | while IFS= read -r l; do log "cleanup: $l"; done
+cat "$OUT/cleanup.txt" >> "$OUT/run.log"
+if [ "$CLEAN_RC" -eq 0 ]; then
+  mark pre-run-cleanup PASS "$(grep -m1 '^CLEANUP_OPEN' "$OUT/cleanup.txt") fermées: $(grep '^CLEANUP_CLOSED' "$OUT/cleanup.txt" | awk '{print $2}' | paste -sd, -)"
+else
+  mark pre-run-cleanup WARN "$(grep -m1 -E '^CLEANUP_(OPEN|REFUSED)' "$OUT/cleanup.txt") restantes: $(grep '^CLEANUP_LEFT' "$OUT/cleanup.txt" | awk '{print $2}' | paste -sd, -)"
+fi
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1
 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1

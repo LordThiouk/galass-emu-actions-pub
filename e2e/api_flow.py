@@ -280,6 +280,93 @@ def reset_rides():
             print("CANCEL_STALE", r["id"], c, flush=True)
 
 
+CLEAN_RIDER_ID, CLEAN_DRIVER_ID = 106, 23
+OPEN_STATUSES = (0, 2, 3)
+
+
+def _rides_in(j):
+    """Ride dicts from any list-shaped payload (data.rides.data, data.rides, data...)."""
+    out, todo = [], [j]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, dict):
+            if "id" in x and "status" in x:
+                out.append(x)
+            else:
+                todo.extend(x.values())
+        elif isinstance(x, list):
+            todo.extend(x)
+    return out
+
+
+def _driver_open_rides():
+    seen = {}
+    # Pas driver/rides/list : ce sont les DEMANDES ouvertes d'autres passagers (hors périmètre).
+    for path in ("driver/rides/active", "driver/rides/accepted"):
+        c, j = call("GET", path, DT)
+        if c != 200:
+            continue
+        for r in _rides_in(j):
+            try:
+                rid, status = int(r.get("id")), int(r.get("status"))
+            except (TypeError, ValueError):
+                continue
+            drv = r.get("driver_id")
+            if drv not in (None, "") and str(drv) != str(CLEAN_DRIVER_ID):
+                continue  # pas une course du chauffeur 23
+            if status in OPEN_STATUSES:
+                seen[rid] = dict(r, id=rid, status=status)
+    return sorted(seen.values(), key=lambda r: r["id"])
+
+
+def _close_one(r, owner):
+    """Close ONE open ride by cancel (pending/accepted) or end (running). Never delete."""
+    rid, status = int(r["id"]), int(r["status"])
+    tries = []
+    if status in (0, 2):
+        if owner == "rider":
+            tries.append(("POST", f"ride/cancel/{rid}", RT, {"cancel_reason": "E2E cleanup pre-run"}))
+        tries.append(("POST", f"driver/rides/cancel/{rid}", DT, {"cancel_reason": "E2E cleanup pre-run"}))
+    if status == 2:
+        tries.append(("POST", f"driver/rides/start/{rid}", DT, None))
+    if status in (2, 3):
+        tries.append(("POST", f"driver/rides/end/{rid}", DT, {"latitude": DEST[0], "longitude": DEST[1]}))
+    for m, path, tok, body in tries:
+        c, j = call(m, path, tok, body)
+        if c == 200 and (not isinstance(j, dict) or j.get("status") != "error"):
+            if "start" in path:
+                continue
+            return path.split("/" + str(rid))[0]
+    return None
+
+
+def cleanup_accounts():
+    """Pre-run: close every non-terminal ride of rider 106 and driver 23 (staging only).
+
+    Strict scope: refuses any other account; uses cancel/end only, never delete.
+    Prints CLEANUP_CLOSED <id> <via>, CLEANUP_LEFT <id>, CLEANUP_OPEN rider=<n> driver=<n>.
+    Returns True only when both open counters read 0 afterwards.
+    """
+    if RIDER_ID != CLEAN_RIDER_ID or DRIVER_ID != CLEAN_DRIVER_ID:
+        print(f"CLEANUP_REFUSED rider={RIDER_ID} driver={DRIVER_ID}", flush=True)
+        return False
+    for _ in range(2):
+        todo = [(r, "rider") for r in open_rides()]
+        known = {int(r["id"]) for r, _ in todo}
+        todo += [(r, "driver") for r in _driver_open_rides() if r["id"] not in known]
+        if not todo:
+            break
+        for r, owner in todo:
+            via = _close_one(r, owner)
+            if via:
+                print("CLEANUP_CLOSED", r["id"], "status", r["status"], "via", via, flush=True)
+            else:
+                print("CLEANUP_LEFT", r["id"], "status", r["status"], flush=True)
+    n_r, n_d = len(open_rides()), len(_driver_open_rides())
+    print(f"CLEANUP_OPEN rider={n_r} driver={n_d}", flush=True)
+    return n_r == 0 and n_d == 0
+
+
 def pick_ride():
     """Adopt the newest FRESH rider ride (created by the UI), else create one.
 
@@ -828,6 +915,8 @@ if step == "ping":
     call("GET", "general-setting", RT)
 elif step == "reset":
     reset_rides()
+elif step == "cleanup":
+    sys.exit(0 if cleanup_accounts() else 4)
 elif step == "pick":
     pick_ride()
 elif step == "rider_rides":
