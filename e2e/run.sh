@@ -1781,9 +1781,24 @@ for i in 0 1; do
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
   ui_stop_ok=0
-  if { confirm_stop_by_rid || try_confirm "$DRIVER_PKG" "Confirmer l'arrêt"; } \
-     && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
-    ui_stop_ok=1
+  # Preuve d'un arrêt confirmé à l'écran : stops_done augmente côté backend (run
+  # 40927687323 : tap confirm_stop + Confirmer OK, stops_done 0->1, mais le marqueur
+  # écran ne matchait pas -> repli API qui complétait l'arrêt SUIVANT, 2/2 trop tôt).
+  stops_before=$(grep -oE 'stops_done=[0-9]+' "$OUT/last-ride-state.txt" 2>/dev/null | head -1 | cut -d= -f2)
+  if confirm_stop_by_rid || try_confirm "$DRIVER_PKG" "Confirmer l'arrêt"; then
+    if wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
+      ui_stop_ok=1
+    else
+      t_sd=$SECONDS
+      while [ $((SECONDS - t_sd)) -lt 20 ]; do
+        ride_state
+        sd=$(grep -oE 'stops_done=[0-9]+' "$OUT/last-ride-state.txt" 2>/dev/null | head -1 | cut -d= -f2)
+        if [ -n "$sd" ] && [ -n "$stops_before" ] && [ "$sd" -gt "$stops_before" ]; then
+          ui_stop_ok=1; log "arrêt $n : stops_done $stops_before -> $sd après tap UI (marqueur écran non vu)"; break
+        fi
+        sleep 4
+      done
+    fi
   fi
   if [ "$ui_stop_ok" = "1" ]; then
     if [ "$i" -eq 0 ]; then UI_STOP0=1; else UI_STOP1=1; fi

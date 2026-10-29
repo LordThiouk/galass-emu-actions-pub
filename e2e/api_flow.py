@@ -832,7 +832,9 @@ elif step == "pick":
     pick_ride()
 elif step == "rider_rides":
     # Diagnostic lecture seule : courses ouvertes du rider (id, statut, paiement, chauffeur).
-    for r in open_rides()[:5]:
+    _rr = open_rides()
+    print("RIDER_RIDE total", len(_rr), flush=True)
+    for r in _rr[:5]:
         print("RIDER_RIDE", r.get("id"), "status", r.get("status"),
               "payment_status", r.get("payment_status"),
               "driver", "oui" if str(r.get("driver_id") or "0") not in ("0", "") else "non",
