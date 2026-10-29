@@ -39,6 +39,8 @@ jobs:
       APK_RIDER: apk/rider/app-debug.apk
       APK_DRIVER: apk/driver/app-debug.apk
       RIDER_TOKEN: ${{ secrets.GALASS_E2E_RIDER_TOKEN }}
+      RIDER_TEST_PHONE: ${{ secrets.RIDER_TEST_PHONE || vars.RIDER_TEST_PHONE }}
+      RIDER_TEST_OTP: ${{ secrets.RIDER_TEST_OTP || vars.RIDER_TEST_OTP }}
       DRIVER_TOKEN: ${{ secrets.GALASS_E2E_DRIVER_TOKEN }}
       DEV_TOKEN: ${{ secrets.GALASS_E2E_DEV_TOKEN }}
       OPENAI_API_KEY: ${{ secrets.FREELLMAPI_KEY }}

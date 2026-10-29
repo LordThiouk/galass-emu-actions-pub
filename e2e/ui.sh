@@ -318,6 +318,7 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
     bounds = tuple(map(int, b.groups())) if b else (0, 0, 0, 0)
     nodes.append({
+        "edit": "EditText" in attr("class"),
         "text": attr("text"),
         "desc": attr("content-desc"),
         "visible": attr("visible-to-user").lower() != "false",
@@ -364,7 +365,10 @@ for spec in sys.argv[3:]:
             # B1: a positive must be visible-to-user too. An invisible Flutter route
             # kept in memory is not a screen, so it can never satisfy a marker.
             # `area` stays optional for positives (a visible zero-area node counts).
-            ok = any(n["visible"] and hit(n, rx) for n in nodes for rx in rxs)
+            # Un champ de saisie ne prouve rien : il contient ce que le harnais a
+            # tapé (faux MATCH snapshot 15 run 40844335683, « Point E » dans l'EditText).
+            ok = any(n["visible"] and not n["edit"] and hit(n, rx)
+                     for n in nodes for rx in rxs)
         else:
             ok = not any(n["visible"] and n["area"] and hit(n, rx)
                          for n in nodes for rx in rxs)
@@ -524,6 +528,19 @@ try:
 except OSError:
     xml = ""
 rx = re.compile(pat, re.I | re.S) if mode == "re" else None
+# mode suggest : premier noeud textuel visible SOUS le champ de saisie (pat = la
+# requête tapée, ignorée), sans regex sur le libellé de la suggestion.
+edit_bottom = None
+if mode == "suggest":
+    for m in re.finditer(r"<node\b[^>]*>", xml):
+        t = m.group(0)
+        if "EditText" in t and 'visible-to-user="false"' not in t:
+            b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', t)
+            if b:
+                edit_bottom = int(b.group(4))
+                break
+    if edit_bottom is None:
+        sys.exit(0)
 for m in re.finditer(r"<node\b[^>]*>", xml):
     tag = m.group(0)
 
@@ -542,6 +559,11 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     cls = attr("class")
     if mode == "class":
         ok = pat in cls
+    elif mode == "suggest":
+        label = (attr("text") or attr("content-desc")).strip()
+        ok = ("EditText" not in cls and y1 >= edit_bottom and len(label) >= 3
+              and label.lower() != pat.strip().lower()
+              and not re.search(r"confirmer|annuler|rechercher un lieu|ma position", label, re.I))
     else:
         ok = "EditText" not in cls and (rx.search(attr("text")) or rx.search(attr("content-desc")))
     if ok:
@@ -568,6 +590,41 @@ tap_node() {
 # La recherche de l'app est Google Places : la requête doit être un VRAI lieu.
 PLANB_SETTLE="${PLANB_SETTLE:-2}"
 PLANB_RESULT_TMO="${PLANB_RESULT_TMO:-25}"
+# planb_evidence query [tag] : capture + dump juste après la saisie (diagnostic
+# Places : suggestions absentes ou invisibles pour l'arbre d'accessibilité).
+PLANB_EVIDENCE_N=0
+planb_evidence() {
+  PLANB_EVIDENCE_N=$((PLANB_EVIDENCE_N + 1))
+  local slug tag="${2:-typed}"
+  slug=$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-' | cut -c1-30)
+  local base="planb-${PLANB_EVIDENCE_N}-${slug}-${tag}"
+  mkdir -p "$OUT/screens" "$OUT/ui"
+  adb exec-out screencap -p > "$OUT/screens/$base.png" 2>/dev/null || true
+  if ui_xml; then cp -f "$UI_XML_PATH" "$OUT/ui/$base.xml" 2>/dev/null || true; fi
+  _ulog "planb: preuve $base (png $(wc -c < "$OUT/screens/$base.png" 2>/dev/null || echo 0)B, xml $(wc -c < "$OUT/ui/$base.xml" 2>/dev/null || echo 0)B)"
+}
+
+# rider_ui_login pkg : si l'écran de login est affiché (session injectée refusée),
+# connecte le rider de test RIDER_TEST_PHONE / RIDER_TEST_OTP par l'UI.
+rider_ui_login() {
+  local pkg="$1"
+  [ -n "${RIDER_TEST_PHONE:-}" ] && [ -n "${RIDER_TEST_OTP:-}" ] || { _ulog "login: RIDER_TEST_PHONE/OTP absents"; return 3; }
+  ui_xml || return 4
+  grep -qi 'Où allez-vous' "$UI_XML_PATH" && { _ulog "login: session déjà active"; return 0; }
+  grep -q 'EditText' "$UI_XML_PATH" || { tap_when "$pkg" "Connexion" >/dev/null 2>&1 || true; sleep 2; }
+  tap_node class EditText || { _ulog "login: champ téléphone introuvable"; return 1; }
+  adb shell input text "$RIDER_TEST_PHONE" >/dev/null 2>&1
+  adb shell input keyevent 4 >/dev/null 2>&1 || true
+  tap_when "$pkg" "Connexion" || { _ulog "login: bouton connexion introuvable"; return 1; }
+  sleep 5
+  tap_node class EditText || { _ulog "login: champ OTP introuvable"; return 2; }
+  adb shell input text "$RIDER_TEST_OTP" >/dev/null 2>&1
+  sleep 1
+  tap_when "$pkg" "Vérifier" >/dev/null 2>&1 || true
+  _ulog "login: rider de test soumis (numéro et OTP masqués)"
+  return 0
+}
+
 planb_pick_place() {
   local pkg="$1" open="$2" query="$3" want="$4" enc
   _ulog "planb: '$open' -> saisie '$query' -> résultat /$want/"
@@ -578,6 +635,7 @@ planb_pick_place() {
   enc=$(printf '%s' "$query" | sed 's/ /%s/g')
   adb shell input text "$enc" >/dev/null 2>&1 || { _ulog "planb: échec étape 3 (input text)"; return 3; }
   _ulog "planb: saisi '$query'"
+  planb_evidence "$query"
   # Le champ lui-même contient la requête : on attend un noeud NON EditText (une
   # suggestion Places), en sondant jusqu'à PLANB_RESULT_TMO.
   local t0=$SECONDS hit=1 rtmo="${PLANB_RESULT_TMO:-25}"
@@ -588,8 +646,20 @@ planb_pick_place() {
     sleep 1
   done
   if [ "$hit" -ne 0 ]; then
-    _ulog "planb: aucun résultat /$want/ après ${rtmo}s — pas de confirmation"
-    return 4
+    _ulog "planb: aucun résultat /$want/ après ${rtmo}s — repli première suggestion"
+    planb_evidence "$query" nomatch
+    local t1=$SECONDS stmo="${PLANB_SUGGEST_TMO:-10}"
+    case "$stmo" in ''|*[!0-9]*) stmo=10 ;; esac
+    while :; do
+      tap_node suggest "$query" && { hit=0; break; }
+      [ $((SECONDS - t1)) -ge "$stmo" ] && break
+      sleep 1
+    done
+    if [ "$hit" -ne 0 ]; then
+      _ulog "planb: aucune suggestion sous le champ après ${stmo}s — pas de confirmation"
+      return 4
+    fi
+    _ulog "planb: repli première suggestion tapée (sans regex)"
   fi
   sleep "${PLANB_SETTLE:-2}"
   tap_when "$pkg" "Confirmer le lieu" || { _ulog "planb: échec étape 5 (Confirmer le lieu)"; return 5; }

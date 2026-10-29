@@ -208,6 +208,44 @@ def test_spec_ok_requires_visible_for_positives():
     assert spec_ok("+Arrêt 1") == 0
 
 
+
+PICKER_FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+    <node index="1" text="Rechercher un lieu" content-desc="" visible-to-user="true" bounds="[50,100][1000,180]" />
+    <node index="2" class="android.widget.EditText" text="Point E Dakar" content-desc="" visible-to-user="true" bounds="[50,200][1000,300]" />
+    <node index="3" text="" content-desc="Avenue Cheikh Anta Diop, Dakar" visible-to-user="true" bounds="[50,350][1000,450]" />
+  </node>
+</hierarchy>
+"""
+
+
+@case
+def test_spec_ok_ignores_edit_text_for_positives():
+    """Run 40844335683 snap 15 : « Point E » tapé dans le champ = faux MATCH."""
+    assert spec_ok("+Point E", PICKER_FIXTURE) == 1
+    assert spec_ok("+Cheikh Anta", PICKER_FIXTURE) == 0
+
+
+def find_node(mode, pat, fixture):
+    tmp = tempfile.mkdtemp(prefix="e2e-find-")
+    xml = os.path.join(tmp, "w.xml")
+    with open(xml, "w", encoding="utf-8") as fh:
+        fh.write(fixture)
+    env = dict(os.environ, OUT=tmp, UI_XML=xml)
+    proc = subprocess.run(
+        ["bash", "-c", '. "$1"; UI_XML_PATH="$UI_XML"; _find_node "$2" "$3"', "_", UI, mode, pat],
+        capture_output=True, text=True, env=env)
+    return proc.stdout.strip()
+
+
+@case
+def test_find_node_suggest_picks_first_node_below_the_field():
+    assert find_node("suggest", "Point E Dakar", PICKER_FIXTURE) == "525 400"
+    no_field = PICKER_FIXTURE.replace("android.widget.EditText", "android.view.View")
+    assert find_node("suggest", "Point E Dakar", no_field) == ""
+
+
 # ------------------------------------------------- B2 marker pre-state fixtures
 SUMMARY_FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">

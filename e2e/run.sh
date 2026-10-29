@@ -1028,6 +1028,11 @@ write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.dri
 
 # ------------------------------------------------------------------ launch
 launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" "$WAIT_FG_SEC" || true
+# Session injectée refusée (écran de login) : login UI du rider de test fourni par Papa.
+if ui_xml && ! grep -qi 'Où allez-vous' "$UI_XML_PATH" && grep -q 'EditText\|Connexion' "$UI_XML_PATH"; then
+  rider_ui_login "$RIDER_PKG" && mark rider-ui-login PASS "login UI rider de test" \
+    || mark rider-ui-login FAIL "login UI rider de test rc=$?"
+fi
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 # Démarrage Driver PROUVÉ (run 40375590679) : permissions + exemption batterie
 # AVANT le premier lancement (sinon le dialogue Réglages ouvre et vole le focus),
