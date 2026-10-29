@@ -99,7 +99,7 @@ def test_planb_without_result_fails_and_never_confirms():
                   '"Où allez-vous ?" "Point E Dakar" "Point E"', env)
     assert proc.returncode != 0, proc.returncode
     assert "shell input tap 500 2250" not in read(adb_log), read(adb_log)
-    assert "planb: aucun résultat" in read(os.path.join(tmp, "run.log"))
+    assert "planb: ni place_prediction_0" in read(os.path.join(tmp, "run.log"))
 
 
 def blocks_with_marks():

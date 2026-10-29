@@ -240,11 +240,10 @@ def find_node(mode, pat, fixture):
 
 
 @case
-def test_find_node_suggest_picks_first_node_below_the_field():
-    assert find_node("suggest", "Point E Dakar", PICKER_FIXTURE) == "525 400"
-    no_field = PICKER_FIXTURE.replace("android.widget.EditText", "android.view.View")
-    assert find_node("suggest", "Point E Dakar", no_field) == ""
-
+def test_find_node_rid_targets_semantics_identifier():
+    fx = PICKER_FIXTURE.replace('content-desc="Avenue', 'resource-id="place_prediction_0" content-desc="Avenue')
+    assert find_node("rid", "place_prediction_0", fx) == "525 400"
+    assert find_node("rid", "place_prediction_0", PICKER_FIXTURE) == ""
 
 # ------------------------------------------------- B2 marker pre-state fixtures
 SUMMARY_FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>

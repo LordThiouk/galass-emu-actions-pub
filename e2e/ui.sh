@@ -528,19 +528,6 @@ try:
 except OSError:
     xml = ""
 rx = re.compile(pat, re.I | re.S) if mode == "re" else None
-# mode suggest : premier noeud textuel visible SOUS le champ de saisie (pat = la
-# requête tapée, ignorée), sans regex sur le libellé de la suggestion.
-edit_bottom = None
-if mode == "suggest":
-    for m in re.finditer(r"<node\b[^>]*>", xml):
-        t = m.group(0)
-        if "EditText" in t and 'visible-to-user="false"' not in t:
-            b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', t)
-            if b:
-                edit_bottom = int(b.group(4))
-                break
-    if edit_bottom is None:
-        sys.exit(0)
 for m in re.finditer(r"<node\b[^>]*>", xml):
     tag = m.group(0)
 
@@ -559,11 +546,9 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     cls = attr("class")
     if mode == "class":
         ok = pat in cls
-    elif mode == "suggest":
-        label = (attr("text") or attr("content-desc")).strip()
-        ok = ("EditText" not in cls and y1 >= edit_bottom and len(label) >= 3
-              and label.lower() != pat.strip().lower()
-              and not re.search(r"confirmer|annuler|rechercher un lieu|ma position", label, re.I))
+    elif mode == "rid":
+        rid = attr("resource-id")
+        ok = rid == pat or rid.endswith(":id/" + pat) or rid.endswith("/" + pat)
     else:
         ok = "EditText" not in cls and (rx.search(attr("text")) or rx.search(attr("content-desc")))
     if ok:
@@ -600,7 +585,19 @@ planb_evidence() {
   local base="planb-${PLANB_EVIDENCE_N}-${slug}-${tag}"
   mkdir -p "$OUT/screens" "$OUT/ui"
   adb exec-out screencap -p > "$OUT/screens/$base.png" 2>/dev/null || true
-  if ui_xml; then cp -f "$UI_XML_PATH" "$OUT/ui/$base.xml" 2>/dev/null || true; fi
+  if ui_xml; then
+    cp -f "$UI_XML_PATH" "$OUT/ui/$base.xml" 2>/dev/null || true
+    python3 - "$UI_XML_PATH" <<'PY' | head -25 | while IFS= read -r l; do _ulog "planb: noeud $l"; done
+import html, re, sys
+x = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for t in re.findall(r"<node\b[^>]*>", x):
+    g = lambda n: html.unescape((re.search(r'\b' + n + r'="([^"]*)"', t) or [None, ""])[1])
+    lab = (g("text") or g("content-desc")).replace("\n", " ")[:60]
+    rid = g("resource-id")
+    if lab or rid:
+        print("%s|%s|%s|%s" % (g("class").split(".")[-1], rid, lab, g("bounds")))
+PY
+  fi
   _ulog "planb: preuve $base (png $(wc -c < "$OUT/screens/$base.png" 2>/dev/null || echo 0)B, xml $(wc -c < "$OUT/ui/$base.xml" 2>/dev/null || echo 0)B)"
 }
 
@@ -641,28 +638,20 @@ planb_pick_place() {
   local t0=$SECONDS hit=1 rtmo="${PLANB_RESULT_TMO:-25}"
   case "$rtmo" in ''|*[!0-9]*) rtmo=25 ;; esac
   while :; do
+    # Semantics(identifier) Flutter -> resource-id : la 1re suggestion Places,
+    # sans regex sur son libellé ; repli sur le libellé attendu (anciens APK).
+    tap_node rid place_prediction_0 && { hit=0; _ulog "planb: place_prediction_0 tapé"; break; }
     tap_node re "$want" && { hit=0; break; }
     [ $((SECONDS - t0)) -ge "$rtmo" ] && break
     sleep 1
   done
   if [ "$hit" -ne 0 ]; then
-    _ulog "planb: aucun résultat /$want/ après ${rtmo}s — repli première suggestion"
+    _ulog "planb: ni place_prediction_0 ni /$want/ après ${rtmo}s — pas de confirmation"
     planb_evidence "$query" nomatch
-    local t1=$SECONDS stmo="${PLANB_SUGGEST_TMO:-10}"
-    case "$stmo" in ''|*[!0-9]*) stmo=10 ;; esac
-    while :; do
-      tap_node suggest "$query" && { hit=0; break; }
-      [ $((SECONDS - t1)) -ge "$stmo" ] && break
-      sleep 1
-    done
-    if [ "$hit" -ne 0 ]; then
-      _ulog "planb: aucune suggestion sous le champ après ${stmo}s — pas de confirmation"
-      return 4
-    fi
-    _ulog "planb: repli première suggestion tapée (sans regex)"
+    return 4
   fi
   sleep "${PLANB_SETTLE:-2}"
-  tap_when "$pkg" "Confirmer le lieu" || { _ulog "planb: échec étape 5 (Confirmer le lieu)"; return 5; }
+  tap_node rid confirm_location || tap_when "$pkg" "Confirmer le lieu" || { _ulog "planb: échec étape 5 (Confirmer le lieu)"; return 5; }
   _ulog "planb: OK '$query'"
   return 0
 }

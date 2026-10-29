@@ -1,0 +1,56 @@
+name: patrol-pilot
+# Pilote Patrol NON bloquant, séparé du job e2e (contrat d'étapes inchangé).
+on:
+  workflow_dispatch:
+    inputs:
+      rider_ref: {description: "Branche Galass_Rider", default: "feat/patrol-pilot", type: string}
+permissions:
+  contents: read
+jobs:
+  patrol-pilot:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    env:
+      BASE: ${{ secrets.GALASS_STAGING_URL }}
+      RIDER_TEST_PHONE: ${{ secrets.RIDER_TEST_PHONE }}
+      RIDER_TEST_OTP: ${{ secrets.RIDER_TEST_OTP }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Garde staging
+        run: |
+          python3 e2e/base_guard.py "$BASE"
+          case "$BASE" in *galassapp.com*) echo "BASE ne doit pas être la prod"; exit 1;; esac
+      - uses: actions/checkout@v4
+        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider, persist-credentials: false}
+      - name: Pilote présent ?
+        id: has
+        run: test -f src/rider/patrol_test/rider_home_destination_test.dart && echo ok=1 >> "$GITHUB_OUTPUT" || echo "pas de patrol_test sur ${{ inputs.rider_ref }}"
+      - uses: actions/setup-java@v4
+        if: steps.has.outputs.ok == '1'
+        with: {distribution: temurin, java-version: "17"}
+      - uses: subosito/flutter-action@v2
+        if: steps.has.outputs.ok == '1'
+        with: {flutter-version: "3.44.8", channel: stable, cache: true}
+      - name: Activer KVM
+        if: steps.has.outputs.ok == '1'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: patrol_cli
+        if: steps.has.outputs.ok == '1'
+        run: dart pub global activate patrol_cli && echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+      - name: Patrol (rider accueil + login + destination)
+        if: steps.has.outputs.ok == '1'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          working-directory: src/rider
+          script: flutter pub get >/dev/null && adb emu geo fix -17.4677 14.7167 ; patrol test -t patrol_test/rider_home_destination_test.dart --dart-define=API_BASE_URL="$BASE" --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" 2>&1 | sed -E 's#https?://[^ ]+#<url>#g' | tail -n 80
