@@ -1343,6 +1343,64 @@ PLANB_OPEN_RID=add_stop PLANB_INPUT_RID=stop_input_2 planb_step rider-stop2 "Ajo
   "In the Galass Rider app, tap \"Ajouter un arrêt\", choose the stop \"$PLANB_STOP2_QUERY\" and confirm. Return to the ride summary." 390
 cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
 
+# Plan B : la course doit être COMMANDÉE dans l'app (service + « Trouver un chauffeur »),
+# sinon `api pick` ne trouve rien d'adoptable et crée la course par l'API (ride_source=api,
+# ride-composed FAIL). L'app exige un service choisi (isValidForNewRide, id != -99).
+rider_pick_service() {
+  ui_xml || return 4
+  python3 - "$UI_XML_PATH" <<'PYSVC'
+import html, re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+nodes = []
+for t in re.findall(r"<node\b[^>]*>", xml):
+    g = lambda n: html.unescape((re.search(r'\b' + n + r'="([^"]*)"', t) or [None, ""])[1])
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', t)
+    if not b or g("visible-to-user").lower() == "false":
+        continue
+    nodes.append((g("text") + " " + g("content-desc")).strip() and ((g("text") + " " + g("content-desc")).strip(), g("class"), tuple(map(int, b.groups()))))
+nodes = [n for n in nodes if n]
+title = next((n for n in nodes if re.search(r"S[ée]lectionnez un service", n[0], re.I)), None)
+if not title:
+    sys.exit(1)
+bottom = title[2][3]
+skip = re.compile(r"S[ée]lectionnez|Trouver un chauffeur|personne|Espèces|Cash|Arrêt|Ajouter", re.I)
+for txt, cls, (x1, y1, x2, y2) in nodes:
+    if y1 >= bottom and "EditText" not in cls and not skip.search(txt) and y2 > y1:
+        print("%d %d %s" % ((x1 + x2) // 2, (y1 + y2) // 2, txt[:40].replace("\n", " ")))
+        sys.exit(0)
+sys.exit(1)
+PYSVC
+}
+rider_request_ride() {
+  local i res
+  bring_fg "$RIDER_PKG" || true
+  for i in 1 2 3 4; do
+    res=$(rider_pick_service) && break
+    adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1
+  done
+  if [ -z "$res" ]; then
+    log "planb: service introuvable sous « Sélectionnez un service »"
+    return 1
+  fi
+  set -- $res
+  adb shell input tap "$1" "$2" >/dev/null 2>&1
+  log "planb: service tapé @ $1,$2 (${*:3})"
+  sleep 3
+  for i in 1 2 3; do
+    has_node re 'Trouver un chauffeur' && break
+    adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1
+  done
+  return 0
+}
+if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
+  if rider_request_ride && tap_when "$RIDER_PKG" "Trouver un chauffeur"; then
+    log "planb: « Trouver un chauffeur » tapé"; sleep 5
+    mark planb-rider-request PASS "plan B UI: service + Trouver un chauffeur"
+  else
+    mark planb-rider-request FAIL "plan B UI: commande impossible (repli API au pick)"
+  fi
+fi
+
 # ------------------------------------------------------------- driver offer
 deadline_check driver-offer  # budget mur : verdict partiel plutôt qu'un step qui traîne
 # ISC-5: repère conservateur du bloc, pris AVANT bring_fg/api pick. Sert de T0 de
@@ -1538,7 +1596,10 @@ sleep 3
 bring_fg "$DRIVER_PKG" || true
 cap driver-pickup-arrived 36-driver-pickup-arrived "$DRIVER_PKG" 20
 
-if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course"; then
+# « Prise en charge du client » ouvre un dialogue Confirmer/Annuler (driver
+# ride_details_bottom_sheet_widget.dart:173-183 -> startRide seulement au Confirmer).
+if ui_action "$DRIVER_PKG" "Prise en charge du client" \
+   || try_tap "$DRIVER_PKG" "Démarrer la course"; then
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
   else
