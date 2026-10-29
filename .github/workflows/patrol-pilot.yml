@@ -1,6 +1,10 @@
 name: patrol-pilot
 # Pilote Patrol NON bloquant, séparé du job e2e (contrat d'étapes inchangé).
 on:
+  # push : workflow_dispatch exige le fichier sur la branche par défaut (pas de merge).
+  push:
+    branches: [fix/e2e-vision-chain]
+    paths: [.github/workflows/patrol-pilot.yml]
   workflow_dispatch:
     inputs:
       rider_ref: {description: "Branche Galass_Rider", default: "feat/patrol-pilot", type: string}
@@ -23,10 +27,10 @@ jobs:
           python3 e2e/base_guard.py "$BASE"
           case "$BASE" in *galassapp.com*) echo "BASE ne doit pas être la prod"; exit 1;; esac
       - uses: actions/checkout@v4
-        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider, persist-credentials: false}
+        with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref || 'feat/patrol-pilot' }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider, persist-credentials: false}
       - name: Pilote présent ?
         id: has
-        run: test -f src/rider/patrol_test/rider_home_destination_test.dart && echo ok=1 >> "$GITHUB_OUTPUT" || echo "pas de patrol_test sur ${{ inputs.rider_ref }}"
+        run: test -f src/rider/patrol_test/rider_home_destination_test.dart && echo ok=1 >> "$GITHUB_OUTPUT" || echo "pas de patrol_test sur la branche rider"
       - uses: actions/setup-java@v4
         if: steps.has.outputs.ok == '1'
         with: {distribution: temurin, java-version: "17"}
