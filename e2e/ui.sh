@@ -623,11 +623,29 @@ rider_ui_login() {
 }
 
 planb_pick_place() {
-  local pkg="$1" open="$2" query="$3" want="$4" enc
-  _ulog "planb: '$open' -> saisie '$query' -> résultat /$want/"
-  tap_when "$pkg" "$open" || { _ulog "planb: échec étape 1 (tap '$open')"; return 1; }
+  # open_rid / input_rid (optionnels) : Semantics(identifier) Flutter -> resource-id
+  # (add_stop, stop_input_N). Repli libellé / premier EditText pour les anciens APK.
+  local pkg="$1" open="$2" query="$3" want="$4" open_rid="${5:-}" input_rid="${6:-}" enc t1 ok
+  _ulog "planb: '$open'${open_rid:+ (rid $open_rid)} -> saisie '$query'${input_rid:+ (rid $input_rid)} -> résultat /$want/"
+  ok=1
+  if [ -n "$open_rid" ]; then
+    t1=$SECONDS
+    while [ $((SECONDS - t1)) -lt "${PLANB_OPEN_TMO:-15}" ]; do
+      tap_node rid "$open_rid" && { ok=0; _ulog "planb: $open_rid tapé"; break; }
+      sleep 1
+    done
+  fi
+  [ "$ok" -eq 0 ] || tap_when "$pkg" "$open" || { _ulog "planb: échec étape 1 (tap '$open'${open_rid:+, ni rid $open_rid})"; planb_evidence "$query" noopen; return 1; }
   sleep "${PLANB_SETTLE:-2}"
-  tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
+  ok=1
+  if [ -n "$input_rid" ]; then
+    t1=$SECONDS
+    while [ $((SECONDS - t1)) -lt 10 ]; do
+      tap_node rid "$input_rid" && { ok=0; _ulog "planb: $input_rid tapé"; break; }
+      sleep 1
+    done
+  fi
+  [ "$ok" -eq 0 ] || tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
   sleep 1
   enc=$(printf '%s' "$query" | sed 's/ /%s/g')
   adb shell input text "$enc" >/dev/null 2>&1 || { _ulog "planb: échec étape 3 (input text)"; return 3; }

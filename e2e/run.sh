@@ -1298,7 +1298,7 @@ planb_step() {
   if [ "$ARTEMIS_CRITICAL" = "1" ]; then
     mark "artemis-$name" SKIP "artemis rc=$rc (${ARTEMIS_SKIP_CAUSE:-échec})"
   fi
-  planb_pick_place "$RIDER_PKG" "$open" "$query" "$want"
+  planb_pick_place "$RIDER_PKG" "$open" "$query" "$want" "${PLANB_OPEN_RID:-}" "${PLANB_INPUT_RID:-}"
   prc=$?
   if [ "$prc" -eq 0 ]; then
     mark "planb-$name" PASS "plan B UI: tap '$open' + saisie '$query' + résultat /$want/ + Confirmer le lieu"
@@ -1314,14 +1314,14 @@ planb_step rider-destination "Où allez-vous ?" "$PLANB_DEST_QUERY" "$PLANB_DEST
 cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
 
 # 16 : picker ouvert par « Ajouter un arrêt » — preuve AVANT la saisie du stop 1.
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
+tap_node rid add_stop >/dev/null 2>&1 || try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
 cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
 adb shell input keyevent 4 >/dev/null 2>&1 || true   # retour : planb rouvre le picker
 sleep 2
 
-planb_step rider-stop1 "Ajouter un arrêt" "$PLANB_STOP1_QUERY" "$PLANB_STOP1_WANT" \
+PLANB_OPEN_RID=add_stop PLANB_INPUT_RID=stop_input_1 planb_step rider-stop1 "Ajouter un arrêt" "$PLANB_STOP1_QUERY" "$PLANB_STOP1_WANT" \
   "In the Galass Rider app, tap \"Ajouter un arrêt\", choose the stop \"$PLANB_STOP1_QUERY\" and confirm. Return to the ride summary." 360
-planb_step rider-stop2 "Ajouter un arrêt" "$PLANB_STOP2_QUERY" "$PLANB_STOP2_WANT" \
+PLANB_OPEN_RID=add_stop PLANB_INPUT_RID=stop_input_2 planb_step rider-stop2 "Ajouter un arrêt" "$PLANB_STOP2_QUERY" "$PLANB_STOP2_WANT" \
   "In the Galass Rider app, tap \"Ajouter un arrêt\", choose the stop \"$PLANB_STOP2_QUERY\" and confirm. Return to the ride summary." 390
 cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
 
