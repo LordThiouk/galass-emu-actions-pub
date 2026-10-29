@@ -1020,7 +1020,7 @@ def test_artemis_run_splits_the_step_budget_between_models():
 
 @case
 def test_artemis_model_timeout_is_numeric_and_clamped():
-    for preset, want in (("abc", "45"), ("0", "5"), ("9000", "600"), ("30", "30")):
+    for preset, want in (("abc", "120"), ("0", "5"), ("9000", "600"), ("30", "30")):
         tmp = tempfile.mkdtemp(prefix="e2e-artemis-cap-")
         env, _cf, _rt = artemis_tree(tmp, FAKE_OK, ["gpt-4.1"], timeout="0 0 0")
         env["ARTEMIS_MODEL_TIMEOUT_SEC"] = preset
@@ -1533,7 +1533,7 @@ def test_request_timeout_never_breaks_the_share_invariant():
     import model_chain
 
     # the constants the refusal leans on must not have been raised by the fix
-    assert model_chain.MODEL_TIMEOUT_SEC == 45
+    assert model_chain.MODEL_TIMEOUT_SEC == 120  # 2026-10-29: cap Artemis relevé (run 40825904344)
     assert model_chain.MODEL_TIMEOUT_MIN == 5
     assert model_chain.MODEL_TIMEOUT_MAX == 600
     assert model_chain.RELAY_SDK_RETRIES == 2

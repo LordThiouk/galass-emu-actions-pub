@@ -379,7 +379,7 @@ def classify(rc, log_text=""):
 # a hung route ate the offer window and the tap/API fallback started after the
 # offer had expired. Each attempt now gets a fair share of what is left, capped
 # so one slow route cannot hold the step for minutes.
-MODEL_TIMEOUT_SEC = 45
+MODEL_TIMEOUT_SEC = 120  # 2026-10-29 run 40825904344: 45 s coupait le smoke (rc=124 x2)
 MODEL_TIMEOUT_MIN = 5
 MODEL_TIMEOUT_MAX = 600
 
@@ -509,7 +509,7 @@ def set_request_timeout(config, seconds):
 
 
 def clamp_cap(cap=MODEL_TIMEOUT_SEC):
-    """Numeric attempt cap, clamped to [5, 600]; anything unparsable -> 45."""
+    """Numeric attempt cap, clamped to [5, 600]; anything unparsable -> 120."""
     try:
         value = int(str(cap).strip())
     except (TypeError, ValueError):

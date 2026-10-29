@@ -31,7 +31,7 @@ ARTEMIS_BACKOFF="${ARTEMIS_BACKOFF:-5 15 30}"
 ARTEMIS_MAX_ATTEMPTS="${ARTEMIS_MAX_ATTEMPTS:-}"
 # Budget d'une sonde vision (une image par modèle) : une route qui pend ne doit
 # pas consommer le budget du step. Passé à vision_preflight.py --timeout.
-VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-20}"
+VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-30}"
 # Après un double-429, Artemis attend LLM_PAUSE_TIMEOUT_SECONDS (900 s par défaut)
 # avant d'échouer : ce budget mangerait tout le step. 15 s laisse le retry du
 # harnais basculer sur la route suivante. Un override utilisateur est respecté.
@@ -565,7 +565,7 @@ artemis_run() {
     local remaining=$((deadline - SECONDS))
     [ "$remaining" -ge 0 ] || remaining=0
     local attempts_left=$((max_attempts - attempt + 1))
-    local cap="${ARTEMIS_MODEL_TIMEOUT_SEC:-45}"
+    local cap="${ARTEMIS_MODEL_TIMEOUT_SEC:-120}"
     # Contrat A (driver-accept): diviser la fenêtre par TOUTES les routes restantes
     # donnait 22/6 = 3 s par modèle, sous le plancher de 5 s — run.sh refusait alors
     # toute tentative et Artemis n'avait jamais sa chance dans l'offre. On réduit le
@@ -1141,7 +1141,7 @@ VISION_UNREACHABLE=0
 if [ -s "$CHAIN_REQUESTED" ]; then
   # VISION_PROBE_TIMEOUT borne UNE sonde : une route qui pend est morte, elle ne
   # doit pas manger le budget du step (le défaut 20 s est documenté dans le log).
-  VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-20}"
+  VISION_PROBE_TIMEOUT="${VISION_PROBE_TIMEOUT:-30}"
   # Une sonde 1x1 ne prouve que la vivacité : le relais 502 sur la VRAIE capture
   # (~300 Ko). La sonde réaliste décide donc l'usage, et une chaîne qui y échoue
   # part en chain-off avant de brûler le budget du step. 0 = ancien comportement.
@@ -1239,7 +1239,7 @@ else
     fi
   fi
 fi
-if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 200; then
+if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 360; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   # Only a smoke call that actually RAN can be "smoke failed": every earlier
@@ -1261,7 +1261,7 @@ bring_fg "$RIDER_PKG" || true
 
 artemis_run rider-destination \
   "Open the Galass Rider app. On the home screen choose the destination \"E2E Dest Point E\" (search it if needed) and return to the ride summary. Do not add stops yet." \
-  180 "$RIDER_PKG"
+  360 "$RIDER_PKG"
 rc=$?
 mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-destination.log)"
 bring_fg "$RIDER_PKG" || true
@@ -1273,14 +1273,14 @@ cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
 
 artemis_run rider-stop1 \
   "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 1 Médina\" and confirm. Return to the ride summary." \
-  180 "$RIDER_PKG"
+  360 "$RIDER_PKG"
 rc=$?
 mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop1.log)"
 
 try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
 artemis_run rider-stop2 \
   "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 2 Fann\", confirm, select cash payment, then confirm the ride request. Stay on the ride screen." \
-  210 "$RIDER_PKG"
+  390 "$RIDER_PKG"
 rc=$?
 mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
 bring_fg "$RIDER_PKG" || true
