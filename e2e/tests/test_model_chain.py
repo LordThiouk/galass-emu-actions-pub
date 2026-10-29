@@ -1273,7 +1273,7 @@ def preflight_block():
     """The real shell block from run.sh: chain -> probe -> apply -> export."""
     body = text(RUN)
     start = body.index("# Préflight vision")
-    end = body.index('if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke')
+    end = body.index('# Artemis HORS chemin critique')
     return body[start:end]
 
 

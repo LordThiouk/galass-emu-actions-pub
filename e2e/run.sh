@@ -123,7 +123,7 @@ export P0_POINTS
 # absent, '|' = OR, the kind propagates over the alternatives. 'cap' resolves a point's
 # marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
-MARK_rider_destination_selected='+E2E Dest Point E|-Où allez-vous'
+MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
 MARK_rider_stop_picker='+Arrêt 1|Rechercher un lieu|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
@@ -1239,7 +1239,15 @@ else
     fi
   fi
 fi
-if [ "$ARTEMIS_OK" = "1" ] && artemis_run smoke "Open the Settings app and report the Android version shown on screen." 360; then
+# Artemis HORS chemin critique (run 40833325705 : 3 x 120 s dépassés au smoke, même
+# sur « ouvrir Réglages »). Un seul essai court ; WARN non bloquant ; ARTEMIS_SMOKE=0
+# le désactive. Le parcours rider suit le plan B sans attendre Artemis.
+ARTEMIS_SMOKE_TMO="${ARTEMIS_SMOKE_TMO:-90}"
+if [ "${ARTEMIS_SMOKE:-1}" = "0" ] && [ "$ARTEMIS_OK" = "1" ]; then
+  ARTEMIS_OK=0
+  ARTEMIS_SKIP_CAUSE="ARTEMIS_SMOKE=0"
+fi
+if [ "$ARTEMIS_OK" = "1" ] && ARTEMIS_MAX_ATTEMPTS=1 artemis_run smoke "Open the Settings app and report the Android version shown on screen." "$ARTEMIS_SMOKE_TMO"; then
   mark artemis-smoke PASS "LLM + device loop operational"
 else
   # Only a smoke call that actually RAN can be "smoke failed": every earlier
@@ -1259,31 +1267,57 @@ deadline_check rider-compose  # budget mur : verdict partiel plutôt qu'un step 
 api reset >> "$OUT/run.log" 2>&1
 bring_fg "$RIDER_PKG" || true
 
-artemis_run rider-destination \
-  "Open the Galass Rider app. On the home screen choose the destination \"E2E Dest Point E\" (search it if needed) and return to the ride summary. Do not add stops yet." \
-  360 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-destination.log)"
-bring_fg "$RIDER_PKG" || true
+# Plan B RÉEL (run 40833325705 : le SKIP annonçait « reprise par taps + API » sans
+# aucun tap). Artemis n'est tenté que si ARTEMIS_CRITICAL=1 ; sinon (défaut) le
+# parcours passe directement par planb_pick_place : tap, saisie, résultat, confirmation.
+# La recherche de l'app est Google Places : les requêtes sont de VRAIS lieux de Dakar.
+# La course elle-même reste créée/adoptée par `api pick` (nouvelle course à chaque run).
+ARTEMIS_CRITICAL="${ARTEMIS_CRITICAL:-0}"
+PLANB_DEST_QUERY="${PLANB_DEST_QUERY:-Point E Dakar}"
+PLANB_DEST_WANT="${PLANB_DEST_WANT:-Point E}"
+PLANB_STOP1_QUERY="${PLANB_STOP1_QUERY:-Medina Dakar}"
+PLANB_STOP1_WANT="${PLANB_STOP1_WANT:-M[ée]dina}"
+PLANB_STOP2_QUERY="${PLANB_STOP2_QUERY:-Fann Dakar}"
+PLANB_STOP2_WANT="${PLANB_STOP2_WANT:-Fann}"
+# planb_step name open_label query want goal tmo : Artemis si critique, sinon plan B.
+planb_step() {
+  local name="$1" open="$2" query="$3" want="$4" goal="$5" tmo="$6" rc=2 prc
+  if [ "$ARTEMIS_CRITICAL" = "1" ]; then
+    artemis_run "$name" "$goal" "$tmo" "$RIDER_PKG"
+    rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    mark "artemis-$name" PASS "artemis rc=0 (voir artemis/$name.log)"
+    return 0
+  fi
+  if [ "$ARTEMIS_CRITICAL" = "1" ]; then
+    mark "artemis-$name" SKIP "artemis rc=$rc (${ARTEMIS_SKIP_CAUSE:-échec})"
+  fi
+  planb_pick_place "$RIDER_PKG" "$open" "$query" "$want"
+  prc=$?
+  if [ "$prc" -eq 0 ]; then
+    mark "planb-$name" PASS "plan B UI: tap '$open' + saisie '$query' + résultat /$want/ + Confirmer le lieu"
+  else
+    mark "planb-$name" FAIL "plan B UI: échec étape $prc/5 (tap '$open', saisie '$query') — voir run.log 'planb:'"
+  fi
+  bring_fg "$RIDER_PKG" || true
+  return "$prc"
+}
+
+planb_step rider-destination "Où allez-vous ?" "$PLANB_DEST_QUERY" "$PLANB_DEST_WANT" \
+  "Open the Galass Rider app. On the home screen choose the destination \"$PLANB_DEST_QUERY\" (search it if needed) and return to the ride summary. Do not add stops yet." 360
 cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
 
-# 16 : picker ouvert par « Ajouter un arrêt »
+# 16 : picker ouvert par « Ajouter un arrêt » — preuve AVANT la saisie du stop 1.
 try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
 cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
+adb shell input keyevent 4 >/dev/null 2>&1 || true   # retour : planb rouvre le picker
+sleep 2
 
-artemis_run rider-stop1 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 1 Médina\" and confirm. Return to the ride summary." \
-  360 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop1.log)"
-
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
-artemis_run rider-stop2 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 2 Fann\", confirm, select cash payment, then confirm the ride request. Stay on the ride screen." \
-  390 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
-bring_fg "$RIDER_PKG" || true
+planb_step rider-stop1 "Ajouter un arrêt" "$PLANB_STOP1_QUERY" "$PLANB_STOP1_WANT" \
+  "In the Galass Rider app, tap \"Ajouter un arrêt\", choose the stop \"$PLANB_STOP1_QUERY\" and confirm. Return to the ride summary." 360
+planb_step rider-stop2 "Ajouter un arrêt" "$PLANB_STOP2_QUERY" "$PLANB_STOP2_WANT" \
+  "In the Galass Rider app, tap \"Ajouter un arrêt\", choose the stop \"$PLANB_STOP2_QUERY\" and confirm. Return to the ride summary." 390
 cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
 
 # ------------------------------------------------------------- driver offer

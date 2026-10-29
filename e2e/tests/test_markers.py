@@ -354,8 +354,9 @@ def test_ensure_fg_never_relaunches_on_unknown():
 def test_ui_xml_freshness_contract():
     body = ui_text()
     fn = re.search(r"^ui_xml\(\) \{(.*?)^\}", body, re.M | re.S).group(1)
-    assert "rm -f /sdcard/w.xml" in fn, fn
-    assert "uiautomator dump --compressed /sdcard/w.xml" in fn, fn
+    # Run 40833325705 : le chemin varie (/sdcard puis /data/local/tmp), jamais réutilisé.
+    assert 'dev="/sdcard/w.xml"' in fn and 'rm -f "$dev"' in fn, fn
+    assert 'uiautomator dump --compressed "$dev"' in fn, fn
     assert "dumped to" in fn, fn
     assert "<hierarchy" in fn, fn
     assert "400" in fn, fn

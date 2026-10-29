@@ -244,15 +244,30 @@ ui_xml() {
   fi
   rm -f /tmp/w.xml
   [ "$UI_XML_PATH" != "/tmp/w.xml" ] && rm -f "$UI_XML_PATH"
+  # Run 40833325705 : 46 DUMP_UNAVAILABLE à partir de 07:48, chacun en ~4 s, ET
+  # fg=UNKNOWN au même moment => l'appareil adb ne répondait plus (pas uiautomator).
+  # La cause n'était jamais journalisée. Désormais : 1re ligne de la sortie du dump
+  # et `adb get-state` dans le log ; appareil non `device` => `reconnect offline` +
+  # `wait-for-device` borné ; essais 2 et 3 sur /data/local/tmp (pas /sdcard).
+  local dev="/sdcard/w.xml" cause="" state=""
   for try in 1 2 3; do
+    [ "$try" -gt 1 ] && dev="/data/local/tmp/w.xml"
     adb shell pkill -f uiautomator >/dev/null 2>&1 || true
-    adb shell rm -f /sdcard/w.xml >/dev/null 2>&1
-    ADB_TMO=20 adb shell uiautomator dump --compressed /sdcard/w.xml > "$OUT/ui/.dump-$try.out" 2>&1
+    adb shell rm -f "$dev" >/dev/null 2>&1
+    ADB_TMO=20 adb shell uiautomator dump --compressed "$dev" > "$OUT/ui/.dump-$try.out" 2>&1
     if ! grep -q "dumped to" "$OUT/ui/.dump-$try.out" 2>/dev/null; then
+      cause=$(grep -v '^[[:space:]]*$' "$OUT/ui/.dump-$try.out" 2>/dev/null | head -n 1 | tr -d '\r' | cut -c1-160)
+      [ -n "$cause" ] || cause="sortie vide (timeout ou adb muet)"
+      state=$(adb get-state 2>&1 | head -n 1 | tr -d '\r')
+      if [ "$state" != "device" ]; then
+        _ulog "ui_xml: essai $try state=${state:-?} — adb reconnect offline + wait-for-device (${UI_DUMP_RECONNECT_TMO:-30}s)"
+        adb reconnect offline >/dev/null 2>&1 || true
+        ADB_TMO="${UI_DUMP_RECONNECT_TMO:-30}" adb wait-for-device >/dev/null 2>&1 || true
+      fi
       sleep 1
       continue
     fi
-    adb shell cat /sdcard/w.xml > "$UI_XML_PATH" 2>/dev/null
+    adb shell cat "$dev" > "$UI_XML_PATH" 2>/dev/null
     if grep -q "<hierarchy" "$UI_XML_PATH" 2>/dev/null \
        && [ "$(wc -c < "$UI_XML_PATH" 2>/dev/null || echo 0)" -gt 400 ]; then
       rc=0
@@ -262,7 +277,7 @@ ui_xml() {
   done
   if [ "$rc" -ne 0 ]; then
     rm -f "$UI_XML_PATH"
-    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais"
+    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais (state=${state:-?}, cause: ${cause:-dump vide ou <400 o})"
     return 4
   fi
   UI_DUMP_BYTES=$(wc -c < "$UI_XML_PATH" 2>/dev/null || echo 0)
@@ -438,6 +453,14 @@ wait_app_ui() {
 tap_exact() {
   local label="$1" res
   if ! ui_xml; then
+    # Repli par coordonnées : la dernière position où CE libellé a été vu et tapé.
+    res=$(awk -F'\t' -v l="$label" '$1 == l { xy = $2 } END { print xy }' "$OUT/ui/.tap-cache" 2>/dev/null)
+    if [ -n "$res" ]; then
+      set -- "$1" $res
+      adb shell input tap "$2" "$3" >/dev/null 2>&1
+      _ulog "tap_exact $1 @ $2,$3 (dump indisponible — coordonnées mémorisées, tap aveugle)"
+      return 0
+    fi
     _ulog "tap_exact: dump indisponible pour '$1'"
     return 4
   fi
@@ -485,7 +508,93 @@ PY
   fi
   set -- "$1" $res
   adb shell input tap "$2" "$3" >/dev/null 2>&1
+  printf '%s\t%s %s\n' "$1" "$2" "$3" >> "$OUT/ui/.tap-cache" 2>/dev/null || true
   _ulog "tap_exact $1 @ $2,$3"
+}
+
+# _find_node mode pattern -> "x y" du premier noeud VISIBLE, "" sinon.
+# mode=re : text/content-desc contient la regex (insensible à la casse), EditText exclu.
+# mode=class : la classe contient le motif (ex. EditText).
+_find_node() {
+  python3 - "$UI_XML_PATH" "$1" "$2" <<'PY'
+import html, re, sys
+path, mode, pat = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    xml = open(path, encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+rx = re.compile(pat, re.I | re.S) if mode == "re" else None
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+
+    def attr(name):
+        a = re.search(r'\b' + name + r'="([^"]*)"', tag)
+        return html.unescape(a.group(1)) if a else ""
+
+    if attr("visible-to-user").lower() == "false":
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+    if not b:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if x2 <= x1 or y2 <= y1:
+        continue
+    cls = attr("class")
+    if mode == "class":
+        ok = pat in cls
+    else:
+        ok = "EditText" not in cls and (rx.search(attr("text")) or rx.search(attr("content-desc")))
+    if ok:
+        print("%d %d" % ((x1 + x2) // 2, (y1 + y2) // 2))
+        break
+PY
+}
+
+# tap_node mode pattern : dump frais puis tap au centre du premier noeud trouvé.
+tap_node() {
+  local res
+  ui_xml || { _ulog "tap_node: dump indisponible ($1 '$2')"; return 4; }
+  res=$(_find_node "$1" "$2")
+  [ -n "$res" ] || { _ulog "tap_node miss: $1 '$2'"; return 1; }
+  set -- "$1" "$2" $res
+  adb shell input tap "$3" "$4" >/dev/null 2>&1
+  _ulog "tap_node $1 '$2' @ $3,$4"
+}
+
+# planb_pick_place pkg open_label query result_regex : plan B RÉEL d'un choix de lieu.
+# 1 tap sur open_label · 2 tap sur le champ (EditText) · 3 `input text` de query ·
+# 4 attente d'un résultat qui matche result_regex puis tap · 5 « Confirmer le lieu ».
+# rc 0 = tout fait ; 1..5 = numéro de l'étape qui a échoué (rien de plus n'est tapé).
+# La recherche de l'app est Google Places : la requête doit être un VRAI lieu.
+PLANB_SETTLE="${PLANB_SETTLE:-2}"
+PLANB_RESULT_TMO="${PLANB_RESULT_TMO:-25}"
+planb_pick_place() {
+  local pkg="$1" open="$2" query="$3" want="$4" enc
+  _ulog "planb: '$open' -> saisie '$query' -> résultat /$want/"
+  tap_when "$pkg" "$open" || { _ulog "planb: échec étape 1 (tap '$open')"; return 1; }
+  sleep "${PLANB_SETTLE:-2}"
+  tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
+  sleep 1
+  enc=$(printf '%s' "$query" | sed 's/ /%s/g')
+  adb shell input text "$enc" >/dev/null 2>&1 || { _ulog "planb: échec étape 3 (input text)"; return 3; }
+  _ulog "planb: saisi '$query'"
+  # Le champ lui-même contient la requête : on attend un noeud NON EditText (une
+  # suggestion Places), en sondant jusqu'à PLANB_RESULT_TMO.
+  local t0=$SECONDS hit=1 rtmo="${PLANB_RESULT_TMO:-25}"
+  case "$rtmo" in ''|*[!0-9]*) rtmo=25 ;; esac
+  while :; do
+    tap_node re "$want" && { hit=0; break; }
+    [ $((SECONDS - t0)) -ge "$rtmo" ] && break
+    sleep 1
+  done
+  if [ "$hit" -ne 0 ]; then
+    _ulog "planb: aucun résultat /$want/ après ${rtmo}s — pas de confirmation"
+    return 4
+  fi
+  sleep "${PLANB_SETTLE:-2}"
+  tap_when "$pkg" "Confirmer le lieu" || { _ulog "planb: échec étape 5 (Confirmer le lieu)"; return 5; }
+  _ulog "planb: OK '$query'"
+  return 0
 }
 
 # ui_action pkg label : attend un libellé tolérant aux espaces, tape, EXIGE le dialogue.
