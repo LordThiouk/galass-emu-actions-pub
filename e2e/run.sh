@@ -1460,20 +1460,24 @@ PYIDX
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
     RIDER_FIND_TAPPED=0
-    local dec
+    local dec dump_fail=0
     for i in 1 2 3 4 5 6; do
-      ui_xml || { sleep 1; continue; }
-      dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH")
-      log "planb: bouton commande essai $i -> $dec"
-      set -- $dec
-      case "$1" in
-        TAP) adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
-             log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
-        SWIPE) adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
-        *) break ;;
-      esac
+      if ui_xml; then
+        dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH")
+        log "planb: bouton commande essai $i -> $dec"
+        set -- $dec
+        case "$1" in
+          TAP) adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
+               log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
+          SWIPE) log "planb: pan défile (geste hors liste service_option_*) $2 $3->$4"
+                 adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
+          *) break ;;
+        esac
+      else
+        dump_fail=$((dump_fail+1)); sleep 1
+      fi
     done
-    log "planb: bouton « Trouver un chauffeur » cliquable jamais vu sous la liste"
+    log "planb: bouton « Trouver un chauffeur » jamais tapé (dumps indisponibles: ${dump_fail}/6)"
     return 0
   fi
   log "planb: rid service_option_$svc_idx absent, repli sous « Sélectionnez un service »"
