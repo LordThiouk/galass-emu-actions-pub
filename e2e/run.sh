@@ -125,7 +125,7 @@ export P0_POINTS
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
 # add_stop n'est rendu que si hasDestination : marqueur indépendant du libellé Places.
 MARK_rider_destination_selected='+Ajouter un arrêt|-Où allez-vous'
-MARK_rider_stop_picker='+Arrêt 1|Rechercher un lieu|-Où allez-vous'
+MARK_rider_stop_picker='+Destination|Arrêt 1|Rechercher un lieu|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
 # B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
