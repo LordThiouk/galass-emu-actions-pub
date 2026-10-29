@@ -710,7 +710,10 @@ ui_action() {
   local pkg="$1" lab="$2" re tag
   re=$(printf '%s' "$lab" | python3 -c 'import re,sys;print(r"\s+".join(re.escape(w) for w in sys.stdin.read().split()))')
   wait_ui "$pkg" 20 "+$re" || return 1
-  tap_exact "$lab" || return 1
+  # Flutter fusionne parfois la sémantique du bouton avec son voisin : le libellé
+  # n'est alors qu'une PARTIE du content-desc (run 40912525349 : wait_ui MATCH puis
+  # « tap_exact miss: Confirmer l'arrêt »). Repli : plus petit noeud qui le contient.
+  tap_exact "$lab" || tap_contains "$lab" || return 1
   sleep 2
   tag=$(echo "$lab" | tr -c 'a-zA-Z' '_')
   if wait_ui "$pkg" "${UI_CONFIRM_TIMEOUT:-8}" '+^Confirmer$'; then
@@ -721,6 +724,40 @@ ui_action() {
   adb exec-out screencap -p > "$OUT/screens/dbg-after-$tag.png" 2>/dev/null
   _ulog "pas de dialogue Confirmer après $lab"
   return 1
+}
+
+# tap_contains label : tape le PLUS PETIT noeud visible dont text/content-desc contient
+# le libellé (espaces normalisés). Jamais utilisé pour « Confirmer » du dialogue (exact).
+tap_contains() {
+  local res
+  ui_xml || return 4
+  res=$(python3 - "$UI_XML_PATH" "$1" <<'PY'
+import html, re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
+want = norm(sys.argv[2])
+best = None
+for t in re.findall(r"<node\b[^>]*>", xml):
+    g = lambda n: html.unescape((re.search(r'\b' + n + r'="([^"]*)"', t) or [None, ""])[1])
+    if g("visible-to-user").lower() == "false" or "EditText" in g("class"):
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', t)
+    if not b:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if x2 <= x1 or y2 <= y1:
+        continue
+    if want in norm(g("text")) or want in norm(g("content-desc")):
+        a = (x2 - x1) * (y2 - y1)
+        if best is None or a < best[0]:
+            best = (a, (x1 + x2) // 2, (y1 + y2) // 2)
+print("" if best is None else "%d %d" % best[1:])
+PY
+)
+  [ -n "$res" ] || { _ulog "tap_contains miss: $1"; return 1; }
+  set -- "$1" $res
+  adb shell input tap "$2" "$3" >/dev/null 2>&1
+  _ulog "tap_contains $1 @ $2,$3"
 }
 
 # tap_when pkg label... : attend puis tape, sans exiger de dialogue (ouverture de picker,

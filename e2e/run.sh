@@ -1371,6 +1371,22 @@ for txt, cls, (x1, y1, x2, y2) in nodes:
 sys.exit(1)
 PYSVC
 }
+rider_after_request_diag() {
+  # Diagnostic : textes visibles après la commande (snackbar d'erreur éventuelle).
+  ui_xml && python3 - "$UI_XML_PATH" <<'PYDIAG' | while IFS= read -r l; do log "planb: après commande: $l"; done
+import html, re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+seen = []
+for t in re.findall(r"<node\b[^>]*>", xml):
+  for n in ("text", "content-desc"):
+      m = re.search(r'\b' + n + r'="([^"]*)"', t)
+      v = re.sub(r"\s+", " ", html.unescape(m.group(1))).strip() if m else ""
+      if v and v not in seen and not re.search(r"\d{6,}|@", v):
+          seen.append(v)
+for v in seen[:25]:
+  print(v[:90])
+PYDIAG
+}
 rider_request_ride() {
   local i res
   bring_fg "$RIDER_PKG" || true
@@ -1394,7 +1410,9 @@ rider_request_ride() {
 }
 if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
   if rider_request_ride && tap_when "$RIDER_PKG" "Trouver un chauffeur"; then
-    log "planb: « Trouver un chauffeur » tapé"; sleep 5
+    log "planb: « Trouver un chauffeur » tapé"; sleep 3
+    rider_after_request_diag
+    sleep 2
     mark planb-rider-request PASS "plan B UI: service + Trouver un chauffeur"
   else
     mark planb-rider-request FAIL "plan B UI: commande impossible (repli API au pick)"
