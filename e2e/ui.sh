@@ -668,8 +668,11 @@ planb_pick_place() {
       tap_node rid "$input_rid" && { ok=0; _ulog "planb: $input_rid tapé"; break; }
       sleep 1
     done
+    # rid demandé : jamais de repli sur le premier EditText (le picker destination en a deux).
+    [ "$ok" -eq 0 ] || { _ulog "planb: échec étape 2 (rid $input_rid introuvable — repli EditText interdit)"; planb_evidence "$query" noinput; return 2; }
+  else
+    tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
   fi
-  [ "$ok" -eq 0 ] || tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
   sleep 1
   enc=$(printf '%s' "$query" | sed 's/ /%s/g')
   adb shell input text "$enc" >/dev/null 2>&1 || { _ulog "planb: échec étape 3 (input text)"; return 3; }

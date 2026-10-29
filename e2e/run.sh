@@ -123,7 +123,8 @@ export P0_POINTS
 # absent, '|' = OR, the kind propagates over the alternatives. 'cap' resolves a point's
 # marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
-MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
+# add_stop n'est rendu que si hasDestination : marqueur indépendant du libellé Places.
+MARK_rider_destination_selected='+^Ajouter un arrêt$|-Où allez-vous'
 MARK_rider_stop_picker='+Arrêt 1|Rechercher un lieu|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
@@ -1309,7 +1310,7 @@ planb_step() {
   return "$prc"
 }
 
-planb_step rider-destination "Où allez-vous ?" "$PLANB_DEST_QUERY" "$PLANB_DEST_WANT" \
+PLANB_OPEN_RID= PLANB_INPUT_RID=destination_input planb_step rider-destination "Où allez-vous ?" "$PLANB_DEST_QUERY" "$PLANB_DEST_WANT" \
   "Open the Galass Rider app. On the home screen choose the destination \"$PLANB_DEST_QUERY\" (search it if needed) and return to the ride summary. Do not add stops yet." 360
 cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
 
