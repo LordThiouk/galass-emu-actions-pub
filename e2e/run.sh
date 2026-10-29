@@ -340,6 +340,20 @@ api_accept_ok() {
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
 try_tap() { local pkg="$1"; shift; tap_when "$pkg" "$@"; }
+# confirm_stop_by_rid : bouton « Confirmer l'arrêt » par resource-id (driver
+# Semantics identifier confirm_stop), puis « Confirmer » du dialogue s'il s'ouvre.
+confirm_stop_by_rid() {
+  wait_node rid confirm_stop 15 || { log "confirm_stop: rid absent"; return 1; }
+  tap_node rid confirm_stop || return 1
+  sleep 2
+  if wait_ui "$DRIVER_PKG" "${UI_CONFIRM_TIMEOUT:-8}" '+^Confirmer$'; then
+    tap_exact "Confirmer" || return 1
+    sleep 2
+  else
+    log "confirm_stop: pas de dialogue Confirmer après le tap"
+  fi
+  return 0
+}
 ride_state() {
   STEP=ride_state "$PY" e2e/api_flow.py > "$OUT/last-ride-state.txt" 2>"$OUT/api-flow.err"
   smoke_emit_file "$OUT/api-flow.err"
@@ -1372,6 +1386,13 @@ sys.exit(1)
 PYSVC
 }
 rider_after_request_diag() {
+  STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep '^RIDER_RIDE' | head -5 \
+    | while IFS= read -r l; do log "planb: api après commande: $l"; done
+  # Logs Flutter du rider autour de la commande (jetons/emails masqués, 25 lignes max).
+  adb logcat -d -t 1500 2>/dev/null | grep -iE "flutter" \
+    | grep -iE "ride/create|create_ride|recommend|active|snack|error|exception|status|remark" \
+    | sed -E 's/(Bearer|token|authorization|password)[^ ,"]*[ :=]*[^ ,"]+/\1=[REDACTED]/Ig; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/[EMAIL]/g; s/[A-Za-z0-9_-]{32,}/[REDACTED]/g' \
+    | tail -25 | while IFS= read -r l; do log "planb: logcat rider: ${l:0:220}"; done
   # Diagnostic : textes visibles après la commande (snackbar d'erreur éventuelle).
   ui_xml && python3 - "$UI_XML_PATH" <<'PYDIAG' | while IFS= read -r l; do log "planb: après commande: $l"; done
 import html, re, sys
@@ -1409,8 +1430,10 @@ rider_request_ride() {
   return 0
 }
 if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
+  STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep '^RIDER_RIDE' | head -5 \
+    | while IFS= read -r l; do log "planb: api avant commande: $l"; done
   if rider_request_ride && tap_when "$RIDER_PKG" "Trouver un chauffeur"; then
-    log "planb: « Trouver un chauffeur » tapé"; sleep 3
+    log "planb: « Trouver un chauffeur » tapé"
     rider_after_request_diag
     sleep 2
     mark planb-rider-request PASS "plan B UI: service + Trouver un chauffeur"
@@ -1758,7 +1781,7 @@ for i in 0 1; do
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
   ui_stop_ok=0
-  if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
+  if { confirm_stop_by_rid || try_confirm "$DRIVER_PKG" "Confirmer l'arrêt"; } \
      && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
     ui_stop_ok=1
   fi

@@ -830,6 +830,13 @@ elif step == "reset":
     reset_rides()
 elif step == "pick":
     pick_ride()
+elif step == "rider_rides":
+    # Diagnostic lecture seule : courses ouvertes du rider (id, statut, paiement, chauffeur).
+    for r in open_rides()[:5]:
+        print("RIDER_RIDE", r.get("id"), "status", r.get("status"),
+              "payment_status", r.get("payment_status"),
+              "driver", "oui" if str(r.get("driver_id") or "0") not in ("0", "") else "non",
+              "created_at", r.get("created_at"), flush=True)
 elif step == "cancel":
     if ride_id():
         c, j = call("POST", f"ride/cancel/{ride_id()}", RT, {"cancel_reason": "E2E cleanup"})
