@@ -53,20 +53,20 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
 # glm-4.6v-flash). gemma-4-31b-it: 4/4 x 200 (1.9-14 s). The dashboard
 # profile API (/api/profiles) needs an admin session we do not hold.
 BASE_CHAIN = [
-    "auto",
+    # 2026-10-29: profil FreeLLMAPI `vision` (id 19) = 18 modeles vision testes
+    # 200 + bonne reponse sur PNG (gemini-3.5-flash en tete). 3/3 OK via auto:vision.
+    "auto:vision",
+    "gemini-3.5-flash",
+    "gpt-5.4-mini",
+    "mistral-medium-3.5",
+    "qwen3.8-27b",
     "gemma-4-31b-it",
-    "gpt-4.1",
-    "gemini-2.5-flash",
-    "gpt-4o",
 ]
 # 2026-10-28 probes (FreeLLMAPI :3001): every flash-lite route is dead or
 # exhausted (2.5/2.0-flash-lite 404; 3.5-flash-lite 502; 3.1/flash-lite 429).
 DEAD_MODELS = frozenset({
     "llama-3.2-11b-vision",
-    "gemini-2.5-flash-lite",
     "gemini-2.0-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
     "gemini-flash-lite",
 })
 

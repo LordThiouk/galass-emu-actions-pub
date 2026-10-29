@@ -2062,10 +2062,10 @@ def main():
 @case
 def test_default_chain_has_no_dead_flash_lite():
     import model_chain
-    assert model_chain.BASE_CHAIN == ["auto", "gemma-4-31b-it", "gpt-4.1",
-                                      "gemini-2.5-flash", "gpt-4o"]
-    for m in ("gemini-2.5-flash-lite", "gemini-2.0-flash-lite",
-              "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite"):
+    # 2026-10-29: chaine re-mesuree (profil FreeLLMAPI `vision`, 18 modeles 200).
+    assert model_chain.BASE_CHAIN == ["auto:vision", "gemini-3.5-flash", "gpt-5.4-mini",
+                                      "mistral-medium-3.5", "qwen3.8-27b", "gemma-4-31b-it"]
+    for m in ("gemini-2.0-flash-lite", "gemini-flash-lite", "llama-3.2-11b-vision"):
         assert m in model_chain.DEAD_MODELS, m
         assert m not in model_chain.BASE_CHAIN, m
 
@@ -2104,7 +2104,7 @@ def test_run_sh_default_chain_is_the_verified_single_source():
         import model_chain
         assert requested == model_chain.BASE_CHAIN, \
             f"la chaîne réellement demandée doit être la chaîne vérifiée: {requested}"
-        assert handler.seen[0][0] == "auto", handler.seen[:3]
+        assert handler.seen[0][0] == "auto:vision", handler.seen[:3]
     finally:
         server.shutdown()
         server.server_close()
