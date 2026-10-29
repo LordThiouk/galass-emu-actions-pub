@@ -568,6 +568,29 @@ tap_node() {
   _ulog "tap_node $1 '$2' @ $3,$4"
 }
 
+# has_node mode pattern : dump frais, vrai si un noeud correspond (aucun tap).
+has_node() { ui_xml || return 4; [ -n "$(_find_node "$1" "$2")" ]; }
+
+# dismiss_quit_dialog : un retour Android sur l'accueil ouvre « quitter l'application ? » ;
+# on tape « Non » pour rester dans l'app (run 40866652805).
+dismiss_quit_dialog() {
+  if has_node re "quitter l.application"; then
+    tap_node re "^Non$" && { _ulog "planb: dialogue quitter -> Non"; sleep 1; return 0; }
+  fi
+  return 1
+}
+
+# wait_node mode pattern tmo : attend la présence d'un noeud (sans tap).
+wait_node() {
+  local t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "${3:-15}" ]; do
+    has_node "$1" "$2" && return 0
+    dismiss_quit_dialog >/dev/null 2>&1 || true
+    sleep 1
+  done
+  return 1
+}
+
 # planb_pick_place pkg open_label query result_regex : plan B RÉEL d'un choix de lieu.
 # 1 tap sur open_label · 2 tap sur le champ (EditText) · 3 `input text` de query ·
 # 4 attente d'un résultat qui matche result_regex puis tap · 5 « Confirmer le lieu ».
@@ -627,6 +650,7 @@ planb_pick_place() {
   # (add_stop, stop_input_N). Repli libellé / premier EditText pour les anciens APK.
   local pkg="$1" open="$2" query="$3" want="$4" open_rid="${5:-}" input_rid="${6:-}" enc t1 ok
   _ulog "planb: '$open'${open_rid:+ (rid $open_rid)} -> saisie '$query'${input_rid:+ (rid $input_rid)} -> résultat /$want/"
+  dismiss_quit_dialog >/dev/null 2>&1 || true
   ok=1
   if [ -n "$open_rid" ]; then
     t1=$SECONDS

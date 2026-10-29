@@ -14,7 +14,7 @@ jobs:
   patrol-pilot:
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
       RIDER_TEST_PHONE: ${{ secrets.RIDER_TEST_PHONE }}
