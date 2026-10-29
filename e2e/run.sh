@@ -1411,6 +1411,17 @@ PYDIAG
 rider_request_ride() {
   local i res
   bring_fg "$RIDER_PKG" || true
+  # Carte de service par resource-id (Semantics.identifier service_option_N, Galass_Rider test/service-option).
+  if wait_node rid service_option_0 10 && tap_node rid service_option_0; then
+    log "planb: service tapé par rid service_option_0"
+    sleep 3
+    for i in 1 2 3; do
+      has_node re 'Trouver un chauffeur' && break
+      adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1
+    done
+    return 0
+  fi
+  log "planb: rid service_option_0 absent, repli sous « Sélectionnez un service »"
   for i in 1 2 3 4; do
     res=$(rider_pick_service) && break
     adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1
@@ -1436,7 +1447,13 @@ if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
     log "planb: « Trouver un chauffeur » tapé"
     rider_after_request_diag
     sleep 2
-    mark planb-rider-request PASS "plan B UI: service + Trouver un chauffeur"
+    n_after=$(STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep -m1 '^RIDER_RIDE total' | grep -oE '[0-9]+$')
+    log "planb: compteur courses rider après commande = ${n_after:-?}"
+    if [ "${n_after:-0}" -ge 1 ]; then
+      mark planb-rider-request PASS "plan B UI: service_option + Trouver un chauffeur, RIDER_RIDE total=${n_after}"
+    else
+      mark planb-rider-request FAIL "plan B UI: Trouver un chauffeur tapé mais RIDER_RIDE total=${n_after:-?} (aucune course créée)"
+    fi
   else
     mark planb-rider-request FAIL "plan B UI: commande impossible (repli API au pick)"
   fi
