@@ -1423,8 +1423,41 @@ rider_request_ride() {
   local i res
   bring_fg "$RIDER_PKG" || true
   # Carte de service par resource-id (Semantics.identifier service_option_N, Galass_Rider test/service-option).
-  if wait_node rid service_option_0 10 && tap_node rid service_option_0; then
-    log "planb: service tapé par rid service_option_0"
+  # Service du chauffeur 23 (lecture API) -> rang de la carte ; repli par texte, puis 0.
+  local svc_out svc_idx svc_name
+  svc_out=$(STEP=service_index "$PY" e2e/api_flow.py 2>/dev/null | grep -E '^(DRIVER_SERVICE|RIDER_SERVICES|SERVICE_INDEX)')
+  printf '%s\n' "$svc_out" | while IFS= read -r l; do log "planb: ${l:0:300}"; done
+  # Consigne Papa (t391u/t392u) : service du chauffeur 23 lu par l'API ; si c'est Voiture
+  # ou introuvable -> carte « Voiture », sinon la carte du service du chauffeur.
+  local drv_idx drv_name
+  drv_idx=$(printf '%s\n' "$svc_out" | awk '$1=="SERVICE_INDEX" && $2 ~ /^[0-9]+$/ {print $2; exit}')
+  drv_name=$(printf '%s\n' "$svc_out" | awk '$1=="SERVICE_INDEX" && $2 ~ /^[0-9]+$/ {$1=$2=""; sub(/^ +/,""); print; exit}')
+  log "planb: service chauffeur 23 (API) = ${drv_name:-introuvable} (rang ${drv_idx:-?})"
+  svc_idx=""
+  if [ -n "$drv_idx" ] && ! printf '%s' "$drv_name" | grep -qiE '^voiture$'; then
+    svc_idx=$drv_idx; svc_name=$drv_name
+  else
+    svc_name="Voiture"
+  fi
+  [ -n "$svc_idx" ] || svc_idx=$(ui_xml && python3 - "$UI_XML_PATH" <<'PYIDX'
+import html, re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+# Le noeud service_option_N fusionne nom + description : « Voiture Course CFA... ».
+# Premier mot exactement « Voiture » (pas « Economie voiture/... », pas « Voitures de luxe »).
+for t in re.findall(r"<node\b[^>]*>", xml):
+    rid = re.search(r'resource-id="service_option_(\d+)"', t)
+    txt = html.unescape(" ".join(re.findall(r'(?:text|content-desc)="([^"]*)"', t))).strip()
+    if rid and re.match(r"Voiture\b(?!s)", txt):
+        print(rid.group(1)); break
+PYIDX
+)
+  if [ -z "$svc_idx" ]; then
+    log "planb: carte « Voiture » introuvable par texte, rang API utilisé"
+    svc_idx=$drv_idx
+  fi
+  svc_idx=${svc_idx:-0}
+  if wait_node rid "service_option_$svc_idx" 10 && tap_node rid "service_option_$svc_idx"; then
+    log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
     for i in 1 2 3; do
       has_node re 'Trouver un chauffeur' && break
@@ -1432,7 +1465,7 @@ rider_request_ride() {
     done
     return 0
   fi
-  log "planb: rid service_option_0 absent, repli sous « Sélectionnez un service »"
+  log "planb: rid service_option_$svc_idx absent, repli sous « Sélectionnez un service »"
   for i in 1 2 3 4; do
     res=$(rider_pick_service) && break
     adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1

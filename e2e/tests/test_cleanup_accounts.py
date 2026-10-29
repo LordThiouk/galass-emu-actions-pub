@@ -77,3 +77,36 @@ def test_other_accounts_are_refused():
 def test_unclosable_ride_reports_left_and_false():
     out, _ = run([{"id": 249, "status": 3}], [], fail_paths=("driver/rides/end",))
     assert "CLEANUP_LEFT 249" in out and "OK False" in out, out
+
+
+def _svc(driver_info, dashboard):
+    tmp = tempfile.mkdtemp(); smoke = os.path.join(tmp, "s.log"); open(smoke, "w").close()
+    env = dict(os.environ, BASE="https://staging.example.test", OUT=tmp, STEP="ping",
+               RIDER_TOKEN="r", DRIVER_TOKEN="d", DEV_TOKEN="x", SMOKE_LOG=smoke)
+    env.pop("GALASS_STAGING_URL", None)
+    script = (
+        "import sys, json, urllib.request\n"
+        "class _R:\n    status = 200\n    def read(self): return b'{\"data\":{}}'\n"
+        "    def __enter__(self): return self\n    def __exit__(self, *a): return False\n"
+        "urllib.request.urlopen = lambda *a, **k: _R()\n"
+        f"sys.path.insert(0, {ROOT!r})\nimport api_flow as a\nCALLS=[]\n"
+        f"DI = json.loads({json.dumps(driver_info)!r}); DB = json.loads({json.dumps(dashboard)!r})\n"
+        "def fake(m, path, tok, body=None, timeout=40):\n"
+        "    CALLS.append([m, path])\n"
+        "    return 200, (DI if path == 'driver/driver-info' else DB)\n"
+        "a.call = fake\nprint('IDX', a.service_index()); print('CALLS', json.dumps(CALLS))\n")
+    p = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, cwd=os.path.dirname(ROOT))
+    assert p.returncode == 0, p.stderr
+    return p.stdout
+
+
+def test_service_index_maps_driver_service_to_rider_card_order_read_only():
+    out = _svc({"data": {"driver": {"service_id": 3, "service": {"name": "Voiture"}}}},
+               {"data": {"services": [{"id": 1, "name": "Economie"}, {"id": 2, "name": "Luxe"}, {"id": 4, "name": "Livraison"}, {"id": 3, "name": "Voiture"}]}})
+    assert "SERVICE_INDEX 3 Voiture" in out and "IDX 3" in out, out
+    assert '"POST"' not in out, out
+
+
+def test_service_index_none_when_unknown():
+    out = _svc({"data": {}}, {"data": {"services": [{"id": 1}]}})
+    assert "SERVICE_INDEX none" in out, out

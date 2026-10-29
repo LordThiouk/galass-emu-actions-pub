@@ -367,6 +367,25 @@ def cleanup_accounts():
     return n_r == 0 and n_d == 0
 
 
+def service_index():
+    """Lecture seule : service du chauffeur 23 (driver/driver-info) et son rang dans
+    la liste des services du passager (dashboard -> data.services, même ordre que l'écran)."""
+    c, d = call("GET", "driver/driver-info", DT)
+    drv = ((d.get("data") or {}).get("driver") or (d.get("data") or {}).get("user") or {}) if isinstance(d, dict) else {}
+    sid = drv.get("service_id")
+    svc = drv.get("service") if isinstance(drv.get("service"), dict) else {}
+    print("DRIVER_SERVICE", "code", c, "id", sid, "name", svc.get("name"), flush=True)
+    c, j = call("GET", "dashboard", RT)
+    services = ((j.get("data") or {}).get("services") or []) if isinstance(j, dict) else []
+    print("RIDER_SERVICES", json.dumps([[s.get("id"), s.get("name")] for s in services if isinstance(s, dict)]), flush=True)
+    for i, s in enumerate(services):
+        if isinstance(s, dict) and sid is not None and str(s.get("id")) == str(sid):
+            print("SERVICE_INDEX", i, s.get("name"), flush=True)
+            return i
+    print("SERVICE_INDEX none", flush=True)
+    return None
+
+
 def pick_ride():
     """Adopt the newest FRESH rider ride (created by the UI), else create one.
 
@@ -915,6 +934,8 @@ if step == "ping":
     call("GET", "general-setting", RT)
 elif step == "reset":
     reset_rides()
+elif step == "service_index":
+    service_index()
 elif step == "cleanup":
     sys.exit(0 if cleanup_accounts() else 4)
 elif step == "pick":
