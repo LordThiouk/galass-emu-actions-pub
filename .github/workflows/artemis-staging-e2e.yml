@@ -45,8 +45,6 @@ jobs:
       OPENAI_BASE_URL: ${{ secrets.FREELLMAPI_BASE_URL }}
       ARTEMIS_DEFAULT_MODEL: ${{ inputs.model }}
       ARTEMIS_USE_USER_DIR: "false"
-      # 3 essais x 120 s max par étape Artemis (run 40825904344: 45 s => rc=124)
-      ARTEMIS_MAX_ATTEMPTS: "3"
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
@@ -209,6 +207,10 @@ jobs:
 
       - name: E2E multistop (Artemis + API fallback)
         timeout-minutes: 100
+        env:
+          # 3 essais x 120 s max par étape Artemis (run 40825904344: 45 s => rc=124).
+          # Step seul : les tests du harnais gardent le défaut (run 40830761993).
+          ARTEMIS_MAX_ATTEMPTS: "3"
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34

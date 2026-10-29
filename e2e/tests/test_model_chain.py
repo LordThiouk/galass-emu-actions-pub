@@ -967,6 +967,8 @@ def test_artemis_run_gets_five_seconds_on_a_short_accept_budget():
     """End-to-end: 22 s over 6 models runs the FIRST attempt with 5 s."""
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-accept-budget-")
     env, _cf, _rt = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:6], timeout="0 0 0")
+    # CI pose ARTEMIS_MAX_ATTEMPTS sur le step e2e : le contrat teste le défaut.
+    env.pop("ARTEMIS_MAX_ATTEMPTS", None)
     proc = run_artemis(env, tmp, tmo="22")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     assert proc.stdout.strip().endswith("RC=0"), proc.stdout
@@ -1010,6 +1012,8 @@ def test_artemis_run_splits_the_step_budget_between_models():
     """200 s over 6 models: the FIRST attempt gets 33 s, not the whole step."""
     tmp = tempfile.mkdtemp(prefix="e2e-artemis-fairshare-")
     env, _cf, _rt = artemis_tree(tmp, FAKE_OK, BASE_CHAIN[:6], timeout="0 0 0")
+    # CI pose ARTEMIS_MAX_ATTEMPTS sur le step e2e : le contrat teste le défaut.
+    env.pop("ARTEMIS_MAX_ATTEMPTS", None)
     proc = run_artemis(env, tmp, tmo="200")
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     log = text(os.path.join(tmp, "run.log"))
