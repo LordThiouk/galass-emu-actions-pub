@@ -501,9 +501,12 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     if x2 <= x1 or y2 <= y1:
         continue
     if norm_attr(attr("text")) == want or norm_attr(attr("content-desc")) == want:
-        best = ((x1 + x2) // 2, (y1 + y2) // 2)
-        break
-print("" if best is None else "%d %d" % best)
+        # Libellé en double (titre « Trouver un chauffeur » + bouton, run 40947672463) :
+        # le noeud cliquable gagne, sinon le plus bas (le bouton suit le titre).
+        rank = (attr("clickable").lower() == "true", y1)
+        if best is None or rank > best[0]:
+            best = (rank, ((x1 + x2) // 2, (y1 + y2) // 2))
+print("" if best is None else "%d %d" % best[1])
 PY
 )
   if [ -z "$res" ]; then
