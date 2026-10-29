@@ -1459,10 +1459,21 @@ PYIDX
   if wait_node rid "service_option_$svc_idx" 10 && tap_node rid "service_option_$svc_idx"; then
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
-    for i in 1 2 3; do
-      has_node re 'Trouver un chauffeur' && break
-      adb shell input swipe 540 1900 540 1000 400 >/dev/null 2>&1; sleep 1
+    RIDER_FIND_TAPPED=0
+    local dec
+    for i in 1 2 3 4 5 6; do
+      ui_xml || { sleep 1; continue; }
+      dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH")
+      log "planb: bouton commande essai $i -> $dec"
+      set -- $dec
+      case "$1" in
+        TAP) adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
+             log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
+        SWIPE) adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
+        *) break ;;
+      esac
     done
+    log "planb: bouton « Trouver un chauffeur » cliquable jamais vu sous la liste"
     return 0
   fi
   log "planb: rid service_option_$svc_idx absent, repli sous « Sélectionnez un service »"
@@ -1487,7 +1498,7 @@ PYIDX
 if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
   STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep '^RIDER_RIDE' | head -5 \
     | while IFS= read -r l; do log "planb: api avant commande: $l"; done
-  if rider_request_ride && tap_when "$RIDER_PKG" "Trouver un chauffeur"; then
+  if rider_request_ride && { [ "${RIDER_FIND_TAPPED:-0}" = 1 ] || tap_when "$RIDER_PKG" "Trouver un chauffeur"; }; then
     log "planb: « Trouver un chauffeur » tapé"
     rider_after_request_diag
     sleep 2
