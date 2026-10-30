@@ -21,14 +21,37 @@ REAL_CARD = (42, 2009, 1038, 2509)  # centre = (540, 2259), haut 500, rognée au
 def test_real_geometry_h500_card_t2259_swipes_above_list():
     """Consigne : geste HORS de la liste, jamais dedans — pas de swipe fixe 1900->1000."""
     r = decide(dump(ROOT_1080, TITLE, node("Svc", "service_option_3", True, REAL_CARD)))
-    assert r == "SWIPE 540 1809 1009", r  # départ = top(2009) - 200, hors padding ListView
+    assert r == "SWIPE 540 1809 1109", r  # départ = top(2009) - 200, hors padding ListView
     start = int(r.split()[2])
     assert not (2009 <= start <= 2509), r  # départ jamais dans les bounds de la liste
 
-def test_swipe_below_list_when_room():
-    lst = node("Svc", "service_option_0", True, (0, 1000, 1080, 1300))
-    r = decide(dump(ROOT_1080, TITLE, lst))
-    assert r == "SWIPE 540 1360 560", r  # sous la liste (bounds 1000..1300), geste vers le haut
+def test_compact_panel_41048460069_never_swipes_the_map():
+    """Run 41048460069 : panneau replié (liste finit à 1820), bouton sous l'écran.
+    Les 6 gestes partaient à y=1880 (sous le panneau, sur la carte) et ne bougeaient
+    rien. Le PREMIER geste doit viser le panneau, pas la carte."""
+    lst = node("Svc", "service_option_3", True, (84, 1422, 996, 1820))
+    first = decide(dump(ROOT_1080, TITLE, lst), attempt=0)
+    assert first == "SWIPE 540 1222 522", first   # au-dessus de la liste (1422-200)
+    y1 = int(first.split()[2])
+    assert y1 < 1422, first                       # jamais sous la liste / sur la carte
+
+def test_attempt_escalates_zones_then_stops():
+    """Même dump : chaque essai change de zone (sinon on répète un geste mort)."""
+    lst = node("Svc", "service_option_3", True, (84, 1422, 996, 1820))
+    d = dump(ROOT_1080, TITLE, lst)
+    seen = [decide(d, attempt=a) for a in range(6)]
+    assert len(set(seen[:2])) == 2, seen          # x=540 puis colonne de marge
+    assert len(set(seen)) >= 3, seen              # au moins 3 zones distinctes
+    for r in seen:
+        if r.startswith("SWIPE"):
+            x, y = int(r.split()[1]), int(r.split()[2])
+            assert not (84 <= x <= 996 and 1422 <= y <= 1820), (r, "geste sur une carte")
+
+def test_swipe_below_list_only_after_above_list():
+    lst = node("Svc", "service_option_0", True, (84, 1000, 996, 1300))
+    assert decide(dump(ROOT_1080, TITLE, lst), attempt=0) == "SWIPE 540 800 180"
+    below = decide(dump(ROOT_1080, TITLE, lst), attempt=2)
+    assert below == "SWIPE 44 1360 660", below     # sous la liste mais colonne de marge
 
 def test_title_only_never_tapped_swipes_above_list():
     r = decide(dump(ROOT_1080, TITLE, LIST))
@@ -45,9 +68,17 @@ def test_clipped_button_never_tapped_pane_scrolls_first():
     assert not decide(dump(ROOT_1080, TITLE, node("Svc", "service_option_3", True, REAL_CARD))).startswith("TAP")
 
 def test_non_clickable_button_below_list_tapped():
+    btn = node("Trouver un chauffeur", b=(40, 2100, 900, 2180))
+    lst = node("Svc", "service_option_0", True, (0, 1100, 1080, 2050))
+    assert decide(dump(ROOT_1080, TITLE, lst, btn)) == "TAP 470 2140"
+
+def test_label_inside_nav_bar_never_tapped():
+    """Un libellé qui tombe dans la barre Accueil/Activité/Menu ne doit JAMAIS
+    être tapé (on changerait d'onglet au lieu de commander)."""
     btn = node("Trouver un chauffeur", b=(40, 2300, 900, 2380))
+    nav = node("Accueil", click=True, b=(81, 2250, 378, 2345))
     lst = node("Svc", "service_option_0", True, (0, 1100, 1080, 2200))
-    assert decide(dump(ROOT_1080, TITLE, lst, btn)) == "TAP 470 2340"
+    assert not decide(dump(ROOT_1080, TITLE, lst, btn, nav)).startswith("TAP")
 
 def test_screen_height_read_from_dump_root():
     """Racine 1600 -> arrête le geste dans l'écran, jamais hors écran ni négatif."""
@@ -58,7 +89,7 @@ def test_screen_height_read_from_dump_root():
 
 def test_no_list_generic_panel_swipe_inside_screen():
     r = decide(dump(ROOT_1080, TITLE))
-    assert r == "SWIPE 540 1880 1080", r  # 80% -> fin 1080, borné
+    assert r == "SWIPE 540 1880 1180", r  # 80% -> geste 700px, borné
 
 def test_no_room_above_list_returns_none():
     """Liste collée au haut : pas de zone panneau exploitable -> NONE, jamais dans la liste."""

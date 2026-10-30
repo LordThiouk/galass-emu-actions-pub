@@ -1492,24 +1492,33 @@ rider_request_ride() {
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
     RIDER_FIND_TAPPED=0
-    local dec dump_fail=0
-    for i in 1 2 3 4 5 6; do
+    # 8 essais, une ZONE DIFFÉRENTE du panneau par essai (find_driver_button.py
+    # --attempt) : run 41048460069, le même geste à y=1880 (sous le panneau, sur
+    # la carte) a tourné 6x sans que l'écran bouge. On prouve le changement par
+    # le hash du dump, et on journalise les tentatives sans effet.
+    local dec dump_fail=0 prev_hash="" unchanged=0
+    for i in 1 2 3 4 5 6 7 8; do
       if ui_xml; then
-        dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH")
-        log "planb: bouton commande essai $i -> $dec"
+        dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH" --attempt $((i-1)))
+        log "planb: bouton commande essai $i/8 -> $dec"
         set -- $dec
         case "$1" in
           TAP) adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
                log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
-          SWIPE) log "planb: pan défile (geste hors liste service_option_*) $2 $3->$4"
+          SWIPE) log "planb: pan défile (geste hors des cartes service_option_*) $2 $3->$4"
                  adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
           *) break ;;
         esac
       else
         dump_fail=$((dump_fail+1)); sleep 1
       fi
+      if [ -n "$prev_hash" ] && [ "$prev_hash" = "$UI_DUMP_HASH" ]; then
+        unchanged=$((unchanged+1)); log "planb: écran inchangé après le geste (essai $i/8)"
+      fi
+      prev_hash="$UI_DUMP_HASH"
     done
-    log "planb: bouton « Trouver un chauffeur » jamais tapé (dumps indisponibles: ${dump_fail}/6)"
+    log "planb: bouton « Trouver un chauffeur » jamais tapé (dumps indisponibles: ${dump_fail}/8, gestes sans effet: ${unchanged})"
+    diag_capture buttonfail >/dev/null 2>&1 || true
     return 0
   fi
   log "planb: rid service_option_$svc_idx absent, repli sous « Sélectionnez un service »"

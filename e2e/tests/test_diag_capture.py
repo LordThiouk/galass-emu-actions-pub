@@ -266,6 +266,20 @@ def test_run_wireard_request_ride_has_diag_service_and_fresh_reparse():
 
 
 @case
+def test_button_loop_escalates_and_proves_screen_change():
+    """Run 41048460069 : 6 gestes identiques (y=1880, sous le panneau) sans effet.
+    La boucle doit passer un essai par geste (zones différentes), prouver le
+    changement par le hash du dump, et laisser un dump si le bouton reste caché."""
+    text = run_text()
+    body = text[text.index("rider_request_ride() {"):]
+    body = body[:body.index('\nif [ "${RIDE_SOURCE_FORCE_API')]
+    assert "for i in 1 2 3 4 5 6 7 8; do" in body, body
+    assert 'find_driver_button.py "$UI_XML_PATH" --attempt $((i-1))' in body, body
+    assert "UI_DUMP_HASH" in body and "écran inchangé" in body, body
+    assert "diag_capture buttonfail" in body, body
+
+
+@case
 def test_service_card_index_is_fresh_function():
     text = run_text()
     start = text.index("rider_service_card_idx() {")
