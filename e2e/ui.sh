@@ -594,6 +594,80 @@ wait_node() {
   return 1
 }
 
+# --- robustesse d'écran (run 40971308162) -------------------------------------
+# destination_input introuvable et carte « Voiture » absente en même temps n'était
+# pas un bug du dump : un écran intermédiaire (permission, géolocalisation) masque
+# le formulaire, ou le panneau n'a pas fini son animation de layout (formulaire
+# rendu dans la MOITIÉ BASSE). Avant toute recherche d'identifiant : accorder les
+# permissions, fermer les overlays, attendre que l'écran soit STABLE, relire le
+# XML frais, puis défiler si le noeud manque. Aucune liste d'écrans en dur,
+# aucun critère "ça devrait être là" : le XML frais est la preuve, à chaque essai.
+
+# dismiss_permission_dialog : accorde un dialogue de permission Android visible
+# (position) au lieu d'un BACK qui REFUSERAIT — l'app resterait alors dégradée
+# pour tout le reste du run. Seuls les boutons d'ACCORD français/anglais sont
+# tapés ; les libellés de refus ne le sont jamais. 0 si au moins un accord, 1 sinon.
+# Détection de présence SANS dump supplémentaire : dans le XML les apostrophes
+# peuvent être échappées (&#39;) brutes ou plates, on filtre les deux formes.
+dismiss_permission_dialog() {
+  ui_xml || return 1
+  grep -qiE "Pendant l&#39;utilisation|Pendant l'utilisation|[Ww]hile using the app|[Uu]niquement cette fois|[Oo]nly this time" "$UI_XML_PATH" 2>/dev/null || return 1
+  local granted=0 lab
+  for lab in "Pendant l'utilisation de l'appli" "While using the app" "Uniquement cette fois" "Only this time"; do
+    if tap_exact "$lab"; then
+      granted=1
+      _ulog "dismiss_permission_dialog: permission accordée ('$lab')"
+      sleep "${OVERLAY_SETTLE_SEC:-1}"
+    fi
+  done
+  [ "$granted" = 1 ]
+}
+
+# ui_settle [tmo] : écran PRÊT pour une recherche de noeud — overlay système fermé,
+# permission accordée, écran STABLE (deux dumps consécutifs de même hash, donc
+# plus de transition/animations). Borné (défaut 8 s) : au terme du budget on
+# poursuit avec le dernier dump — un écran vivant (ETA, distance) n'est pas un
+# échec. Aucune relance d'app ici. rc 0 = dump frais en main, 4 = aucun dump.
+UI_SETTLE_TMO="${UI_SETTLE_TMO:-8}"
+ui_settle() {
+  local tmo="${1:-$UI_SETTLE_TMO}" t0=$SECONDS h1="" h2="" ok=1
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    close_system_overlay >/dev/null 2>&1 || true
+    dismiss_permission_dialog >/dev/null 2>&1 || true
+    ui_xml && { ok=0; h1="$UI_DUMP_HASH"; [ -n "$h2" ] && [ "$h1" = "$h2" ] && return 0; h2="$h1"; }
+    sleep 1
+  done
+  [ "$ok" = 0 ] && { _ulog "ui_settle: écran jamais stable (${tmo}s) — poursuite avec le dernier dump"; return 0; }
+  _ulog "ui_settle: aucun dump valable en ${tmo}s"
+  return 4
+}
+
+# diag_capture tag : capture d'écran + dump XML pour l'artefact NON CHIFFRÉ de
+# GitHub (le dépôt est public : AUCUN secret ne part). Le XML est SANITISÉ
+# (emails, jetons, OTP, numéros -> [REDACTED]) ; la capture ne sert qu'aux écrans
+# demandés (formulaire d'adresse, panneau service — aucune donnée personnelle).
+# Fichiers : $OUT/diag/diag-<tag>.{png,xml}. Erreurs ignorées : le diagnostic ne
+# doit jamais faire échouer une étape.
+diag_capture() {
+  local tag="$1"
+  local base="diag-$tag"
+  mkdir -p "$OUT/diag"
+  adb exec-out screencap -p > "$OUT/diag/$base.png" 2>/dev/null || true
+  if ui_xml && cp -f "$UI_XML_PATH" "$OUT/diag/$base.xml" 2>/dev/null; then
+    python3 - "$OUT/diag/$base.xml" <<'PYDIAG'
+import re, sys
+p = sys.argv[1]
+x = open(p, encoding="utf-8", errors="replace").read()
+x = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+", "[EMAIL]", x)
+x = re.sub(r"(?i)\b(bearer|token|authorization|password|otp|api[_-]?key)\b[^\"<>]*", r"\1=[REDACTED]", x)
+x = re.sub(r"[A-Za-z0-9+/=_-]{24,}", "[REDACTED]", x)
+x = re.sub(r"\+?221[ \-.]?[0-9][0-9 \-.]{6,}[0-9]", "[PHONE]", x)
+open(p, "w", encoding="utf-8", errors="replace").write(x)
+PYDIAG
+  fi
+  _ulog "diag: $base (png $(wc -c < "$OUT/diag/$base.png" 2>/dev/null || echo 0)B, xml $(wc -c < "$OUT/diag/$base.xml" 2>/dev/null || echo 0)B)"
+}
+
 # planb_pick_place pkg open_label query result_regex : plan B RÉEL d'un choix de lieu.
 # 1 tap sur open_label · 2 tap sur le champ (EditText) · 3 `input text` de query ·
 # 4 attente d'un résultat qui matche result_regex puis tap · 5 « Confirmer le lieu ».
@@ -666,12 +740,26 @@ planb_pick_place() {
   sleep "${PLANB_SETTLE:-2}"
   ok=1
   if [ -n "$input_rid" ]; then
+    # Robustesse (run 40971308162 : destination_input introuvable 3x) — le formulaire
+    # peut être masqué par un écran intermédiaire (permission, géolocalisation) ou
+    # rendu dans la moitié basse pendant son animation. Boucle : écran STABLE +
+    # permission accordée + reparse FRAIS + tap, puis re-tap du picker si l'écran
+    # ouvert a disparu, ou défile si le picker est là mais le champ sous la plie.
+    local open_esc
+    open_esc=$(printf '%s' "$open" | sed -e 's/[][\\.(){}*+?^$|]/\\&/g')
     t1=$SECONDS
-    while [ $((SECONDS - t1)) -lt 10 ]; do
+    while [ $((SECONDS - t1)) -lt "${PLANB_INPUT_TMO:-30}" ]; do
+      ui_settle >/dev/null 2>&1 || true
       tap_node rid "$input_rid" && { ok=0; _ulog "planb: $input_rid tapé"; break; }
+      if has_node re "$open_esc"; then
+        _ulog "planb: $input_rid introuvable, picker présent — défile et reparse"
+        adb shell input swipe 540 1500 540 700 400 >/dev/null 2>&1 || true
+      else
+        _ulog "planb: $input_rid introuvable, picker fermé — re-tap '$open'"
+        tap_when "$pkg" "$open" >/dev/null 2>&1 || true
+      fi
       sleep 1
     done
-    # rid demandé : jamais de repli sur le premier EditText (le picker destination en a deux).
     [ "$ok" -eq 0 ] || { _ulog "planb: échec étape 2 (rid $input_rid introuvable — repli EditText interdit)"; planb_evidence "$query" noinput; return 2; }
   else
     tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }

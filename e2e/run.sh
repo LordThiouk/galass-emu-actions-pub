@@ -1337,6 +1337,9 @@ planb_step() {
 
 PLANB_OPEN_RID= PLANB_INPUT_RID=destination_input planb_step rider-destination "Où allez-vous ?" "$PLANB_DEST_QUERY" "$PLANB_DEST_WANT" \
   "Open the Galass Rider app. On the home screen choose the destination \"$PLANB_DEST_QUERY\" (search it if needed) and return to the ride summary. Do not add stops yet." 360
+# Artefact NON CHIFFRÉ (run 40971308162 : destination_input introuvable, formulaire
+# rendu dans la moitié basse) — dump XML sanitisé + capture, quel que soit le verdict.
+diag_capture destination >/dev/null 2>&1 || true
 cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
 
 # 16 : picker ouvert par « Ajouter un arrêt » — preuve AVANT la saisie du stop 1.
@@ -1419,6 +1422,22 @@ for v in seen[:25]:
   print(v[:90])
 PYDIAG
 }
+# rider_service_card_idx : index de la carte « Voiture » sur un dump FRAIS.
+# usage : idx=$(rider_service_card_idx) — "" si introuvable, 4 si dump indisponible.
+# Le noeud service_option_N fusionne nom + description : « Voiture Course CFA... ».
+# Premier mot exactement « Voiture » (pas « Economie voiture/... », pas « Voitures de luxe »).
+rider_service_card_idx() {
+  ui_xml || return 4
+  python3 - "$UI_XML_PATH" <<'PYIDX'
+import html, re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for t in re.findall(r"<node\b[^>]*>", xml):
+    rid = re.search(r'resource-id="service_option_(\d+)"', t)
+    txt = html.unescape(" ".join(re.findall(r'(?:text|content-desc)="([^"]*)"', t))).strip()
+    if rid and re.match(r"Voiture\b(?!s)", txt):
+        print(rid.group(1)); break
+PYIDX
+}
 rider_request_ride() {
   local i res
   bring_fg "$RIDER_PKG" || true
@@ -1439,24 +1458,37 @@ rider_request_ride() {
   else
     svc_name="Voiture"
   fi
-  [ -n "$svc_idx" ] || svc_idx=$(ui_xml && python3 - "$UI_XML_PATH" <<'PYIDX'
-import html, re, sys
-xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-# Le noeud service_option_N fusionne nom + description : « Voiture Course CFA... ».
-# Premier mot exactement « Voiture » (pas « Economie voiture/... », pas « Voitures de luxe »).
-for t in re.findall(r"<node\b[^>]*>", xml):
-    rid = re.search(r'resource-id="service_option_(\d+)"', t)
-    txt = html.unescape(" ".join(re.findall(r'(?:text|content-desc)="([^"]*)"', t))).strip()
-    if rid and re.match(r"Voiture\b(?!s)", txt):
-        print(rid.group(1)); break
-PYIDX
-)
+  [ -n "$svc_idx" ] || svc_idx=$(rider_service_card_idx)
   if [ -z "$svc_idx" ]; then
     log "planb: carte « Voiture » introuvable par texte, rang API utilisé"
     svc_idx=$drv_idx
   fi
   svc_idx=${svc_idx:-0}
-  if wait_node rid "service_option_$svc_idx" 10 && tap_node rid "service_option_$svc_idx"; then
+  # Artefact NON CHIFFRÉ (run 40971308162 : carte « Voiture » absente du dump) —
+  # dump XML sanitisé + capture du panneau service, quel que soit le verdict.
+  diag_capture service >/dev/null 2>&1 || true
+  # Robustesse (run 40971308162 : carte « Voiture » absente du dump, 4x) : écran
+  # STABLE + permission accordée, relecture de l'index sur un dump FRAIS (quand le
+  # service visé est « Voiture »), tap par rid ; défile et reparse si la carte
+  # manque. Après 4 essais, repli texte sous « Sélectionnez un service ».
+  local si fresh card_tap=0
+  if [ "$svc_name" = "Voiture" ]; then
+    fresh=$(rider_service_card_idx) && [ -n "$fresh" ] && svc_idx=$fresh
+  fi
+  for si in 1 2 3 4; do
+    ui_settle >/dev/null 2>&1 || true
+    if [ "$svc_name" = "Voiture" ]; then
+      fresh=$(rider_service_card_idx) && { [ -n "$fresh" ] && [ "$fresh" != "$svc_idx" ] \
+        && { svc_idx=$fresh; log "planb: rang carte Voiture relu sur dump frais = $fresh"; }; }
+    fi
+    if wait_node rid "service_option_$svc_idx" 6 && tap_node rid "service_option_$svc_idx"; then
+      card_tap=1; break
+    fi
+    log "planb: service_option_$svc_idx absent (essai $si/4) — écran relu, défile, reparse"
+    adb shell input swipe 540 1700 540 900 400 >/dev/null 2>&1 || true
+    sleep 1
+  done
+  if [ "$card_tap" = 1 ]; then
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
     RIDER_FIND_TAPPED=0

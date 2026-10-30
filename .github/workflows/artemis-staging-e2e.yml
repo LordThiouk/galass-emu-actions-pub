@@ -239,6 +239,24 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with: {name: staging-e2e-smoke-log, path: e2e/smoke.log, retention-days: 7, if-no-files-found: warn}
+      - name: Contrôle anti-fuite des diagnostics (AUCUN secret dans l'artefact public)
+        if: always()
+        run: |
+          # Le dépôt est PUBLIC : l'artefact diag passe une garde mécanique, en plus
+          # de la sanitisation côté code (e2e/ui.sh diag_capture). Pattern revu :
+          # emails, jetons longs, base64, numéros 221xxxxxxx — chaque hit retire le
+          # fichier de l'artefact et pose un warning visible dans le run.
+          if [ ! -d e2e-out/diag ]; then echo "aucun diag produit"; exit 0; fi
+          if grep -rlIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9+/=]{32,}|221[0-9][0-9 ]{7,}' e2e-out/diag; then
+            echo "::warning::fichiers suspectés de porter un secret — retirés de l'artefact"
+            grep -rlIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9+/=]{32,}|221[0-9][0-9 ]{7,}' e2e-out/diag | xargs -r rm -f
+          else
+            echo "garde anti-fuite : 0 hit"
+          fi
+      - name: Diagnostics écran destination/service (dump XML + capture, non chiffré)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: staging-e2e-diagnostics, path: e2e-out/diag, retention-days: 7, if-no-files-found: warn}
       - name: Résumé (PASS/FAIL seulement)
         if: always()
         run: |

@@ -61,9 +61,13 @@ BASELINE_STEPS = [
     "name: Chiffrer les preuves",
     "uses: actions/upload-artifact@v4",
     "name: Publier le smoke log (masqué)",
+    # Ajoutés après l'install scrcpy (artefact diag non chiffré, run 40971308162) :
+    # ce sont désormais des ancres préexistantes, pas des extraits de ce changement.
+    "name: Contrôle anti-fuite des diagnostics (AUCUN secret dans l'artefact public)",
+    "name: Diagnostics écran destination/service (dump XML + capture, non chiffré)",
     "name: Résumé (PASS/FAIL seulement)",
 ]
-BASELINE_COUNT = len(BASELINE_STEPS)  # 20
+BASELINE_COUNT = len(BASELINE_STEPS)  # 22 (20 d'origine + les 2 étapes diag)
 EMULATOR_MARK = "reactivecircus/android-emulator-runner"
 RELEASE_MARK = "github.com/Genymobile/scrcpy/releases/download"
 FLOOR_MAJOR = 3  # --capture-orientation / --video-bit-rate appear in scrcpy v3.0
