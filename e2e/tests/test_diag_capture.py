@@ -64,7 +64,7 @@ PICKER_NOINPUT = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 # Champ revenu (formulaire haut de page) : destination_input + suggestion Places + bouton.
 PICKER_INPUT = re.sub(
     r"\n.*Lieu de prise en charge.*\n",
-    '\n    <node index="2" text="" content-desc="" class="android.widget.EditText" '
+    '\n    <node index="2" text="Point E Dakar" content-desc="" class="android.widget.EditText" '
     'resource-id="destination_input" visible-to-user="true" bounds="[100,400][900,500]" />\n'
     '    <node index="4" text="" content-desc="Point E, Dakar, Sénégal" '
     'resource-id="place_prediction_0" visible-to-user="true" bounds="[100,600][900,700]" />\n'

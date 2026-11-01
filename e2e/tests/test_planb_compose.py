@@ -35,7 +35,7 @@ PICKER = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
   <node index="0" text="" content-desc="" class="android.widget.FrameLayout" visible-to-user="true" bounds="[0,0][1080,2400]">
     <node index="1" text="Où allez-vous ?" content-desc="" class="android.view.View" visible-to-user="true" bounds="[100,200][900,300]" />
-    <node index="2" text="" content-desc="" class="android.widget.EditText" visible-to-user="true" bounds="[100,400][900,500]" />
+    <node index="2" text="Point E Dakar" content-desc="" class="android.widget.EditText" visible-to-user="true" bounds="[100,400][900,500]" />
     <node index="3" text="" content-desc="Point E, Dakar, Sénégal" class="android.view.View" visible-to-user="true" bounds="[100,600][900,700]" />
     <node index="4" text="" content-desc="Confirmer le lieu" class="android.widget.Button" visible-to-user="true" bounds="[100,2200][900,2300]" />
   </node>

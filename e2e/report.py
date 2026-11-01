@@ -12,8 +12,10 @@ Rules
   * a P0 UI point with no MATCH capture is FAIL, even if a row claimed PASS
   * a capture with no usable PNG, an empty-file hash, or the wrong foreground
     app is INVALID and cannot close a P0 point
-  * a capture whose dump repeats an earlier capture is FAIL "duplicate-state"
-    (the stale-dump false positive) unless it is the explicit revisited pair
+  * a capture whose dump or masked-label signature repeats an earlier capture
+    is FAIL "duplicate-state" when the pixels are also identical; with different
+    pixels (live drift) it degrades to WARN "duplicate-signature" — never the
+    revisited pair
   * B2 needs two distinct Driver captures (offer vs in-ride), else FAIL
 """
 import argparse
@@ -149,36 +151,52 @@ def _revisited(prev_point, point):
 
 
 def check_distinct(sidecars):
-    """B5: same pixels (or same app + same labels + same node count) is a lie.
+    """B5: same pixels is a lie — only the explicit revisited-screen pair is exempt.
 
-    A '-' clause is a reason to expect different labels, never a licence to reuse
-    the same pixels; only the explicit revisited-screen pair is exempt.
+    Calibration (run 41268901501, 5 phantom FAILs): the masked-label signature
+    (digits -> '#') deliberately absorbs ticking-counter drift, so it collides for
+    live screens whose only real differences are digits («12 min»/«13 min»,
+    «Arrêt 1»/«Arrêt 2») — plus identical node counts on static layouts. That is a
+    duplicate *signature*, not duplicate evidence. Verdict now follows pixels:
+    identical png_sha256 = same state, two claims = lie -> FAIL; different png =
+    live drift (animation, ticking, camera) between two real captures -> WARN row,
+    kept visible in the summary.
     """
     duplicates, seen, sig_seen = [], {}, {}
+
+    def dup(name, point, prev_name, signal, cap, prev):
+        same_png = (cap.get("png_sha256") or "") == (prev.get("png_sha256") or "")
+        duplicates.append({
+            "name": name, "point": point, "duplicate_of": prev_name,
+            "signal": signal, "result": "FAIL" if same_png else "WARN",
+            "detail": (f"duplicate-state: pixels identiques ({signal}) à {prev_name}"
+                       if same_png else
+                       f"duplicate-signature: {signal} identiques à {prev_name} "
+                       f"mais pixels différents (png sha) — écrans vivants distincts"),
+        })
+
     for cap in sidecars:
         if cap.get("status") != "MATCH":
             continue
         point = cap.get("point") or ""
         digest = cap.get("dump_sha256") or ""
         if digest and digest in seen:
-            prev_name, prev_point = seen[digest]
+            prev_name, prev_point = seen[digest]["prev"]
             if not _revisited(prev_point, point):
-                duplicates.append({"name": cap["name"], "point": point,
-                                   "duplicate_of": prev_name, "signal": "dump"})
+                dup(cap["name"], point, prev_name, "dump", cap, seen[digest]["cap"])
         if digest:
-            seen.setdefault(digest, (cap["name"], point))
+            seen[digest] = {"prev": (cap["name"], point), "cap": cap}
         labels = [l for l in (cap.get("labels") or []) if str(l).strip()]
         if labels:
             sig = (cap.get("fg_pkg") or "",
                    tuple(sorted({_norm_label(l) for l in labels})),
                    int(cap.get("node_count") or 0))
             if sig in sig_seen:
-                prev_name, prev_point = sig_seen[sig]
+                prev_name, prev_point = sig_seen[sig]["prev"]
                 if (not _revisited(prev_point, point)
                         and not any(d["name"] == cap["name"] for d in duplicates)):
-                    duplicates.append({"name": cap["name"], "point": point,
-                                       "duplicate_of": prev_name, "signal": "labels"})
-            sig_seen.setdefault(sig, (cap["name"], point))
+                    dup(cap["name"], point, prev_name, "labels", cap, sig_seen[sig]["cap"])
+            sig_seen[sig] = {"prev": (cap["name"], point), "cap": cap}
     return duplicates
 
 
@@ -461,7 +479,8 @@ def build(out_dir, p0=None):
     duplicates = check_distinct(sidecars)
     for dup in duplicates:
         if dup["point"]:
-            _upsert(points, dup["point"], "FAIL",
+            _upsert(points, dup["point"], dup.get("result", "FAIL"),
+                    dup.get("detail") or
                     f"duplicate-state: {dup.get('signal', 'dump')} identical to "
                     f"{dup['duplicate_of']}")
 
@@ -592,7 +611,9 @@ def build(out_dir, p0=None):
                           f"({len(artemis['latency_floor_refused'])})"]
     if duplicates:
         lines += ["", "## Duplicate captures", ""]
-        lines += [f"- {d['name']} repeats {d['duplicate_of']}" for d in duplicates]
+        lines += [f"- {d['name']} repeats {d['duplicate_of']}"
+                  f" -> {d.get('result', 'FAIL')} ({d.get('signal', '?')})"
+                  for d in duplicates]
     if flags:
         lines += ["", "## UI flags", ""]
         lines += [f"- {k}={v}" for k, v in sorted(flags.items())]

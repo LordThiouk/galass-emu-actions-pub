@@ -130,10 +130,15 @@ MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vou
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
 # B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
 # Un libellé présent dès l'écran précédent (« Arrêt 1 », « Destination ») ne prouve rien.
-MARK_rider_running_start='+En course|Terminez votre course|-Arrêt 1|-Chargement'
-MARK_rider_stop1_active='+Arrêt en cours|En route vers|ETA|\bmin\b|-Arrêt 1'
-MARK_rider_stop1_done='+2/2|1/2 terminé|Arrêt 1\s+terminé|-Chargement'
-MARK_rider_stop2_done='+Vous êtes arrivé|Payer maintenant|Facture à payer|-Chargement'
+# Marqueurs alignés sur my_strings.dart des APK CI (runs 41268901501/41263271208 :
+# des libellés fictifs — « Je suis arrivé » chauffeur, « Terminer l'arrêt », « 2/2 »,
+# « En course » rider — faisaient TIMEOUT des points malgré des écrans honnêtes).
+MARK_rider_running_start='+En cours|Terminez votre course|-Arrêt 1|-Chargement'
+# F4-17 : la timeline rider s'effondre sur la JAMBE ACTIVE (pas le parcours
+# complet) — « Arrêt 1 » visible jambes 1, « Arrêt 2 » seulement jambes 2.
+MARK_rider_stop1_active='+Arrivée estimée|\bmin\b|Terminez votre course|-Chargement'
+MARK_rider_stop1_done='+Arrêt 2|-Chargement|+Arrivée estimée|un instant'
+MARK_rider_stop2_done='+Destination|-Chargement|+Arrivée estimée|un instant'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
@@ -143,13 +148,21 @@ MARK_rider_home_after='+Où allez-vous|+Partons pour une course|-Course terminé
 MARK_driver_offer_with_stops='+Accepter\s+la\s+course|+REFUSER|+Prix recommandé|+Consignes du client'
 MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
 # B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
-MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
-MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|+Terminer l.arrêt|Confirmer l.arrêt|\b1\s*/\s*2\b'
-MARK_driver_stop1_done='+2/2|Arrêt 2|-Arrêt 1|-Accepter\s+la\s+course'
-MARK_driver_stop2_done='+2/2|Arrivée|Vous êtes arrivé|-Accepter\s+la\s+course'
+# « Prise en charge du client » = CTA running ; la bande haute « Tu es arrivé à
+# destination » est affichée pendant TOUTE la course (banner non-completed) —
+# elle ne prouve pas la transition, jamais un signe d'arrivée seule.
+MARK_driver_pickup_arrived='+Prise en charge du client|-Accepter\s+la\s+course'
+# CTA arrêt = « Confirmer l'arrêt » (confirmStop) ; la fin = « Terminer la course »
+# (endRide) — « Terminer l'arrêt » n'existe pas dans l'APK.
+MARK_driver_running_stop1='+Confirmer l.arrêt|-Accepter\s+la\s+course'
+# F4-17 : jambe active seule visible. stop1-done = « Arrêt 2 » ET ETA ; stop2-done
+# (init Destination) = Terminer actif ET ETA ET Confirmer GONE — rejette RUNNING
+# (ETA présente) comme le stop1-done (Confirmer visible).
+MARK_driver_stop1_done='+Arrêt 2|-Arrêt\s+1|+Arrivée estimée|un instant'
+MARK_driver_stop2_done='+Terminer la course|-Confirmer l.arrêt|+Arrivée estimée|un instant|-Arrêt\s+1|-Accepter\s+la\s+course'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
-MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
-MARK_driver_summary='+Gains|Résumé|Activité|-Reçois\s+le\s+paiement'
+MARK_driver_cash_confirmed='+Tarif de la course|+Distance|-Confirmer\s+le\s+paiement|-Reçois\s+le\s+paiement|-En attente du paiement'
+MARK_driver_summary='+Course terminée|+Avis|-Reçois\s+le\s+paiement'
 # Non-P0 captures (same table, same rules).
 MARK_driver_home_online='+En ligne'
 # S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
@@ -1996,9 +2009,20 @@ adb emu geo fix -17.4467 14.6928 >/dev/null 2>&1 || true
 api loc_dest >> "$OUT/run.log" 2>&1
 bring_fg "$DRIVER_PKG" || true
 if tap_exact "Terminer la course"; then
-  bring_fg "$RIDER_PKG" || true
-  if wait_ui "$RIDER_PKG" 25 "$MARK_rider_destination_arrived"; then
-    UI_END=1; log "fin par l'UI chauffeur (écran rider prouvé)"
+  # Traverse d'état (run 41268901501) : un tap exécuté sur un bouton inerte
+  # renvoie rc=0 ; l'alerte rider « Vous êtes arrivé à destination » peut même
+  # déjà flotter pendant l'arrivée à l'arrêt final. La preuve de fin = le moteur
+  # backend a traversé status->1, sinon repli API end (preuve HTTP de crossing).
+  END_CROSSED=0; t_end=$SECONDS
+  while [ $((SECONDS - t_end)) -lt 25 ]; do
+    ride_state >/dev/null 2>&1 || true
+    if grep -qE 'status=1($|[[:space:].])' "$OUT/last-ride-state.txt" 2>/dev/null; then
+      END_CROSSED=1; break
+    fi
+    sleep 4
+  done
+  if [ "$END_CROSSED" = "1" ]; then
+    UI_END=1; log "fin par l'UI chauffeur (status=1 backend prouvé)"
   else
     mark rider-destination-arrived FAIL "api fallback: end"
     api end >> "$OUT/run.log" 2>&1
@@ -2007,7 +2031,19 @@ else
   mark rider-destination-arrived FAIL "api fallback: end"
   api end >> "$OUT/run.log" 2>&1
 fi
-ride_state
+# Guarde honnête : l'alerte rider peut matcher le marqueur sans fin enregistrée.
+# Sans traverse d'état (status=1), cap 25 ne peut pas écrire un PASS crédible.
+RIDE_END_STATE=0; t_end=$SECONDS
+while [ $((SECONDS - t_end)) -lt 15 ]; do
+  ride_state >/dev/null 2>&1 || true
+  grep -qE 'status=1($|[[:space:].])' "$OUT/last-ride-state.txt" 2>/dev/null && { RIDE_END_STATE=1; break; }
+  sleep 3
+done
+if [ "$RIDE_END_STATE" != "1" ]; then
+  mark rider-destination-arrived FAIL "end pas traversé (status!=1) — voir $OUT/state.json"
+else
+  ride_state
+fi
 bring_fg "$RIDER_PKG" || true
 cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
@@ -2054,9 +2090,23 @@ fi
 CASH_UI_OK=0
 if [ "$CASH_REQUESTED" = "1" ]; then
   if tap_exact "Confirmer le paiement"; then
-    if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
+    # Traverse d'état (run 41268901501) : le tap peut fermer le dialogue sans
+    # que acceptCashPayment ne soit accepté côté backend — l'écran « suivant »
+    # du marqueur reste l'écran des détails, déjà visible avant le confirm.
+    # Succès UI = payment_status a traversé 3 -> 1, prouvé par ride_state.
+    CASH_CROSS_OK=0; t_cash=$SECONDS
+    while [ $((SECONDS - t_cash)) -lt 25 ]; do
+      ride_state >/dev/null 2>&1 || true
+      if grep -qE 'payment_status=1($|[[:space:].])' "$OUT/last-ride-state.txt" 2>/dev/null; then
+        CASH_CROSS_OK=1; break
+      fi
+      sleep 4
+    done
+    if [ "$CASH_CROSS_OK" = "1" ]; then
       UI_CASH=1; CASH_UI_OK=1
-      log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
+      log "cash confirmé par l'UI chauffeur (payment_status=1 backend prouvé)"
+    else
+      log "cash: tap botte sans traverse d'état (payment_status!=1 après 25s) — repli API"
     fi
   fi
   if [ "$CASH_UI_OK" != "1" ]; then

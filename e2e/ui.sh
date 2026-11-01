@@ -755,6 +755,67 @@ rider_ui_login() {
   return 0
 }
 
+# planb_field_contains query : le champ actif (EditText) d'un dump frais contient
+# la requête ? Lecture DIRECTE de l'attribut text -- la seule preuve de saisie
+# (le texte tapé ne prouve pas ce que le champ a retenu, run 41268901501 :
+# « Fann » saisi, « Fan » retenu). rc 0 = contenu prouvé, 1 = dump/champ absents
+# ou contenu différent.
+planb_field_contains() {
+  local query="$1"
+  ui_xml >/dev/null 2>&1 || return 1
+  "$PY" - "$UI_XML_PATH" "$query" <<'PY' 2>/dev/null
+import sys
+import xml.etree.ElementTree as ET
+path, query = sys.argv[1], sys.argv[2].strip().casefold()
+try:
+    root = ET.parse(path).getroot()
+except Exception:
+    sys.exit(1)
+for node in root.iter("node"):
+    if "EditText" in (node.get("class") or ""):
+        if query in (node.get("text") or "").strip().casefold():
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# planb_type query : saisie robuste dans le champ actif. Passe rapide = un seul
+# `input text` ; on RELIT alors le champ (planb_field_contains). Content
+# incomplet -> effacement (DEL répétés, curseur en fin de champ) puis passe
+# lente caractère par caractère avec pause clavier ; les IME épurés perdent
+# encore des événements quand tout part en un seul batch. rc 0 = la requête est
+# dans le champ (lisible), 3 = impossible après les deux passes.
+planb_type() {
+  local query="$1" enc c i pass=0 dels="${PLANB_TYPE_DEL:-25}"
+  _ulog "planb: type '$query'"
+  for pass in 0 1; do
+    if [ "$pass" = "0" ]; then
+      enc=$(printf '%s' "$query" | sed 's/ /%s/g')
+      adb shell input text "$enc" >/dev/null 2>&1 || true
+    else
+      for ((i = 0; i < ${#query}; i++)); do
+        c="${query:$i:1}"
+        enc=$(printf '%s' "$c" | sed 's/ /%s/g')
+        adb shell input text "$enc" >/dev/null 2>&1 || true
+        sleep "${PLANB_TYPE_CHAR_WAIT:-0.15}"
+      done
+    fi
+    sleep 1
+    planb_field_contains "$query" && { _ulog "planb: type: contenu du champ prouvé (pass $pass)"; return 0; }
+    _ulog "planb: type pass $pass: '$query' pas dans le champ — efface et retape"
+    # curseur en fin de champ? selection-end puis DEL x n : sélection d'abord via
+    # keyevent 123 (END); les retenues d'autofill se désactivent en supprimant
+    # caractère par caractère
+    adb shell input keyevent 123 >/dev/null 2>&1 || true
+    for ((i = 0; i < dels; i++)); do
+      adb shell input keyevent 67 >/dev/null 2>&1 || true
+    done
+    sleep 1
+  done
+  _ulog "planb: type: échec des deux passes ('$query' jamais lu dans le champ)"
+  return 3
+}
+
 planb_pick_place() {
   # open_rid / input_rid (optionnels) : Semantics(identifier) Flutter -> resource-id
   # (add_stop, stop_input_N). Repli libellé / premier EditText pour les anciens APK.
@@ -798,9 +859,7 @@ planb_pick_place() {
     tap_node class EditText || { _ulog "planb: échec étape 2 (champ de saisie introuvable)"; return 2; }
   fi
   sleep 1
-  enc=$(printf '%s' "$query" | sed 's/ /%s/g')
-  adb shell input text "$enc" >/dev/null 2>&1 || { _ulog "planb: échec étape 3 (input text)"; return 3; }
-  _ulog "planb: saisi '$query'"
+  planb_type "$query" || { _ulog "planb: échec étape 3 (saisie jamais relue dans le champ)"; return 3; }
   planb_evidence "$query"
   # Le champ lui-même contient la requête : on attend un noeud NON EditText (une
   # suggestion Places), en sondant jusqu'à PLANB_RESULT_TMO.

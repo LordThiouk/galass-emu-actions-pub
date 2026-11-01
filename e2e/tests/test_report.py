@@ -147,9 +147,9 @@ def test_duplicate_dump_without_negative_spec_is_fail():
 
     caps = [
         {"name": "14-rider-home", "point": "rider-home-loaded", "marker": "+Où allez-vous|-Chargement",
-         "dump_sha256": "same"},
+         "dump_sha256": "same", "png_sha256": "same"},
         {"name": "22-rider-stop1-active", "point": "rider-stop1-active", "marker": "+Arrêt 1",
-         "dump_sha256": "same"},
+         "dump_sha256": "same", "png_sha256": "same"},
     ]
     out = make_out([("rider-home-loaded", "PASS", "ok"), ("rider-stop1-active", "PASS", "ok")], caps)
     res = report.build(out, p0={"rider-home-loaded", "rider-stop1-active"})
@@ -168,9 +168,9 @@ def test_duplicate_dump_with_negative_spec_still_fails():
 
     caps = [
         {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
-         "marker": "+Arrêt en cours|-Arrêt 1", "dump_sha256": "same"},
+         "marker": "+Arrêt en cours|-Arrêt 1", "dump_sha256": "same", "png_sha256": "same"},
         {"name": "23-rider-stop1-done", "point": "rider-stop1-done",
-         "marker": "+2/2|-Destination", "dump_sha256": "same"},
+         "marker": "+2/2|-Destination", "dump_sha256": "same", "png_sha256": "same"},
     ]
     out = make_out([("rider-stop1-active", "PASS", "ok"), ("rider-stop1-done", "PASS", "ok")], caps)
     res = report.build(out, p0={"rider-stop1-active", "rider-stop1-done"})
@@ -200,16 +200,17 @@ def test_revisited_screen_pair_is_allowlisted():
 
 @case
 def test_label_signature_duplicate_detected():
-    """B5 secondary signal: same app + same visible labels + same node count is a
-    duplicate even when the dump bytes drifted (timestamps, ids)."""
+    """B5 secondary signal: same app + same visible labels + same node count AND
+    same pixels (identical png) is a duplicate even when the dump bytes drifted
+    (timestamps, ids). Identical pixels = same UI state, two claims = lie."""
     import report
 
     caps = [
         {"name": "21-rider-running-start", "point": "rider-running-start",
-         "marker": "+En course|-Arrêt 1", "dump_sha256": "a",
+         "marker": "+En course|-Arrêt 1", "dump_sha256": "a", "png_sha256": "same",
          "labels": ["En course", "Terminez votre course", "12 min"], "node_count": 42},
         {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
-         "marker": "+Arrêt en cours|-Arrêt 1", "dump_sha256": "b",
+         "marker": "+Arrêt en cours|-Arrêt 1", "dump_sha256": "b", "png_sha256": "same",
          "labels": ["En course", "Terminez votre course", "13 min"], "node_count": 42},
     ]
     out = make_out([("rider-running-start", "PASS", "ok"), ("rider-stop1-active", "PASS", "ok")], caps)
@@ -217,6 +218,51 @@ def test_label_signature_duplicate_detected():
     rows = {p["point"]: p for p in res["points"]}
     assert rows["rider-stop1-active"]["result"] == "FAIL", rows["rider-stop1-active"]
     assert "duplicate-state" in rows["rider-stop1-active"]["detail"]
+
+
+# -------------------------------------------- B5 calibration (run 41268901501)
+@case
+def test_label_signature_with_pixel_drift_degrades_to_warn():
+    """Run 41268901501 (5 phantom FAILs): offline screens whose masked labels
+    collide are NOT proof of reuse as soon as the pixels differ — ticking
+    counters («12 min»/«13 min») and static layouts collide legitimately. The
+    row must stay visible (WARN) without blocking the point."""
+    import report
+
+    caps = [
+        {"name": "21-rider-running-start", "point": "rider-running-start",
+         "marker": "+En cours|-Arrêt 1", "dump_sha256": "a",
+         "labels": ["En cours", "Terminez votre course", "12 min"], "node_count": 42},
+        {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
+         "marker": "+Arrivée estimée|-Chargement", "dump_sha256": "b",
+         "labels": ["En cours", "Terminez votre course", "13 min"], "node_count": 42},
+    ]
+    out = make_out([("rider-running-start", "PASS", "ok"), ("rider-stop1-active", "PASS", "ok")], caps)
+    res = report.build(out, p0={"rider-running-start", "rider-stop1-active"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["rider-stop1-active"]["result"] == "WARN", rows["rider-stop1-active"]
+    assert "pixels différents" in rows["rider-stop1-active"]["detail"]
+    assert res["duplicates"] and res["duplicates"][0]["result"] == "WARN"
+
+
+@case
+def test_dump_signature_with_pixel_drift_degrades_to_warn():
+    """Identical dump bytes but different pixels = a transient between the two
+    real captures (animation, fluttering); snap() always fresh-dumps, so the
+    reuse of stale bytes is not the plausible cause — WARN, not FAIL."""
+    import report
+
+    caps = [
+        {"name": "14-rider-home", "point": "rider-home-loaded",
+         "marker": "+Où allez-vous", "dump_sha256": "same"},
+        {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
+         "marker": "+Arrêt 1", "dump_sha256": "same"},
+    ]
+    out = make_out([("rider-home-loaded", "PASS", "ok"), ("rider-stop1-active", "PASS", "ok")], caps)
+    res = report.build(out, p0={"rider-home-loaded", "rider-stop1-active"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["rider-stop1-active"]["result"] == "WARN", rows["rider-stop1-active"]
+    assert res["duplicates"] and res["duplicates"][0]["result"] == "WARN"
 
 
 # ------------------------------------------------- B4 capture integrity

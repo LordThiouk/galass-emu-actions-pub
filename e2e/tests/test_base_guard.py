@@ -16,36 +16,34 @@ DENY = ["", "http://192.162.69.113", "http://192.162.69.113:80", "http://192.162
         "http://192.162.69.113:08080", "ftp://192.162.69.113:8080", "192.162.69.113:8080",
         "http://192.162.69.113:8080?x=1", "http://192.162.69.113:8080#f",
         "http://192.162.69.113:8080 ", "http://192.162.69.113:abc", "https://"]
-n = ok = 0
-for b in ALLOW:
-    n += 1; r = check_base(b)
-    if r is None: ok += 1
-    else: print(f"FAIL allow {b!r}: {r}")
-for b in DENY:
-    n += 1; r = check_base(b)
-    if r is not None: ok += 1
-    else: print(f"FAIL deny {b!r}")
-cli = os.path.join(os.path.dirname(HERE), "base_guard.py")
-for b, want in [("http://192.162.69.113:8080", 0), ("http://192.162.69.113", 1)]:
-    n += 1
-    if subprocess.run([sys.executable, cli, b], capture_output=True).returncode == want: ok += 1
-    else: print(f"FAIL cli {b!r}")
-print(f"\n{ok}/{n} base_guard cases passed")
-sys.exit(0 if ok == n else 1)
+def run_cases():
+    """Exécute tous les cas_allow/deny/cli. Retourne (ok, n) et imprime les échecs."""
+    n = ok = 0
+    for b in ALLOW:
+        n += 1; r = check_base(b)
+        if r is None: ok += 1
+        else: print(f"FAIL allow {b!r}: {r}")
+    for b in DENY:
+        n += 1; r = check_base(b)
+        if r is not None: ok += 1
+        else: print(f"FAIL deny {b!r}")
+    cli = os.path.join(os.path.dirname(HERE), "base_guard.py")
+    for b, want in [("http://192.162.69.113:8080", 0), ("http://192.162.69.113", 1)]:
+        n += 1
+        if subprocess.run([sys.executable, cli, b], capture_output=True).returncode == want: ok += 1
+        else: print(f"FAIL cli {b!r}")
+    return ok, n
+
+
+def test_base_guard_allows_and_denies():
+    ok, n = run_cases()
+    assert ok == n, f"base_guard: {n - ok}/{n} cas en échec (voir sortie ci-dessus)"
+
 
 def main():
-    import traceback
-    failed = 0
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-                print("ok   " + name)
-            except Exception:
-                failed += 1
-                print("FAIL " + name)
-                traceback.print_exc()
-    sys.exit(1 if failed else 0)
+    ok, n = run_cases()
+    print(f"\n{ok}/{n} base_guard cases passed")
+    sys.exit(0 if ok == n else 1)
 
 
 if __name__ == "__main__":
