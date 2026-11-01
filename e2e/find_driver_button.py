@@ -3,7 +3,11 @@
 
 Entrée : dump uiautomator + numéro d'essai (--attempt N, 0 = premier geste).
 Sortie (une ligne) :
-  TAP x y            -> noeud du libellé visible, tapé HORS de la barre d'onglets
+  TAP x y            -> libellé CLIQUABLE ( centre borné hors barre d'onglets
+                        et hors icône note) OU texte NON cliquable CENTRÉ sous
+                        la liste (le bouton) ; le TITRE homonyme aligné à
+                        gauche (cx<380 — tap mort du run 41263271208) n'est
+                        JAMAIS tapé, un geste le fait monter.
   SWIPE x y1 y2      -> geste vertical dans le PANNEAU (jamais sur une carte)
   NONE               -> rien d'exploitable
 
@@ -18,10 +22,8 @@ panneau, jamais la carte :
   0-1 : au-dessus de la liste (entre l'en-tête et la première carte) ;
   2-3 : juste sous la liste, colonne de marge à gauche des cartes ;
   4-5 : haut du panneau (poignée / en-tête) quand le reste n'a rien donné.
-Le titre homonyme du formulaire (non cliquable, au-dessus de la liste) n'est
-jamais tapé ; si le libellé est visible sous la liste on tape son centre, borné
-sous la barre d'onglets Accueil/Activité/Menu. La hauteur d'écran vient du
-noeud racine du dump.
+Le titre homonyme du formulaire (non cliquable, cx<380) n'est jamais tapé. La
+hauteur d'écran vient du noeud racine du dump.
 """
 import html
 import re
@@ -78,16 +80,6 @@ def swipe_at(x, y, h, dist=DIST):
     return "SWIPE %d %d %d" % (x, y, y - dist)
 
 
-def tap_point(n, nav_top, h):
-    """Centre du libellé, borné SOUS la barre d'onglets et dans l'écran."""
-    x1, y1, x2, y2 = n["b"]
-    cx = (x1 + x2) // 2
-    cy = (y1 + y2) // 2
-    if cy >= nav_top:
-        cy = min(max(y1 + 10, nav_top - 20), h - 5)
-    return "TAP %d %d" % (cx, max(cy, y1 + 2))
-
-
 def decide(xml, screen_h_arg=None, attempt=0):
     nodes = parse(xml)
     h = screen_height(xml)
@@ -107,16 +99,43 @@ def decide(xml, screen_h_arg=None, attempt=0):
             and any(m in n["text"] for n in nodes for m in HISTORY_MARKERS):
         return "BACK"
 
-    # 1) Le libellé est visible : on tape son centre (jamais un noeud rogné).
+    # 1) Le libellé est visible : on tape son centre borné (jamais un noeud rogné).
     #    Cliquable -> tappable où qu'il soit ; non cliquable -> seulement SOUS la
-    #    liste (le titre homonyme du formulaire est au-dessus, jamais tapé).
+    #    liste ET CENTRÉ (cx >= 380).
+    #    Run 41263271208 : deux libellés homonymes — le TITRE du formulaire
+    #    (Texte aligné à gauche, cx=300, NON cliquable, y=2043) et le texte du
+    #    BOUTON (centré, cx=506, encore sous la bande d'onglets). L'ancienne
+    #    règle (bon = cliquable OU sous la liste) a tapé le TITRE
+    #    (300,2043) — Texte mort, RIDER_RIDE total=0. Réponses :
+    #    - un libellé CLIQUABLE : son centre, x borné hors de l'icône note
+    #      (IconButton ~x>860) par [200..640] ;
+    #    - un libellé NON cliquable ne vaut le tap QUE centré (le bouton) et
+    #      au-dessus de la bande d'onglets ; le titre (cx<380) n'est JAMAIS
+    #      tapé — on le fait monter par le geste de la section 2, qui ramènera
+    #      le texte du bouton DANS l'écran (run 41263271208 : bouton à y~2230,
+    #      encore sous Accueil/Activité/Menu à 2182).
+    BTN_CX_MIN = 380
+    TAP_X_MIN, TAP_X_MAX = 200, 640
     hits = [n for n in nodes if n["text"] == LABEL and n["b"][1] >= 0 and n["b"][3] <= h]
-    below = [n for n in hits if bottom is not None and n["b"][1] >= bottom]
-    good = [n for n in hits if n["clickable"]] or below
-    if good:
-        n = max(good, key=lambda n: (n["clickable"], n["b"][1]))
-        if n["b"][1] < nav_top - 20:  # sinon le tap tomberait dans un onglet
-            return tap_point(n, nav_top, h)
+    taps = []
+    for n in hits:
+        cx0, cy0 = (n["b"][0] + n["b"][2]) // 2, (n["b"][1] + n["b"][3]) // 2
+        if cy0 >= nav_top - 20:          # sinon le tap tomberait dans un onglet
+            continue
+        if n["clickable"]:
+            cx = min(max(cx0, TAP_X_MIN), TAP_X_MAX)
+            taps.append((n["b"][1], cx, cy0))
+        elif bottom is not None and n["b"][1] >= bottom and cx0 >= BTN_CX_MIN:
+            # Texte du bouton (uiautomator rend parfois InkWell non cliquable
+            # et ne garde que Texte) : on tape la LIGNE (centre de panneau),
+            # jamais l'icône note à droite du bouton.
+            cx = min(max(cx0, 430), 560)
+            taps.append((n["b"][1], cx, cy0))
+        else:
+            continue                     # titre homonyme gauche -> geste, pas tap
+    if taps:
+        _, cx, cy = max(taps, key=lambda t: t[0])
+        return "TAP %d %d" % (cx, cy)
 
     # 2) Aucune liste : geste générique sur le panneau.
     if bottom is None:

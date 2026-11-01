@@ -269,14 +269,41 @@ def test_run_wireard_request_ride_has_diag_service_and_fresh_reparse():
 def test_button_loop_escalates_and_proves_screen_change():
     """Run 41048460069 : 6 gestes identiques (y=1880, sous le panneau) sans effet.
     La boucle doit passer un essai par geste (zones différentes), prouver le
-    changement par le hash du dump, et laisser un dump si le bouton reste caché."""
+    changement par le hash du dump, et laisser un dump si le bouton reste caché.
+    Run 41263271208 (TAP mort sur le TITRE, RIDER_RIDE total=0) : chaque TAP est
+    désormais ENCADRÉ — snapshot XML avant, sonde SnackBar planb_tap_reaction,
+    preuve d'effet planb_button_effect, maximum 2 taps (le 3e est refusé), et le
+    diagnostic de fin s'appelle button_result (post_service après le tap carte)."""
     text = run_text()
     body = text[text.index("rider_request_ride() {"):]
     body = body[:body.index('\nif [ "${RIDE_SOURCE_FORCE_API')]
     assert "for i in 1 2 3 4 5 6 7 8; do" in body, body
     assert 'find_driver_button.py "$UI_XML_PATH" --attempt $((i-1))' in body, body
     assert "UI_DUMP_HASH" in body and "écran inchangé" in body, body
-    assert "diag_capture buttonfail" in body, body
+    assert "diag_capture button_result" in body, body
+    assert "diag_capture buttonfail" not in body, body          # renommé
+    assert "diag_capture post_service" in body, body            # après tap carte
+    assert "planb_tap_reaction" in body, body                   # sonde après TAP
+    assert "planb_button_effect" in body, body                  # preuve d'effet
+    assert 'cp -f "$UI_XML_PATH"' in body, body                 # snapshot avant tap
+    assert "btn_taps" in body and 'btn_taps" -gt 2' in body, body  # cap 2 taps
+
+
+@case
+def test_rider_ride_counter_polled_three_times():
+    """Run 41263271208 : RIDER_RIDE lu à +2 s (total=0) puis une fois encore —
+    une création peut prendre quelques secondes à atterrir. Le compteur est
+    désormais sondé 3x (sleep 6), PASS dès que ≥1, sinon FAIL documenté."""
+    text = run_text()
+    seg = text[text.index("rider_after_request_diag\n    for poll in 1 2 3"):]
+    seg = seg[:seg.index("mark planb-rider-request")]
+    assert "for poll in 1 2 3" in seg, seg
+    assert "sleep 6" in seg, seg
+    assert "sonde $poll/3" in seg, seg
+    assert "rider_after_request_diag" in seg, seg
+    i = text.index("mark planb-rider-request FAIL")
+    fail_mark = text[i:i + 240]
+    assert "réaction tap" in fail_mark, fail_mark
 
 
 @case

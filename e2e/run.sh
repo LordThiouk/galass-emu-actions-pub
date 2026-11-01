@@ -1494,7 +1494,9 @@ rider_request_ride() {
     # est trop basse, la liste remonte d'abord (never tap a tab).
     if ui_xml && sdec=$(python3 e2e/service_card_tap.py "$UI_XML_PATH" "service_option_$svc_idx"); then
       case "$sdec" in
-        TAP\ *) set -- $sdec; adb shell input tap "$2" "$3" >/dev/null 2>&1
+        TAP\ *) set -- $sdec
+                cp -f "$UI_XML_PATH" "$OUT/ui/svc-before.xml" 2>/dev/null || true
+                adb shell input tap "$2" "$3" >/dev/null 2>&1
                 card_tap=1; log "planb: service tapé hors barre d'onglets @ $2,$3"; break ;;
         SCROLL\ *) set -- $sdec; log "planb: tap dans les onglets interdit — liste remontée $2 $3->$4"
                    adb shell input swipe "$2" "$3" "$2" "$4" 400 >/dev/null 2>&1 || true; sleep 1 ;;
@@ -1508,20 +1510,44 @@ rider_request_ride() {
   if [ "$card_tap" = 1 ]; then
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
     sleep 3
+    # Sonde SnackBar après le tap carte (run 41263271208 : aucune réaction
+    # observable — l'app peut rejeter par SnackBar bref dès le tap) + artefact.
+    if ui_xml; then planb_tap_reaction "$OUT/ui/svc-before.xml"; fi
+    diag_capture post_service >/dev/null 2>&1 || true
     RIDER_FIND_TAPPED=0
     # 8 essais, une ZONE DIFFÉRENTE du panneau par essai (find_driver_button.py
     # --attempt) : run 41048460069, le même geste à y=1880 (sous le panneau, sur
     # la carte) a tourné 6x sans que l'écran bouge. On prouve le changement par
     # le hash du dump, et on journalise les tentatives sans effet.
-    local dec dump_fail=0 prev_hash="" unchanged=0
+    # Run 41263271208 : le tap tombait sur le TITRE homonyme (Texte mort,
+    # 300,2043) — find_driver_button.py ne propose plus jamais ce tap, et ICI
+    # chaque TAP est ENCADRÉ : snapshot XML avant, sonde SnackBar après
+    # (planb_tap_reaction), preuve d'EFFET (planb_button_effect, hash ou
+    # libellé parti), maximum 2 taps — un 3e tap-bouton sans effet démontré
+    # est refusé, la boucle continue par les gestes.
+    local dec dump_fail=0 prev_hash="" unchanged=0 btn_taps=0 pre_hash=""
     for i in 1 2 3 4 5 6 7 8; do
       if ui_xml; then
         dec=$(python3 e2e/find_driver_button.py "$UI_XML_PATH" --attempt $((i-1)))
         log "planb: bouton commande essai $i/8 -> $dec"
         set -- $dec
         case "$1" in
-          TAP) adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
-               log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
+          TAP) btn_taps=$((btn_taps+1))
+               if [ "$btn_taps" -gt 2 ]; then
+                 log "planb: tap bouton REFUSÉ (${btn_taps}e demande, cap 2 taps — voir planb: réaction tap)"; break
+               fi
+               cp -f "$UI_XML_PATH" "$OUT/ui/btn-${i}-before.xml" 2>/dev/null || true
+               pre_hash="$UI_DUMP_HASH"
+               adb shell input tap "$2" "$3" >/dev/null 2>&1; RIDER_FIND_TAPPED=1
+               log "planb: tap bouton #$btn_taps « Trouver un chauffeur » @ $2,$3"
+               sleep 1
+               ui_xml && planb_tap_reaction "$OUT/ui/btn-${i}-before.xml"
+               if planb_button_effect "$pre_hash"; then
+                 log "planb: tap bouton #$btn_taps a eu un EFFET (écran changé / libellé parti)"
+                 return 0
+               fi
+               log "planb: tap bouton #$btn_taps SANS effet (écran inchangé, libellé là) — gestes continuent"
+               ;;
           SWIPE) log "planb: pan défile (geste hors des cartes service_option_*) $2 $3->$4"
                  adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
           BACK) adb shell input keyevent 4 >/dev/null 2>&1
@@ -1536,8 +1562,8 @@ rider_request_ride() {
       fi
       prev_hash="$UI_DUMP_HASH"
     done
-    log "planb: bouton « Trouver un chauffeur » jamais tapé (dumps indisponibles: ${dump_fail}/8, gestes sans effet: ${unchanged})"
-    diag_capture buttonfail >/dev/null 2>&1 || true
+    log "planb: fin boucle bouton — taps=$btn_taps, jamais tapé: $([ "$RIDER_FIND_TAPPED" = 1 ] && echo non || echo OUI) (dumps indisponibles: ${dump_fail}/8, gestes sans effet: ${unchanged})"
+    diag_capture button_result >/dev/null 2>&1 || true
     return 0
   fi
   log "planb: rid service_option_$svc_idx absent, repli sous « Sélectionnez un service »"
@@ -1563,16 +1589,16 @@ if [ "${RIDE_SOURCE_FORCE_API:-0}" != "1" ]; then
   STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep '^RIDER_RIDE' | head -5 \
     | while IFS= read -r l; do log "planb: api avant commande: $l"; done
   if rider_request_ride && { [ "${RIDER_FIND_TAPPED:-0}" = 1 ] || tap_when "$RIDER_PKG" "Trouver un chauffeur"; }; then
-    log "planb: « Trouver un chauffeur » tapé"
     rider_after_request_diag
-    sleep 2
-    n_after=$(STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep -m1 '^RIDER_RIDE total' | grep -oE '[0-9]+$')
-    log "planb: compteur courses rider après commande = ${n_after:-?}"
+    for poll in 1 2 3; do sleep 6; n_after=$(STEP=rider_rides "$PY" e2e/api_flow.py 2>/dev/null | grep -m1 '^RIDER_RIDE total' | grep -oE '[0-9]+$'); log "planb: compteur courses rider (sonde $poll/3, sleep 6) = ${n_after:-?}"; [ "${n_after:-0}" -ge 1 ] && break; done
     if [ "${n_after:-0}" -ge 1 ]; then
       mark planb-rider-request PASS "plan B UI: service_option + Trouver un chauffeur, RIDER_RIDE total=${n_after}"
     else
-      mark planb-rider-request FAIL "plan B UI: Trouver un chauffeur tapé mais RIDER_RIDE total=${n_after:-?} (aucune course créée)"
+      mark planb-rider-request FAIL "plan B UI: Trouver un chauffeur tapé mais RIDER_RIDE total=${n_after:-?} (aucune course créée — voir réaction tap)"
     fi
+    # Sondage compteur — jamais lu une fois : run 41263271208, RIDER_RIDE total=0 à
+    # +2 s était PEUT-ÊTRE une création en vol. 3 sondes à sleep 6 : PASS dès que ≥1
+    # (contrat : mark plan B collé à ses taps). Sans course : « planb: réaction tap ».
   else
     mark planb-rider-request FAIL "plan B UI: commande impossible (repli API au pick)"
   fi

@@ -701,6 +701,39 @@ PY
   _ulog "planb: preuve $base (png $(wc -c < "$OUT/screens/$base.png" 2>/dev/null || echo 0)B, xml $(wc -c < "$OUT/ui/$base.xml" 2>/dev/null || echo 0)B)"
 }
 
+# planb_tap_reaction before : sonde SNAKBAR après un tap (runs 41112460972 et
+# 41263271208 : tap sans réaction visible, cause perdue). RideCreateForm rejette
+# une commande partielle par un SnackBar bref (~4 s) ; l'ancien dump « après
+# commande » (seen[:25], tronqué, pris 3-5 s après le tap) le ratait. AVANT =
+# dump XML ou "-" ; le dump APRÈS est celui de $UI_XML_PATH (frais — ui_xml
+# appelé AVANT cette sonde). Chaque texte NOUVEAU (diff avant/après, cap 8)
+# est journalisé : la réaction de l'app en preuve directe. rc 0.
+TAP_REACTION_PY="${TAP_REACTION_PY:-$(dirname "${BASH_SOURCE[0]}")/tap_reaction.py}"
+planb_tap_reaction() {
+  local before="${1:--}" out
+  out=$("$PY" "$TAP_REACTION_PY" "$before" "$UI_XML_PATH" 2>/dev/null) || out=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    _ulog "planb: réaction tap$line"
+  done <<< "$out"
+  if [ -z "$out" ]; then
+    _ulog "planb: réaction tap: aucun texte nouveau (tap sans effet visible)"
+  fi
+}
+
+# planb_button_effect before_hash : preuve d'EFFET du tap bouton — dump frais
+# comparé au hash d'avant-tap : l'écran a changé (SnackBar OU navigation) ou le
+# libellé du bouton a disparu (course créée -> écran suivant). rc 0 = effet,
+# 1 = aucun effet (tap mort), 4 = dump indisponible.
+planb_button_effect() {
+  local before="$1"
+  sleep "${PLANB_EFFECT_WAIT:-2}"
+  ui_xml || return 4
+  [ -n "$UI_DUMP_HASH" ] && [ "$UI_DUMP_HASH" != "$before" ] && return 0
+  has_node re 'Trouver un chauffeur' && return 1
+  return 0
+}
+
 # rider_ui_login pkg : si l'écran de login est affiché (session injectée refusée),
 # connecte le rider de test RIDER_TEST_PHONE / RIDER_TEST_OTP par l'UI.
 rider_ui_login() {

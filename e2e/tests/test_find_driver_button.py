@@ -151,3 +151,35 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+
+# ------------------------------------------------------------------ run 41263271208
+def test_run4_dead_title_300_2043_never_tapped():
+    """Run 41263271208 (TAP 300 2043 -> RIDER_RIDE total=0) : le tap est tombé
+    sur le TITRE « Trouver un chauffeur » du formulaire (Text NON cliquable,
+    aligné à gauche, cx=300, sous la liste fermée à y=1820). L'ancienne règle
+    (non cliquable sous la liste = bon) le tapait. Régression : jamais tapé."""
+    title = node("Trouver un chauffeur", b=(150, 2023, 450, 2063))
+    lst = node("Svc", "service_option_0", True, (0, 1100, 1080, 1820))
+    r = decide(dump(ROOT_1080, TITLE, lst, title), attempt=0)
+    assert not r.startswith("TAP"), r
+
+
+def test_run4_centered_label_below_nav_tabs_gesture_not_tap():
+    """Même run : le texte du BOUTON (cx=506, non cliquable dans uiautomator)
+    était présent mais TROP BAS — cy=2230 dans la bande Accueil/Activité/Menu
+    (2182-2277). Le tap serait tombé sur un onglet : interdit, geste."""
+    btn = node("Trouver un chauffeur", b=(360, 2210, 660, 2250))
+    nav = node("Accueil", click=True, b=(81, 2250, 378, 2345))
+    lst = node("Svc", "service_option_0", True, (0, 1100, 1080, 1820))
+    r = decide(dump(ROOT_1080, TITLE, lst, btn, nav), attempt=0)
+    assert not r.startswith("TAP"), r
+
+
+def test_run4_centered_label_above_tabs_tapped_center_line():
+    """Après remontée de la liste : libellé texte NON cliquable, CENTRÉ
+    (cx=506), sous la liste, au-dessus de la bande -> tap au centre de la
+    LIGNE du bouton (clamp [430..560]), jamais sur l'icône note à droite."""
+    btn = node("Trouver un chauffeur", b=(360, 2010, 660, 2050))
+    lst = node("Svc", "service_option_0", True, (0, 1100, 1080, 1820))
+    assert decide(dump(ROOT_1080, TITLE, lst, btn)) == "TAP 510 2030"
