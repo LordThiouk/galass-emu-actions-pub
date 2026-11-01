@@ -1,4 +1,5 @@
 """tap_exact: un libellé en double (titre + bouton) tape le bouton cliquable."""
+import sys
 import os, subprocess, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -25,3 +26,22 @@ def test_duplicate_label_taps_the_clickable_button_not_the_title():
 def test_single_non_clickable_label_still_tapped():
     r, log = _run('<hierarchy><node text="Trouver un chauffeur" visible-to-user="true" bounds="[0,0][100,100]"/></hierarchy>')
     assert "input tap 50 50" in log, (r.stderr, log)
+
+def main():
+    import traceback
+    failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print("ok   " + name)
+            except Exception:
+                failed += 1
+                print("FAIL " + name)
+                traceback.print_exc()
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
+

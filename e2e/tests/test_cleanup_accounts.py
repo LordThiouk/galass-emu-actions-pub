@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys
 """Pre-run cleanup: closes open rides of rider 106 / driver 23 only, never deletes."""
 import json, os, subprocess, sys, tempfile
 
@@ -110,3 +111,22 @@ def test_service_index_maps_driver_service_to_rider_card_order_read_only():
 def test_service_index_none_when_unknown():
     out = _svc({"data": {}}, {"data": {"services": [{"id": 1}]}})
     assert "SERVICE_INDEX none" in out, out
+
+def main():
+    import traceback
+    failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print("ok   " + name)
+            except Exception:
+                failed += 1
+                print("FAIL " + name)
+                traceback.print_exc()
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
+

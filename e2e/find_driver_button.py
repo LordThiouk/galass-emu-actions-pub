@@ -29,6 +29,10 @@ import sys
 
 LABEL = "Trouver un chauffeur"
 NAV_LABELS = ("Accueil", "Activité", "Menu")
+# Écran historique (run 41112460972 : le tap service est tombé sur l'onglet
+# « Activité ») : aucun panneau de commande ici, on demande un retour plutôt
+# que de balayer une page ride history sans effet.
+HISTORY_MARKERS = ("Toutes les courses", "Courses actives", "Nouvelles courses", "Courses en cours")
 # Marge au-dessus de la liste : le padding d'une ListView Flutter est
 # hit-testable et capte le geste — 40px ne suffisaient pas (run 40958874460).
 ABOVE_MARGIN = 200
@@ -94,6 +98,14 @@ def decide(xml, screen_h_arg=None, attempt=0):
     bottom = max((b[3] for b in cards), default=None)
     left = min((b[0] for b in cards), default=84)
     nav_top = min((n["b"][1] for n in nodes if n["text"] in NAV_LABELS), default=h - BOTTOM_SAFE)
+
+    # 0) Pas de panneau de commande ET écran historique (onglets courses) :
+    #    BACK — un swipe ici balaye l'historique sans effet (run 41112460972,
+    #    8 swipes identiques sur la carte de la page Activité).
+    hits_probe = [n for n in nodes if n["text"] == LABEL]
+    if not hits_probe and not cards \
+            and any(m in n["text"] for n in nodes for m in HISTORY_MARKERS):
+        return "BACK"
 
     # 1) Le libellé est visible : on tape son centre (jamais un noeud rogné).
     #    Cliquable -> tappable où qu'il soit ; non cliquable -> seulement SOUS la

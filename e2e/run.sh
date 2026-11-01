@@ -1481,12 +1481,29 @@ rider_request_ride() {
       fresh=$(rider_service_card_idx) && { [ -n "$fresh" ] && [ "$fresh" != "$svc_idx" ] \
         && { svc_idx=$fresh; log "planb: rang carte Voiture relu sur dump frais = $fresh"; }; }
     fi
-    if wait_node rid "service_option_$svc_idx" 6 && tap_node rid "service_option_$svc_idx"; then
-      card_tap=1; break
+    if ! wait_node rid "service_option_$svc_idx" 6; then
+      log "planb: service_option_$svc_idx absent (essai $si/4) — écran relu, défile, reparse"
+      adb shell input swipe 540 1700 540 900 400 >/dev/null 2>&1 || true
+      sleep 1
+      continue
     fi
-    log "planb: service_option_$svc_idx absent (essai $si/4) — écran relu, défile, reparse"
-    adb shell input swipe 540 1700 540 900 400 >/dev/null 2>&1 || true
-    sleep 1
+    # Tap HORS de la barre d'onglets (run 41112460972 : carte centrée à
+    # y=2259 DANS la bande Accueil/Activité/Menu -> onglet tapé, course
+    # composée abandonnée sur l'écran historique, repli API). Le tap tombe
+    # dans l'intersection carte ∩ au-dessus-des-onglets ; si l'intersection
+    # est trop basse, la liste remonte d'abord (never tap a tab).
+    if ui_xml && sdec=$(python3 e2e/service_card_tap.py "$UI_XML_PATH" "service_option_$svc_idx"); then
+      case "$sdec" in
+        TAP\ *) set -- $sdec; adb shell input tap "$2" "$3" >/dev/null 2>&1
+                card_tap=1; log "planb: service tapé hors barre d'onglets @ $2,$3"; break ;;
+        SCROLL\ *) set -- $sdec; log "planb: tap dans les onglets interdit — liste remontée $2 $3->$4"
+                   adb shell input swipe "$2" "$3" "$2" "$4" 400 >/dev/null 2>&1 || true; sleep 1 ;;
+        *) log "planb: aucune zone de tap sûr pour service_option_$svc_idx (essai $si/4)" ;;
+      esac
+    else
+      log "planb: dump indisponible pour le tap sûr (essai $si/4)"
+      sleep 1
+    fi
   done
   if [ "$card_tap" = 1 ]; then
     log "planb: service tapé par rid service_option_$svc_idx (service: ${svc_name:-?})"
@@ -1507,6 +1524,8 @@ rider_request_ride() {
                log "planb: tap_node « Trouver un chauffeur » @ $2,$3"; sleep 2; return 0 ;;
           SWIPE) log "planb: pan défile (geste hors des cartes service_option_*) $2 $3->$4"
                  adb shell input swipe "$2" "$3" "$2" "$4" 500 >/dev/null 2>&1; sleep 1 ;;
+          BACK) adb shell input keyevent 4 >/dev/null 2>&1
+                log "planb: écran hors panneau commande (historique/onglet) -> RETOUR"; sleep 1 ;;
           *) break ;;
         esac
       else

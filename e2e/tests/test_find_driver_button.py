@@ -1,4 +1,5 @@
 import os, sys
+import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from find_driver_button import decide
 
@@ -96,6 +97,27 @@ def test_no_room_above_list_returns_none():
     lst = node("Svc", "service_option_0", True, (0, 80, 1080, 2400))
     assert decide(dump(ROOT_1080, TITLE, lst)) == "NONE"
 
+def test_history_screen_returns_back_never_swipes_the_map():
+    """Run 41112460972 : le tap service est tombé sur l'onglet « Activité » ->
+    écran historique (Toutes les courses / Terminé / Reçu), AUCUN panneau du
+    formulaire d'ici. Les 8 swipes génériques (540 1880 -> 1180) balayaient le
+    CARDS de l'historique sans rien changer d'utile. Le bon geste : BACK."""
+    hist = (node("Toutes les courses", b=(0, 299, 365, 446))
+            + node("Terminé", b=(26, 475, 1054, 1021))
+            + node("Reçu", b=(71, 835, 1009, 977))
+            + node("Accueil", b=(81, 2182, 378, 2277))
+            + node("Menu", b=(703, 2182, 1000, 2277)))
+    d = dump(ROOT_1080, hist)
+    assert decide(d, attempt=0) == "BACK", decide(d, attempt=0)
+    assert decide(d, attempt=5) == "BACK", decide(d, attempt=5)
+
+def test_compose_screen_never_returns_back():
+    """Panneau de commande = cartes service présentes -> JAMAIS de BACK (on défile)."""
+    lst = node("Svc", "service_option_3", True, (84, 1942, 996, 2337))
+    hist_tab = node("Toutes les courses", b=(0, 299, 365, 446))
+    r = decide(dump(ROOT_1080, TITLE, lst, hist_tab), attempt=2)
+    assert r != "BACK", r
+
 def test_swipe_start_never_inside_any_service_option_bounds():
     """Invariant sweep : sur des géométries variées, le départ sort des bounds de chaque carte."""
     geoms = [
@@ -110,3 +132,22 @@ def test_swipe_start_never_inside_any_service_option_bounds():
         if r.startswith("SWIPE"):
             y1 = int(r.split()[2])
             assert not (b[1] <= y1 <= b[3]), (b, r)  # départ hors de la carte/liste
+
+def main():
+    import traceback
+    failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print("ok   " + name)
+            except Exception:
+                failed += 1
+                print("FAIL " + name)
+                traceback.print_exc()
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
+

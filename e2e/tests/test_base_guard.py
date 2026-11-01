@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys
 import os, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -31,3 +32,22 @@ for b, want in [("http://192.162.69.113:8080", 0), ("http://192.162.69.113", 1)]
     else: print(f"FAIL cli {b!r}")
 print(f"\n{ok}/{n} base_guard cases passed")
 sys.exit(0 if ok == n else 1)
+
+def main():
+    import traceback
+    failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print("ok   " + name)
+            except Exception:
+                failed += 1
+                print("FAIL " + name)
+                traceback.print_exc()
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
+
