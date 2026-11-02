@@ -262,3 +262,11 @@ jobs:
         run: |
           echo "| étape | résultat |" >> "$GITHUB_STEP_SUMMARY"; echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           if [ -f e2e-out/results.txt ]; then awk -F'|' '{print "| "$1" | "$2" |"}' e2e-out/results.txt >> "$GITHUB_STEP_SUMMARY"; else echo "| run | no results |" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Réveil Nix (webhook fin de run, sans contenu sensible)
+        if: always()
+        env: {NIX_HOOK_URL: "${{ secrets.NIX_NOTIFY_URL }}", NIX_HOOK_KEY: "${{ secrets.NIX_NOTIFY_KEY }}"}
+        run: |
+          [ -n "$NIX_HOOK_URL" ] || { echo "pas de webhook configuré"; exit 0; }
+          P=$(grep -c '|PASS' e2e-out/results.txt 2>/dev/null || echo 0); T=$(wc -l < e2e-out/results.txt 2>/dev/null || echo 0)
+          curl -s -o /dev/null -m 10 -X POST "$NIX_HOOK_URL" -H 'Content-Type: application/json' -H "Authorization: Bearer $NIX_HOOK_KEY" -H "X-Automation-Key: $NIX_HOOK_KEY" \
+            --data "{\"job\":\"gh-run-${GITHUB_RUN_ID}\",\"status\":\"${{ job.status }}\",\"score\":\"${P}/${T}\",\"log\":\"gh run view ${GITHUB_RUN_ID} --log\"}" || true
