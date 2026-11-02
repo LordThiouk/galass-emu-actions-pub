@@ -519,6 +519,94 @@ PY
   _ulog "tap_exact $1 @ $2,$3"
 }
 
+# _find_exact_match label -> "x y enabled" du noeud VISIBLE dont text ou
+# content-desc, espaces normalisés, vaut EXACTEMENT label ; "" si absent.
+# Contrairement à tap_exact (qui ignore `enabled` : tapaste), cet état RAPPORTE
+# si le bouton est actif : CustomNewRideDialog garde « Accepter la course »
+# présent mais désactivé tant que le tarif n'est pas chargé (run 41319989273).
+_find_exact_match() {
+  python3 - "$UI_XML_PATH" "$1" <<'PY'
+import html, re, sys
+
+path, label = sys.argv[1], sys.argv[2]
+norm = lambda s: re.sub(r"\s+", " ", html.unescape(s)).strip()
+
+
+def norm_attr(s):
+    return re.sub(r"\s+", " ", s).strip()
+
+
+want = norm(label)
+try:
+    xml = open(path, encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+best = None
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+
+    def attr(name):
+        a = re.search(r'\b' + name + r'="([^"]*)"', tag)
+        return html.unescape(a.group(1)) if a else ""
+
+    if attr("visible-to-user").lower() == "false":
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+    if not b:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if x2 <= x1 or y2 <= y1:
+        continue
+    if norm_attr(attr("text")) == want or norm_attr(attr("content-desc")) == want:
+        rank = (attr("clickable").lower() == "true", y1)
+        if best is None or rank > best[0]:
+            best = (rank, ((x1 + x2) // 2, (y1 + y2) // 2), attr("enabled").lower())
+print("" if best is None else "%d %d %s" % (best[1][0], best[1][1], best[2]))
+PY
+}
+
+# wait_offer_ready [label] [tmo] -> 0 quand l'offre est PRÊTE pour le tap :
+# le tarif est affiché (« Prix recommandé … ») ET le bouton `label` est visible
+# ET actif (enabled="true"). Polling 1 s, timeout tmo (défaut 60 s).
+# Diagnostic : chaque état intermédiaire est journalisé une fois (bouton inactif
+# / tarif absent) au lieu d'un silence de 60 s. Jamais un tap ici.
+wait_offer_ready() {
+  local label="${1:-Accepter la course}" tmo="${2:-${OFFER_READY_TIMEOUT:-60}}" \
+        t0=$SECONDS st fare ifwarn=0 ffwarn=0
+  _ulog "wait_offer_ready: début (label='$label', tmo=${tmo}s)"
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    ui_xml || { sleep 1; continue; }
+    st=$(_find_exact_match "$label")
+    if [ -z "$st" ]; then
+      sleep 1
+      continue
+    fi
+    case "$st" in
+      *" false")
+        if [ "$ifwarn" -eq 0 ]; then
+          _ulog "wait_offer_ready: bouton « $label » présent mais inactif @ ${st% *} (enabled=false)"
+          ifwarn=1
+        fi
+        sleep 1
+        continue
+        ;;
+    esac
+    fare=$(_find_node re "Prix recommandé")
+    if [ -z "$fare" ]; then
+      if [ "$ffwarn" -eq 0 ]; then
+        _ulog "wait_offer_ready: bouton actif mais tarif absent (Prix recommandé introuvable)"
+        ffwarn=1
+      fi
+      sleep 1
+      continue
+    fi
+    _ulog "wait_offer_ready: offre prête (bouton actif @ $st, tarif affiché) en $((SECONDS - t0))s"
+    return 0
+  done
+  _ulog "wait_offer_ready: timeout après ${tmo}s (bouton ${st:-absent}, tarif ${fare:+affiché}${fare:-absent})"
+  return 1
+}
+
 # _find_node mode pattern -> "x y" du premier noeud VISIBLE, "" sinon.
 # mode=re : text/content-desc contient la regex (insensible à la casse), EditText exclu.
 # mode=class : la classe contient le motif (ex. EditText).

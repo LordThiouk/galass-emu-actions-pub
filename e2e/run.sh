@@ -1705,19 +1705,37 @@ ui_left=$(( $(offer_left) - API_RESERVE_SEC ))
 # Sinon l'API peut avoir gagné en parallèle, et le sidecar ne doit pas l'affirmer.
 UI_TAP_PROVEN=0
 FG_BEFORE=$(fg_pkg)
-if [ "$ui_left" -gt 0 ] && tap_exact "Accepter la course"; then
-  if [ "$FG_BEFORE" = "$DRIVER_PKG" ] && [ "$(fg_pkg)" = "$DRIVER_PKG" ]; then
-    UI_TAP_PROVEN=1
+# run 41319989273 : le bouton « Accepter la course » (CustomNewRideDialog) reste
+# inactif tant que le tarif n'est pas chargé — un tap avant est avalé puis la
+# fenêtre expire. On attend une offre PRÊTE (tarif affiché ET bouton actif)
+# dans le budget UI, puis on tape ; réessai unique si l'écran ne change pas.
+OFFER_TAP_SETTLE_SEC="${OFFER_TAP_SETTLE_SEC:-8}"
+if [ "$ui_left" -gt 0 ] && wait_offer_ready "Accepter la course" "$ui_left"; then
+  if tap_exact "Accepter la course"; then
+    if [ "$FG_BEFORE" = "$DRIVER_PKG" ] && [ "$(fg_pkg)" = "$DRIVER_PKG" ]; then
+      UI_TAP_PROVEN=1
+    else
+      log "offre: tap hors premier plan Driver ($FG_BEFORE -> $(fg_pkg)) — crédit UI non prouvé"
+    fi
+    if wait_ui "$DRIVER_PKG" "$OFFER_TAP_SETTLE_SEC" "$MARK_driver_accepted_details"; then
+      ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via "$(ui_accept_via)"
+    else
+      log "offre: écran inchangé après tap — réessai unique"
+      tap_exact "Accepter la course" || true
+      # ISC-5a : le wait du réessai vit sur ui_left REcalculé, jamais sur tout left.
+      ui_left=$(( $(offer_left) - API_RESERVE_SEC ))
+      [ "$ui_left" -gt 0 ] || ui_left=0
+      if [ "$ui_left" -gt 0 ] && wait_ui "$DRIVER_PKG" "$ui_left" "$MARK_driver_accepted_details"; then
+        ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via "$(ui_accept_via)"
+      else
+        UI_TAP_FAILED=1
+      fi
+    fi
   else
-    log "offre: tap hors premier plan Driver ($FG_BEFORE -> $(fg_pkg)) — crédit UI non prouvé"
-  fi
-  if wait_ui "$DRIVER_PKG" "$ui_left" "$MARK_driver_accepted_details"; then
-    ACCEPT_OK=1; UI_ACCEPT=1; set_accept_via "$(ui_accept_via)"
-  else
-    UI_TAP_FAILED=1
+    log "offre: tap « Accepter la course » non joué ou manqué (ui_left=${ui_left}s)"
   fi
 else
-  log "offre: tap « Accepter la course » non joué ou manqué (ui_left=${ui_left}s)"
+  log "offre: tap « Accepter la course » non joué (ui_left=${ui_left}s — bouton jamais actif ou tarif jamais affiché)"
 fi
 if [ "$ACCEPT_OK" = "0" ]; then
   log "offre: repli API (left=$(offer_left)s)"
