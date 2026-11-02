@@ -48,6 +48,8 @@ jobs:
         run: dart pub global activate patrol_cli && echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
       # Diagnostic : isoler le build de l'exécution. Si le run bloque ici, c'est le
       # build (gradle/patrol build) ; sinon c'est la phase test sur émulateur.
+      - name: Accepter licences Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build APK (patrol build, hors émulateur)
         if: steps.has.outputs.ok == '1'
         working-directory: src/rider
