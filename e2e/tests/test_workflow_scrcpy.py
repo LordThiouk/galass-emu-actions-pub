@@ -66,8 +66,9 @@ BASELINE_STEPS = [
     "name: Contrôle anti-fuite des diagnostics (AUCUN secret dans l'artefact public)",
     "name: Diagnostics écran destination/service (dump XML + capture, non chiffré)",
     "name: Résumé (PASS/FAIL seulement)",
+    "name: Réveil Nix (webhook fin de run, sans contenu sensible)",
 ]
-BASELINE_COUNT = len(BASELINE_STEPS)  # 22 (20 d'origine + les 2 étapes diag)
+BASELINE_COUNT = len(BASELINE_STEPS)  # 23 (20 d'origine + 2 étapes diag + webhook fin de run)
 EMULATOR_MARK = "reactivecircus/android-emulator-runner"
 RELEASE_MARK = "github.com/Genymobile/scrcpy/releases/download"
 FLOOR_MAJOR = 3  # --capture-orientation / --video-bit-rate appear in scrcpy v3.0
