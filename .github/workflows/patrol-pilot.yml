@@ -50,6 +50,14 @@ jobs:
       # build (gradle/patrol build) ; sinon c'est la phase test sur émulateur.
       - name: Accepter licences Android SDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Réparer NDK Android (source.properties manquant)
+        run: |
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          if [ ! -f "$NDK/source.properties" ]; then
+            rm -rf "$NDK"
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" > /dev/null
+          fi
+          ls "$NDK/source.properties"
       - name: Build APK (patrol build, hors émulateur)
         if: steps.has.outputs.ok == '1'
         working-directory: src/rider
