@@ -1,5 +1,6 @@
 name: patrol-pilot
 # Pilote Patrol NON bloquant, séparé du job e2e (contrat d'étapes inchangé).
+# Relance 2026-11-02 : bascule e2e vers Patrol (OK Papa).
 on:
   # push : workflow_dispatch exige le fichier sur la branche par défaut (pas de merge).
   push:
