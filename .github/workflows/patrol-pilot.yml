@@ -15,7 +15,7 @@ jobs:
   patrol-pilot:
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
       RIDER_TEST_PHONE: ${{ secrets.RIDER_TEST_PHONE }}
@@ -46,6 +46,23 @@ jobs:
       - name: patrol_cli
         if: steps.has.outputs.ok == '1'
         run: dart pub global activate patrol_cli && echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+      # Diagnostic : isoler le build de l'exécution. Si le run bloque ici, c'est le
+      # build (gradle/patrol build) ; sinon c'est la phase test sur émulateur.
+      - name: Build APK (patrol build, hors émulateur)
+        if: steps.has.outputs.ok == '1'
+        working-directory: src/rider
+        timeout-minutes: 25
+        run: |
+          flutter pub get
+          patrol build android -t patrol_test/rider_home_destination_test.dart \
+            --dart-define=API_BASE_URL="$BASE" \
+            --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
+            --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" \
+            || { echo "::warning::patrol build a échoué — fallback flutter build apk --debug"; \
+                 flutter build apk --debug \
+                   --dart-define=API_BASE_URL="$BASE" \
+                   --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
+                   --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP"; }
       - name: Patrol (rider accueil + login + destination)
         if: steps.has.outputs.ok == '1'
         uses: reactivecircus/android-emulator-runner@v2
@@ -58,4 +75,34 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           working-directory: src/rider
-          script: flutter pub get >/dev/null && adb emu geo fix -17.4677 14.7167 ; patrol test -t patrol_test/rider_home_destination_test.dart --dart-define=API_BASE_URL="$BASE" --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" 2>&1 | sed -E 's#https?://[^ ]+#<url>#g' | tail -n 80
+          script: |
+            set +e
+            flutter pub get >/dev/null
+            adb emu geo fix -17.4677 14.7167
+            adb logcat -c || true
+            adb logcat -v time > logcat.txt 2>&1 &
+            LOGCAT_PID=$!
+            timeout 1500 patrol test -t patrol_test/rider_home_destination_test.dart --verbose \
+              --dart-define=API_BASE_URL="$BASE" \
+              --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
+              --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" 2>&1 \
+              | tee patrol-test.log \
+              | sed -E 's#https?://[^ ]+#<url>#g' \
+              | tail -n 200
+            rc=${PIPESTATUS[0]}
+            echo "patrol test exit code: ${rc}"
+            kill "$LOGCAT_PID" 2>/dev/null
+            wait "$LOGCAT_PID" 2>/dev/null
+            exit "$rc"
+      - name: Artefacts diagnostics (logcat + logs patrol)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patrol-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            src/rider/logcat.txt
+            src/rider/patrol-test.log
+            src/rider/build/patrol/**
+            src/rider/patrol_logs/**
