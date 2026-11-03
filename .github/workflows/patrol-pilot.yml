@@ -66,6 +66,14 @@ jobs:
           mkdir -p ~/.android
           echo "$KS" | base64 -d > ~/.android/debug.keystore
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep "SHA1:"
+      - name: Clé API de test CI (Firebase phone auth, CI seulement)
+        env:
+          CIK: ${{ secrets.CI_FIREBASE_TEST_API_KEY }}
+        run: |
+          if [ -z "$CIK" ]; then echo "::error::secret CI_FIREBASE_TEST_API_KEY absent"; exit 1; fi
+          cd src/rider
+          sed -i "s/AIzaSyBaK[0-9A-Za-z_-]*x0GI/$CIK/g" lib/firebase_options.dart android/app/google-services.json
+          grep -c "AIzaSyBaK" lib/firebase_options.dart android/app/google-services.json || true
       - name: Build APK (patrol build, hors émulateur)
         if: steps.has.outputs.ok == '1'
         working-directory: src/rider
