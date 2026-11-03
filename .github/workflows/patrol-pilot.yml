@@ -81,6 +81,7 @@ jobs:
         run: |
           flutter pub get
           patrol build android -t patrol_test/rider_home_destination_test.dart \
+            --dart-define=E2E=true \
             --dart-define=API_BASE_URL="$BASE" \
             --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
             --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" \
@@ -99,7 +100,7 @@ jobs:
           profile: pixel_6
           ram-size: 4096
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          emulator-options: -no-window -gpu guest -noaudio -no-boot-anim -camera-back none -no-snapshot
           working-directory: src/rider
           script: bash "$GITHUB_WORKSPACE/.github/scripts/patrol-run.sh"
       - name: Artefacts diagnostics (logcat + logs patrol)
