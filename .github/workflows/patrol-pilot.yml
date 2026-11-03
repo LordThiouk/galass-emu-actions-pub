@@ -58,6 +58,14 @@ jobs:
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" > /dev/null
           fi
           ls "$NDK/source.properties"
+      - name: Clé de debug fixe (SHA-1 enregistré dans Firebase)
+        env:
+          KS: ${{ secrets.CI_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then echo "::error::secret CI_DEBUG_KEYSTORE_B64 absent"; exit 1; fi
+          mkdir -p ~/.android
+          echo "$KS" | base64 -d > ~/.android/debug.keystore
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep "SHA1:"
       - name: Build APK (patrol build, hors émulateur)
         if: steps.has.outputs.ok == '1'
         working-directory: src/rider
