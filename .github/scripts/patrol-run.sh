@@ -7,6 +7,7 @@ adb logcat -c || true
 adb logcat -v time > logcat.txt 2>&1 &
 LOGCAT_PID=$!
 timeout 1500 patrol test -t patrol_test/rider_home_destination_test.dart --verbose \
+  --dart-define=E2E=true \
   --dart-define=API_BASE_URL="$BASE" \
   --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
   --dart-define=RIDER_TEST_OTP="$RIDER_TEST_OTP" 2>&1 \
@@ -17,4 +18,7 @@ rc=${PIPESTATUS[0]}
 echo "patrol test exit code: ${rc}"
 kill "$LOGCAT_PID" 2>/dev/null
 wait "$LOGCAT_PID" 2>/dev/null
+if [ "$rc" -eq 0 ] && grep -qE "FAILED|Test failed|AssertionError" patrol-test.log; then
+  echo "::error::patrol log contains failures despite exit 0"; rc=1
+fi
 exit "$rc"
