@@ -14,7 +14,7 @@ permissions:
 jobs:
   patrol-pilot:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 80
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
       RIDER_TEST_PHONE: ${{ secrets.RIDER_TEST_PHONE }}
@@ -73,13 +73,19 @@ jobs:
           cd src/rider
           sed -i "s/AIzaSyBaK[0-9A-Za-z_-]*x0GI/$CIK/g" lib/firebase_options.dart android/app/google-services.json
           grep -c "AIzaSyBaK" lib/firebase_options.dart android/app/google-services.json || true
+      - name: Tests unitaires (slots, redaction, multistop)
+        if: steps.has.outputs.ok == '1'
+        working-directory: src/rider
+        run: |
+          flutter pub get
+          flutter test test/unit/home_location_slots_test.dart test/unit/log_key_redaction_test.dart test/unit/log_redaction_hygiene_test.dart $(ls test/unit/multistop_*_test.dart)
       - name: Build APK (patrol build, hors émulateur)
         if: steps.has.outputs.ok == '1'
         working-directory: src/rider
         timeout-minutes: 25
         run: |
           flutter pub get
-          patrol build android -t patrol_test/rider_home_destination_test.dart \
+          patrol build android -t patrol_test/rider_home_destination_test.dart -t patrol_test/rider_multistop_test.dart \
             --dart-define=E2E=true \
             --dart-define=API_BASE_URL="$BASE" \
             --dart-define=RIDER_TEST_PHONE="$RIDER_TEST_PHONE" \
