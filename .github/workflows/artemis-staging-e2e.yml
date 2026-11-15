@@ -12,8 +12,8 @@ on:
         default: "fix/multistop-close"
         type: string
       model:
-        description: "Modèle Artemis (freellmapi)"
-        default: "gemini-2.5-flash"
+        description: "Modèle Artemis (opencode Zen, id *-free)"
+        default: "deepseek-v4.1-flash-free"
         type: string
 
 permissions:
@@ -41,13 +41,17 @@ jobs:
       RIDER_TOKEN: ${{ secrets.GALASS_E2E_RIDER_TOKEN }}
       DRIVER_TOKEN: ${{ secrets.GALASS_E2E_DRIVER_TOKEN }}
       DEV_TOKEN: ${{ secrets.GALASS_E2E_DEV_TOKEN }}
-      OPENAI_API_KEY: ${{ secrets.FREELLMAPI_KEY }}
-      OPENAI_BASE_URL: ${{ secrets.FREELLMAPI_BASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      OPENAI_BASE_URL: https://opencode.ai/inference/openai/v1
       ARTEMIS_DEFAULT_MODEL: ${{ inputs.model }}
+      ARTEMIS_FALLBACK_MODELS: "mimo-v2.6-flash-free,glm-5.3-flash-free,minimax-m3.1-flash-free,longcat-2.5-free,iceman-free,flint-40b-free,nemotron-3.5-lightning-free,beam-free,inkling-2-small-free"
       ARTEMIS_USE_USER_DIR: "false"
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
+      - name: Garde clé opencode
+        run: |
+          [ -n "${OPENAI_API_KEY:-}" ] || { echo "::error::secret OPENCODE_API_KEY absent (acte Papa requis)"; exit 1; }
       - name: Garde staging
         run: |
           python3 e2e/base_guard.py "$BASE"
