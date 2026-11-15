@@ -441,6 +441,13 @@ NOTIF_BEFORE=$(notif_probe "$DRIVER_PKG" "")
 NOTIF_BEFORE_PKG=$(printf '%s' "$NOTIF_BEFORE" | json_field records_pkg)
 log "notif baseline: $NOTIF_BEFORE"
 
+# Artemis n'appelle plus d'API LLM quand ARTEMIS_DISABLE=1 :
+# le CLI opencode pilote l'émulateur (adb + e2e/run.sh / api_flow.py / ui.sh).
+if [ "${ARTEMIS_DISABLE:-0}" = "1" ]; then
+  ARTEMIS_OK=0
+  mark llm-vision SKIP "Artemis LLM désactivé (CLI opencode pilote l'émulateur)"
+  mark artemis-smoke SKIP "Artemis LLM désactivé — UI via taps + API (e2e/ui.sh)"
+else
 # Préflight vision (inchangé) + smoke Artemis.
 "$PY" - "$OUT/artemis" <<'PY' > "$OUT/artemis/vision-model.txt"
 import json, os, re, sys, urllib.request
@@ -458,12 +465,8 @@ except Exception:
     ids = []
 open(f"{out}/models.txt", "w").write("\n".join(ids) + "\n")
 want = os.environ.get("ARTEMIS_DEFAULT_MODEL") or "auto"
-fallback = [x.strip() for x in os.environ.get("ARTEMIS_FALLBACK_MODELS", "").split(",") if x.strip()]
 vis = [i for i in ids if re.search(r"vl|vision|gemini|gpt-4o|gpt-4\.1|llama-4|pixtral|gemma-3|qwen.*vl|omni|scout|maverick", i, re.I)]
-cands = []
-for m in [want] + fallback + [i for i in vis if i != want][:8]:
-    if m and m not in cands:
-        cands.append(m)
+cands = [want] + [i for i in vis if i != want][:8]
 log = open(f"{out}/vision-preflight.txt", "w")
 chosen = ""
 for m in cands:
@@ -485,7 +488,7 @@ print(chosen)
 PY
 VISION_MODEL=$(tr -d '\n' < "$OUT/artemis/vision-model.txt")
 if [ -z "$VISION_MODEL" ]; then
-  mark llm-vision WARN "aucun modèle opencode *-free n'accepte les images (voir artemis/vision-preflight.txt)"
+  mark llm-vision WARN "aucun modèle freellmapi n'accepte les images (voir artemis/vision-preflight.txt)"
   ARTEMIS_OK=0
 elif ! printf '%s' "$VISION_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]{1,80}$'; then
   # B6: the id is untrusted (remote /models listing). Refuse anything that could
@@ -510,6 +513,7 @@ else
   # déjà observing le 39992138248) ne doit pas verrouiller le verdict: Artemis
   # est indisponible -> fallback taps + API, et le smoke est WARN, pas FAIL.
   mark artemis-smoke WARN "Artemis unavailable — fallback taps + API pour toutes les étapes UI (voir artemis/smoke.log)"
+fi
 fi
 
 # -------------------------------------------------- rider compose (UI only)

@@ -630,7 +630,7 @@ def test_every_harness_test_runs_in_ci():
 @case
 def test_deadlines_are_ordered_watchdog_step_job():
     wf = open(WORKFLOW, encoding="utf-8").read()
-    m = re.search(r"- name: E2E multistop \(Artemis \+ API fallback\)\n\s+timeout-minutes: (\d+)", wf)
+    m = re.search(r"- name: E2E multistop \([^)]+\)\n\s+timeout-minutes: (\d+)", wf)
     assert m, "le step E2E doit porter son propre timeout-minutes"
     step = int(m.group(1))
     job = int(re.search(r"^  e2e:\n(?:.*\n)*?    timeout-minutes: (\d+)", wf, re.M).group(1))

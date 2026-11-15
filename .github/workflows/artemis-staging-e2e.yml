@@ -12,8 +12,8 @@ on:
         default: "fix/multistop-close"
         type: string
       model:
-        description: "Modèle Artemis (opencode Zen, id *-free)"
-        default: "deepseek-v4.1-flash-free"
+        description: "Modèle CLI opencode (opencode/*-free, sans clé API)"
+        default: "opencode/deepseek-v4.1-flash-free"
         type: string
 
 permissions:
@@ -41,17 +41,14 @@ jobs:
       RIDER_TOKEN: ${{ secrets.GALASS_E2E_RIDER_TOKEN }}
       DRIVER_TOKEN: ${{ secrets.GALASS_E2E_DRIVER_TOKEN }}
       DEV_TOKEN: ${{ secrets.GALASS_E2E_DEV_TOKEN }}
-      OPENAI_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-      OPENAI_BASE_URL: https://opencode.ai/inference/openai/v1
-      ARTEMIS_DEFAULT_MODEL: ${{ inputs.model }}
-      ARTEMIS_FALLBACK_MODELS: "mimo-v2.6-flash-free,glm-5.3-flash-free,minimax-m3.1-flash-free,longcat-2.5-free,iceman-free,flint-40b-free,nemotron-3.5-lightning-free,beam-free,inkling-2-small-free"
-      ARTEMIS_USE_USER_DIR: "false"
+      OPENCODE_VERSION: "1.19.4"
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+      ARTEMIS_DISABLE: "1"
+      OC_MODEL: ${{ inputs.model }}
+      OC_MODEL_CHAIN: "opencode/mimo-v2.6-flash-free,opencode/glm-5.3-flash-free,opencode/minimax-m3.1-flash-free,opencode/longcat-2.5-free,opencode/iceman-free,opencode/flint-40b-free,opencode/nemotron-3.5-lightning-free,opencode/beam-free,opencode/inkling-2-small-free"
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
-      - name: Garde clé opencode
-        run: |
-          [ -n "${OPENAI_API_KEY:-}" ] || { echo "::error::secret OPENCODE_API_KEY absent (acte Papa requis)"; exit 1; }
       - name: Garde staging
         run: |
           python3 e2e/base_guard.py "$BASE"
@@ -168,13 +165,23 @@ jobs:
           ls -l /dev/kvm
           echo "Runner: $(nproc) vCPU, $(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo) Mo RAM"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: {node-version: "24"}
 
-      - name: Installer Artemis (vendor)
+      - name: Installer opencode (version de la box)
         run: |
-          cd vendor/artemis
-          uv sync --no-dev
-          .venv/bin/artemis --version
+          npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}" >/dev/null 2>&1
+          v=$(opencode --version 2>/dev/null | tail -n1)
+          [ "$v" = "$OPENCODE_VERSION" ] || { echo "::error::opencode $v au lieu de $OPENCODE_VERSION"; exit 1; }
+          echo "opencode $v"
+          mkdir -p "$HOME/.config/opencode"
+          printf '%s\n' '{ "permission": { "read": { "*": "allow" }, "edit": { "*": "allow" }, "bash": { "*": "allow" } } }' > "$HOME/.config/opencode/opencode.json"
+
+      - name: Valider le modèle (opencode/*-free)
+        run: |
+          m=$(bash e2e/ci-opencode-run.sh validate-model "$OC_MODEL") || exit 1
+          echo "$m"
+          echo "OC_MODEL=${m#model=}" >> "$GITHUB_ENV"
 
       - name: Tests du harnais (syntaxe + contrats)
         run: |
@@ -183,7 +190,7 @@ jobs:
           # Toute nouvelle spec e2e/tests/test_*.py tourne ici sans édition du workflow.
           for t in e2e/tests/test_*.py; do echo "== $t"; python3 "$t"; done
 
-      - name: E2E multistop (Artemis + API fallback)
+      - name: E2E multistop (opencode + API fallback)
         timeout-minutes: 100
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -195,7 +202,7 @@ jobs:
           cores: 2
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
-          script: bash e2e/run.sh
+          script: bash e2e/ci-opencode-run.sh run
 
       - name: Chiffrer les preuves
         if: always()
@@ -214,5 +221,8 @@ jobs:
       - name: Résumé (PASS/FAIL seulement)
         if: always()
         run: |
+          echo "## Verdict" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f e2e-out/verdict.txt ]; then head -n 20 e2e-out/verdict.txt >> "$GITHUB_STEP_SUMMARY"; else echo "FAIL" >> "$GITHUB_STEP_SUMMARY"; echo "verdict.txt absent" >> "$GITHUB_STEP_SUMMARY"; fi
+          echo >> "$GITHUB_STEP_SUMMARY"
           echo "| étape | résultat |" >> "$GITHUB_STEP_SUMMARY"; echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           if [ -f e2e-out/results.txt ]; then awk -F'|' '{print "| "$1" | "$2" |"}' e2e-out/results.txt >> "$GITHUB_STEP_SUMMARY"; else echo "| run | no results |" >> "$GITHUB_STEP_SUMMARY"; fi
