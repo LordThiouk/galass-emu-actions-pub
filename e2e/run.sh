@@ -441,6 +441,13 @@ NOTIF_BEFORE=$(notif_probe "$DRIVER_PKG" "")
 NOTIF_BEFORE_PKG=$(printf '%s' "$NOTIF_BEFORE" | json_field records_pkg)
 log "notif baseline: $NOTIF_BEFORE"
 
+# Artemis n'appelle plus d'API LLM quand ARTEMIS_DISABLE=1 :
+# le CLI opencode pilote l'émulateur (adb + e2e/run.sh / api_flow.py / ui.sh).
+if [ "${ARTEMIS_DISABLE:-0}" = "1" ]; then
+  ARTEMIS_OK=0
+  mark llm-vision SKIP "Artemis LLM désactivé (CLI opencode pilote l'émulateur)"
+  mark artemis-smoke SKIP "Artemis LLM désactivé — UI via taps + API (e2e/ui.sh)"
+else
 # Préflight vision (inchangé) + smoke Artemis.
 "$PY" - "$OUT/artemis" <<'PY' > "$OUT/artemis/vision-model.txt"
 import json, os, re, sys, urllib.request
@@ -506,6 +513,7 @@ else
   # déjà observing le 39992138248) ne doit pas verrouiller le verdict: Artemis
   # est indisponible -> fallback taps + API, et le smoke est WARN, pas FAIL.
   mark artemis-smoke WARN "Artemis unavailable — fallback taps + API pour toutes les étapes UI (voir artemis/smoke.log)"
+fi
 fi
 
 # -------------------------------------------------- rider compose (UI only)
