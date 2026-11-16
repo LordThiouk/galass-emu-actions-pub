@@ -54,7 +54,9 @@ cmd_validate_model() {
 }
 
 build_chain() {
-  local main="$1" chain="$main" m norm
+  local main="$1"
+  local chain="$main"
+  local m norm
   local raw="${OC_MODEL_CHAIN:-$DEFAULT_CHAIN}"
   IFS=',' read -ra extras <<< "$raw"
   for m in "${extras[@]}"; do
