@@ -514,14 +514,12 @@ cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
 # Filet : si la boîte s'affiche quand même, la fermer par Allow (trouvé dans le dump).
 dismiss_bg_dialog && log "boîte batterie fermée par Allow" || true
+# Un driver hors ligne ne reçoit aucune offre : assertion dure (FAIL), sauf plantage d'émulateur.
 snap_with_recovery 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"
 case $? in
-  0) mark driver-home-online PASS "ui cap=33-driver-home-online.png$([ "$SNAP_REPLAYED" = 1 ] && echo " — rejoué après reprise émulateur")" ;;
+  0) mark driver-home-online PASS "ui cap=33-driver-home-online.png (replay=$SNAP_REPLAYED)" ;;
   2) mark driver-home-online INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (33)" ;;
-  *)
-    # Un driver hors ligne ne reçoit aucune offre : la suite tournerait à vide, chaque
-    # point aval en échec attribué à l'app. L'assertion est dure, pas un WARN.
-    mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver" ;;
+  *) mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver" ;;
 esac
 # Baseline B7 prise AVANT toute composition de course : l'offre peut être poussée dès
 # la création, donc une baseline juste avant `api pick` serait déjà polluée.
