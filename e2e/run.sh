@@ -34,6 +34,7 @@ mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 
 declare -a RESULTS=()
 . "$(dirname "$0")/ui.sh"
+. "$(dirname "$0")/device_prep.sh"
 
 # S21: details go to $OUT/run.log only; stdout carries POINT|RESULT and nothing else,
 # so a ride uid can never leak into the public Actions log. A sanitized copy also goes
@@ -233,7 +234,7 @@ ui_pick_place() {
 compose_ride_ui() {
   log "compose_ride_ui: début"
   bring_fg "$RIDER_PKG" || true
-  tap_when "$RIDER_PKG" "Où allez-vous ?" "Où allez-vous" || { log "compose_ride_ui: champ destination absent"; return 1; }
+  tap_node_verified "$RIDER_PKG" "Où allez-vous ?" || { log "compose_ride_ui: le tap sur « Où allez-vous ? » n'a rien ouvert (repli API, FAIL)"; return 1; }
   ui_pick_place "E2E Dest" "E2E Dest Point E" || return 1
   local stop
   for stop in "E2E Stop 1 Médina" "E2E Stop 2 Fann"; do
@@ -446,6 +447,13 @@ LOG_FILE="$OUT/logcat/stream.log"
 : > "$LOG_FILE"
 command adb logcat -v threadtime > "$LOG_FILE" 2>&1 &
 LOGCAT_PID=$!
+# Stabilité émulateur : geler configupdater, puis attendre 60 s sans ANR avant tout test.
+emu_quiet_prepare
+if emu_wait_calm "$LOG_FILE" 60 240; then
+  mark emulator-calm PASS "aucun ANR pendant 60 s avant les tests"
+else
+  mark emulator-calm WARN "émulateur jamais calme (ANR continus) avant les tests"
+fi
 
 # ------------------------------------------------------------------ install
 ADB_TMO=600 adb install -r -t -g "$APK_RIDER" >/dev/null 2>&1 && r1=0 || r1=1
@@ -460,6 +468,8 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ------------------------------------------------------------------ launch
+# Boîte « Let app always run in background? » du driver : exempter AVANT le lancement.
+whitelist_battery "$DRIVER_PKG" "$RIDER_PKG"
 # État de départ (step 33 / D-1): le driver doit être connecté (jeton injecté ci-dessus)
 # et EN LIGNE côté backend avant que l'app driver démarre et avant toute course.
 if api online >> "$OUT/run.log" 2>&1; then
@@ -470,6 +480,8 @@ fi
 launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" 60 || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
+# Filet : si la boîte s'affiche quand même, la fermer par Allow (trouvé dans le dump).
+dismiss_bg_dialog && log "boîte batterie fermée par Allow" || true
 if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
   mark driver-home-online PASS "ui cap=33-driver-home-online.png"
 else
@@ -970,6 +982,11 @@ adb shell uptime > "$D/emu-uptime.txt" 2>/dev/null || true
 { uptime; nproc; free -m; } > "$D/host-load.txt" 2>/dev/null || true
 pkill -f artemis-admin >/dev/null 2>&1 || true
 kill "${LOGCAT_PID:-}" 2>/dev/null || true
+# Émulateur instable ≠ échec de l'app : on le dit, le verdict reste FAIL mais étiqueté.
+if emu_unstable_scan "$LOG_FILE" >> "$OUT/run.log" 2>&1; then
+  : > "$OUT/emulator-unstable.flag"
+  mark emulator-stable WARN "ÉMULATEUR INSTABLE (ActivityManager has died / ANR in system) — échecs UI non imputables à l'app"
+fi
 flush_results
 write_flags
 "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"

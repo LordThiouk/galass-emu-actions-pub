@@ -297,8 +297,10 @@ def build(out_dir, p0=None):
                 key, _, value = line.strip().partition("=")
                 flags[key] = value
 
+    unstable = os.path.isfile(os.path.join(out_dir, "emulator-unstable.flag"))
     report = {
         "verdict": verdict,
+        "emulator_unstable": unstable,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "points": points,
         "fail_count": len(fails),
@@ -328,6 +330,8 @@ def build(out_dir, p0=None):
         "",
         f"Verdict: **{verdict}**",
         "",
+        *(["> ⚠ ÉMULATEUR INSTABLE (ActivityManager has died / ANR in system) : "
+           "les échecs UI de ce run ne sont pas imputables à l'app.", ""] if unstable else []),
         f"P0: {report['p0_pass']}/{report['p0_total']} PASS — "
         f"non-PASS: {', '.join(p0_nonpass) or 'none'}",
         "",
@@ -359,7 +363,8 @@ def main(argv=None):
     print(f"verdict={report['verdict']} fails={report['fail_count']} "
           f"warns={report['warn_count']} skips={report['skip_count']} "
           f"p0={report['p0_pass']}/{report['p0_total']} "
-          f"nonpass={','.join(report['p0_nonpass']) or 'none'}")
+          f"nonpass={','.join(report['p0_nonpass']) or 'none'}"
+          + (" emulator_unstable=1" if report["emulator_unstable"] else ""))
     return 0 if report["verdict"] == "PASS" else 1
 
 

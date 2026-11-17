@@ -73,3 +73,12 @@ def test_ui_compose_runs_before_api_pick_and_never_creates():
 
 def test_markers_match_rider_strings():
     assert "Où allez-vous" in RUN and "Partons pour une course" in RUN
+
+
+CASES = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+
+if __name__ == "__main__":
+    for fn in CASES:
+        fn()
+        print(f"ok - {fn.__name__}")
+    print(f"PASS ({len(CASES)}/{len(CASES)})")

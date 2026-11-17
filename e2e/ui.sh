@@ -313,6 +313,38 @@ PY
   _ulog "tap_exact $1 @ $2,$3"
 }
 
+# tap_node_verified pkg label : tape le centre du nœud (ou de son parent cliquable) trouvé par
+# texte/content-desc dans le dump, puis PROUVE que l'écran a changé : le libellé a disparu ou
+# un champ de saisie est apparu. Jusqu'à 2 retaps. 0 = écran changé, 1 = rien ne s'est passé.
+tap_node_verified() {
+  local pkg="$1" label="$2" try res x y kind
+  for try in 1 2 3; do
+    wait_ui "$pkg" 15 "+$(printf '%s' "$label" | python3 -c 'import re,sys;print(r"\s+".join(re.escape(w) for w in sys.stdin.read().split()))')" || true
+    ui_xml || { _ulog "tap_node_verified: dump indisponible ($label, essai $try)"; continue; }
+    res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$UI_XML_PATH" "$label")
+    if [ -z "$res" ]; then
+      _ulog "tap_node_verified: nœud « $label » absent (essai $try)"
+      sleep 2
+      continue
+    fi
+    read -r x y kind <<<"$res"
+    adb shell input tap "$x" "$y" >/dev/null 2>&1
+    _ulog "tap_node_verified: « $label » @ $x,$y ($kind, essai $try)"
+    sleep 3
+    if ! ui_xml; then continue; fi
+    if python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" --has-input "$UI_XML_PATH"; then
+      _ulog "tap_node_verified: champ de saisie visible — écran changé"
+      return 0
+    fi
+    if [ -z "$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$UI_XML_PATH" "$label")" ]; then
+      _ulog "tap_node_verified: « $label » a disparu — écran changé"
+      return 0
+    fi
+    _ulog "tap_node_verified: écran inchangé après le tap (essai $try)"
+  done
+  return 1
+}
+
 # ui_action pkg label : attend un libellé tolérant aux espaces, tape, EXIGE le dialogue.
 # B3: a tap whose confirmation dialog never opened is not a successful action, so the
 # no-dialog branch returns 1 (the old `|| true` + trailing sleep made it look fine).
