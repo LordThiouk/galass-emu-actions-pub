@@ -120,9 +120,12 @@ ui_xml() {
   done
   if [ "$rc" -ne 0 ]; then
     rm -f "$UI_XML_PATH"
-    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais"
+    EMU_DUMP_FAILS=$(( ${EMU_DUMP_FAILS:-0} + 1 ))
+    [ "$EMU_DUMP_FAILS" -gt "${EMU_DUMP_FAILS_MAX:-0}" ] && EMU_DUMP_FAILS_MAX=$EMU_DUMP_FAILS
+    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais (d'affilée: $EMU_DUMP_FAILS)"
     return 4
   fi
+  EMU_DUMP_FAILS=0
   UI_DUMP_BYTES=$(wc -c < "$UI_XML_PATH" 2>/dev/null || echo 0)
   UI_DUMP_HASH=$(sha256sum "$UI_XML_PATH" 2>/dev/null | cut -d' ' -f1)
   UI_DUMP_VALID=1

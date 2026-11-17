@@ -197,7 +197,7 @@ release_watchdog() {
   kill -- "-${WATCHDOG_PGID}" 2>/dev/null || kill "$WATCHDOG_PGID" 2>/dev/null || true
 }
 spawn_watchdog || true
-trap 'release_watchdog; kill "${LOGCAT_PID:-}" 2>/dev/null; pkill -P "$$" 2>/dev/null; true' EXIT
+trap 'release_watchdog; kill "${LOGCAT_PID:-}" "${SAMPLER_PID:-}" 2>/dev/null; pkill -P "$$" 2>/dev/null; true' EXIT
 # Le watchdog TERM le script à l'échéance. Sans handler, bash meurt sans rien
 # flusher (le seul verdict serait celui du watchdog) : on rend le verdict partiel
 # et un code 124 explicite, et l'EXIT ferme les groupes derrière.
@@ -226,11 +226,12 @@ cap() {
     mark "$point" FAIL "no marker declared for $point (harness)"
     return 1
   fi
-  if snap "$name" "$pkg" "$tmo" "$spec" "" "$point" "$src"; then
-    mark "$point" PASS "ui cap=$name.png marker ok ($src)"
-  else
-    mark "$point" FAIL "ui cap=$name.png marker absent ($spec)"
-  fi
+  snap_with_recovery "$name" "$pkg" "$tmo" "$spec" "" "$point" "$src"
+  case $? in
+    0) mark "$point" PASS "ui cap=$name.png marker ok ($src)$([ "$SNAP_REPLAYED" = 1 ] && echo " — rejoué après reprise émulateur, preuve d'écran")" ;;
+    2) mark "$point" INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (cap=$name, point non compté comme échec de l'app)" ;;
+    *) mark "$point" FAIL "ui cap=$name.png marker absent ($spec)" ;;
+  esac
 }
 
 # compose_ride_ui : compose la course DANS l'app Rider par taps (jamais par l'API), pour que
@@ -241,8 +242,11 @@ cap() {
 # 1 = échec tracé (le repli API reste marqué FAIL, jamais PASS).
 ui_pick_place() {
   local query="$1" label="$2"
+  [ "${PLACES_PROBED:-0}" = 1 ] || { places_diag_start; PLACES_PROBED=1; }
   adb shell input text "$(printf '%s' "$query" | sed 's/ /%s/g')" >/dev/null 2>&1
   sleep 2
+  # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
+  places_wait_result "$label" 20 || true
   tap_when "$RIDER_PKG" "$label" || { log "compose_ride_ui: résultat « $label » introuvable"; return 1; }
 }
 compose_ride_ui() {
@@ -471,6 +475,9 @@ LOG_FILE="$OUT/logcat/stream.log"
 : > "$LOG_FILE"
 command adb logcat -v threadtime > "$LOG_FILE" 2>&1 &
 LOGCAT_PID=$!
+# Mesure: échantillon hôte/AVD toutes les 10 s (explique un plantage : CPU/RAM ou gms ?).
+"$PY" e2e/emu_sampler.py "$OUT" "$LOG_FILE" 10 >/dev/null 2>&1 &
+SAMPLER_PID=$!
 # Stabilité émulateur : geler configupdater, puis attendre 60 s sans ANR avant tout test.
 emu_quiet_prepare
 if emu_wait_calm "$LOG_FILE" 60 240; then
@@ -478,6 +485,7 @@ if emu_wait_calm "$LOG_FILE" 60 240; then
 else
   mark emulator-calm WARN "émulateur jamais calme (ANR continus) avant les tests"
 fi
+emu_checkpoint
 
 # ------------------------------------------------------------------ install
 ADB_TMO=600 adb install -r -t -g "$APK_RIDER" >/dev/null 2>&1 && r1=0 || r1=1
@@ -506,13 +514,15 @@ cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
 # Filet : si la boîte s'affiche quand même, la fermer par Allow (trouvé dans le dump).
 dismiss_bg_dialog && log "boîte batterie fermée par Allow" || true
-if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
-  mark driver-home-online PASS "ui cap=33-driver-home-online.png"
-else
-  # Un driver hors ligne ne reçoit aucune offre : la suite tournerait à vide, chaque
-  # point aval en échec attribué à l'app. L'assertion est dure, pas un WARN.
-  mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver"
-fi
+snap_with_recovery 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"
+case $? in
+  0) mark driver-home-online PASS "ui cap=33-driver-home-online.png$([ "$SNAP_REPLAYED" = 1 ] && echo " — rejoué après reprise émulateur")" ;;
+  2) mark driver-home-online INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (33)" ;;
+  *)
+    # Un driver hors ligne ne reçoit aucune offre : la suite tournerait à vide, chaque
+    # point aval en échec attribué à l'app. L'assertion est dure, pas un WARN.
+    mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver" ;;
+esac
 # Baseline B7 prise AVANT toute composition de course : l'offre peut être poussée dès
 # la création, donc une baseline juste avant `api pick` serait déjà polluée.
 NOTIF_BEFORE=$(notif_probe "$DRIVER_PKG" "")
@@ -1001,8 +1011,10 @@ adb shell uptime > "$D/emu-uptime.txt" 2>/dev/null || true
 { uptime; nproc; free -m; } > "$D/host-load.txt" 2>/dev/null || true
 pkill -f artemis-admin >/dev/null 2>&1 || true
 kill "${LOGCAT_PID:-}" 2>/dev/null || true
+kill "${SAMPLER_PID:-}" 2>/dev/null || true
 # Émulateur instable ≠ échec de l'app : on le dit, le verdict reste FAIL mais étiqueté.
 if emu_unstable_scan "$LOG_FILE" >> "$OUT/run.log" 2>&1; then
+  [ "${EMU_CRASHES:-0}" -eq 0 ] && emu_crash_summary ""
   : > "$OUT/emulator-unstable.flag"
   mark emulator-stable WARN "ÉMULATEUR INSTABLE (ActivityManager has died / ANR in system) — échecs UI non imputables à l'app"
 fi
