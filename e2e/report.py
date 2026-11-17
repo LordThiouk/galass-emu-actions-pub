@@ -25,7 +25,9 @@ import re
 import sys
 import time
 
-RANK = {"PASS": 1, "WARN": 2, "SKIP": 3, "FAIL": 4}
+# INCONCLUSIVE = l'émulateur a planté pendant le point (jamais un FAIL de l'app). Pour un
+# point P0 c'est un non-PASS : il fait échouer le verdict comme un FAIL, sans être imputé à l'app.
+RANK = {"PASS": 1, "WARN": 2, "INCONCLUSIVE": 3, "SKIP": 4, "FAIL": 5}
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 RIDER_PKG = "sn.galass.galassrider"
 DRIVER_PKG = "sn.galass.galassdriver"
@@ -237,9 +239,13 @@ def build(out_dir, p0=None):
         if point not in seen:
             _upsert(points, point, "FAIL", "not attempted (harness)")
 
+    # Points marqués INCONCLUSIVE emulator_crash par le harnais : le plantage de l'émulateur
+    # est la raison, les contrôles « pas de capture MATCH » ne doivent pas les réécrire en FAIL.
+    crashed = {r["point"] for r in points
+               if r["result"] == "INCONCLUSIVE" and "emulator_crash" in r["detail"]}
     sidecars = validate_captures(out_dir, read_sidecars(out_dir))
     for cap in sidecars:
-        if cap.get("status") == "INVALID" and cap.get("point"):
+        if cap.get("status") == "INVALID" and cap.get("point") and cap["point"] not in crashed:
             _upsert(points, cap["point"], "FAIL",
                     f"capture invalid: {cap.get('name')} ({cap.get('invalid_reason')})")
     by_point = {}
@@ -248,7 +254,7 @@ def build(out_dir, p0=None):
 
     # a P0 UI claim needs a MATCH capture, whatever the row says
     for point in p0:
-        if point not in UI_POINTS:
+        if point not in UI_POINTS or point in crashed:
             continue
         caps = by_point.get(point, [])
         if not caps:
@@ -284,10 +290,11 @@ def build(out_dir, p0=None):
     fails = [p for p in points if p["result"] == "FAIL"]
     warns = [p for p in points if p["result"] == "WARN"]
     skips = [p for p in points if p["result"] == "SKIP"]
+    inconclusive = [p for p in points if p["result"] == "INCONCLUSIVE"]
     p0_rows = [p for p in points if p["point"] in p0_set]
     p0_nonpass = [p["point"] for p in p0_rows if p["result"] != "PASS"]
     verdict = ("FAIL" if fails or p0_nonpass or len(p0) == 0
-               else ("PASS_WITH_WARNINGS" if warns or skips else "PASS"))
+               else ("PASS_WITH_WARNINGS" if warns or skips or inconclusive else "PASS"))
 
     flags = {}
     flags_path = os.path.join(out_dir, "ui-flags.txt")
@@ -306,6 +313,7 @@ def build(out_dir, p0=None):
         "fail_count": len(fails),
         "warn_count": len(warns),
         "skip_count": len(skips),
+        "inconclusive_count": len(inconclusive),
         "p0_total": len(p0),
         "p0_pass": sum(1 for p in p0_rows if p["result"] == "PASS"),
         "p0_nonpass": p0_nonpass,
@@ -362,6 +370,7 @@ def main(argv=None):
     report = build(args.out_dir, p0=p0)
     print(f"verdict={report['verdict']} fails={report['fail_count']} "
           f"warns={report['warn_count']} skips={report['skip_count']} "
+          f"inconclusive={report['inconclusive_count']} "
           f"p0={report['p0_pass']}/{report['p0_total']} "
           f"nonpass={','.join(report['p0_nonpass']) or 'none'}"
           + (" emulator_unstable=1" if report["emulator_unstable"] else ""))
