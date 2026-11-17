@@ -24,7 +24,8 @@ PY="${PY:-python3}"
 mkdir -p "$OUT"
 rm -rf "$OUT"/screens "$OUT"/ui "$OUT"/state.json "$OUT"/results-raw.txt \
        "$OUT"/results-live.txt "$OUT"/captures.txt "$OUT"/ui-flags.txt \
-       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt
+       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt \
+       "$OUT"/report.json "$OUT"/results.txt "$OUT"/verdict.txt
 mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
 : > "$SMOKE_LOG"
