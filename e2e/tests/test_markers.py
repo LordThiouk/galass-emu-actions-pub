@@ -284,13 +284,20 @@ def _xml(*texts):
 # Rider: stop picker opened by « Ajouter un arrêt ».
 RIDER_STOP_PICKER = _xml("Adresse de l'arrêt", "Confirmer le lieu", "Recherchez votre position")
 # Rider: PENDING summary with the search toggle still open — pre-state of every
-# post-start marker. NOTE: the full timeline (hence the stop labels) is rendered at
-# PENDING too, so the `E2E Stop 1` alternative of running_start is not covered here.
-RIDER_PENDING = _xml("Où allez-vous ?", "Arrêt 1", "Ajouter un arrêt",
-                     "Trouver un chauffeur", "Paiement en espèces")
+# post-start marker. The FULL timeline is rendered at PENDING, so the stop labels
+# (« E2E Stop 1 Médina », « Arrêt 2 ») are already on screen here: neither can ever be
+# a positive of a post-start marker.
+RIDER_PENDING = _xml("Où allez-vous ?", "Arrêt 1", "E2E Stop 1 Médina", "Arrêt 2",
+                     "Ajouter un arrêt", "Trouver un chauffeur", "Paiement en espèces")
 # Rider RUNNING: current-leg banner, first stop not completed.
 RIDER_RUNNING_START = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
                            "E2E Stop 1 Médina", "Terminer la course")
+# Rider RUNNING on leg 1: the timeline is cut to the current leg, so « Arrêt 2 » is
+# NOT rendered before the driver acks stop 1 (ride_itinerary_timeline:288-295).
+RIDER_STOP1_ACTIVE = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
+                          "Terminer la course")
+# Rider RUNNING on leg 2: same banner, but the current-leg label is « Arrêt 2 ».
+RIDER_LEG2 = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2", "Terminer la course")
 RIDER_STOP1_DONE = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2 Fann")
 RIDER_STOP1_DONE_PLURAL = _xml("1/2 arrêts terminés")
 RIDER_STOP2_DONE = _xml("2/2 arrêts terminés", "En route vers E2E Dest Point E")
@@ -324,9 +331,38 @@ def test_l1_rider_stop_picker_matches_real_picker_labels():
 def test_l1_rider_running_start_needs_current_leg_banner():
     spec = markers()["rider_running_start"]
     assert spec_ok(spec, RIDER_RUNNING_START) == 0, spec
+    # PENDING carries the full timeline, so it renders « E2E Stop 1 Médina » too: the
+    # stop label made the marker match the waiting screen. Only the banner is exclusive.
     assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    assert not re.search(r"E2E Stop", spec), spec
     # « Arrêt 1 » IS rendered while RUNNING: negating it made the point unreachable.
     assert "-Arrêt 1" not in spec and "-Arret 1" not in spec, spec
+
+
+@case
+def test_l1_rider_stop1_active_is_leg1_only():
+    spec = markers()["rider_stop1_active"]
+    assert spec_ok(spec, RIDER_STOP1_ACTIVE) == 0, spec
+    # Leg 2 shows the same banner; « Arrêt 2 » is what makes leg 1 exclusive.
+    assert spec_ok(spec, RIDER_LEG2) != 0, spec
+    # PENDING renders both stop labels: no banner, and « Arrêt 2 » present.
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    # The old positives exist nowhere in the Rider code (no « Arrêt en cours », no ETA),
+    # and « Arrêt 1 » is rendered while RUNNING, so it can never be the negative.
+    assert spec_chunks(spec) == [("+", "En route vers"), ("-", "Arrêt 2")], spec
+
+
+@case
+def test_l1_rider_stop1_active_gated_by_api_state():
+    """Point 22 is closed by the API state, not by the screen: stops_done=0 is asserted
+    between the capture and the driver confirmation loop."""
+    text = run_text()
+    start = text.index("cap rider-stop1-active")
+    end = text.index("next_marker=", start)
+    window = text[start:end]
+    assert 'grep -q "stops_done=0" "$OUT/last-ride-state.txt"' in window, window
+    assert 'mark rider-stop1-active FAIL "état API incohérent : stops_done' in window, window
+    assert '${!next_marker}' not in window, "la garde doit précéder la boucle de confirmation"
 
 
 @case

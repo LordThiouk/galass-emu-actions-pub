@@ -91,9 +91,13 @@ MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
 # B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
 # Un libellé présent dès l'écran précédent ne prouve rien ; « Arrêt 1 » est rendu en
 # course (ride_itinerary_timeline : titre de la jambe courante), donc jamais un négatif.
-# RUNNING = currentLegBanner « En route vers <stop> » (ride_details_bottom_sheet_widget).
-MARK_rider_running_start='+En route vers|E2E Stop 1|-Chargement'
-MARK_rider_stop1_active='+Arrêt en cours|En route vers|ETA|\bmin\b|-Arrêt 1'
+# RUNNING = currentLegBanner « En route vers <stop> » (ride_details_bottom_sheet_widget:78-96),
+# null sauf RIDE_ACTIVE/RIDE_RUNNING : seul signal exclusif à la jambe. Le libellé du stop
+# (« E2E Stop 1 ») est rendu dès PENDING par la timeline complète, donc jamais un positif.
+MARK_rider_running_start='+En route vers|-Chargement'
+# Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
+# courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
+MARK_rider_stop1_active='+En route vers|-Arrêt 2'
 # Progression d'arrêts (stopsProgressText, my_strings 64-65) : « @done/@total arrêt(s) terminé(s) ».
 MARK_rider_stop1_done='+1/2 arrêts? terminés?|-Chargement'
 MARK_rider_stop2_done='+2/2 arrêts? terminés?|-Chargement'
@@ -758,6 +762,12 @@ for i in 0 1; do
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
     cap rider-stop1-active 22-rider-stop1-active "$RIDER_PKG" 25
+    # Garde dure : la jambe 1 est prouvée par l'API, pas par l'écran. ride_state vient
+    # d'écrire last-ride-state.txt ; un arrêt déjà terminé interdit le point, quel que
+    # soit ce que la capture a matché (report.py garde le pire verdict du point).
+    if ! grep -q "stops_done=0" "$OUT/last-ride-state.txt" 2>/dev/null; then
+      mark rider-stop1-active FAIL "état API incohérent : stops_done≠0 pendant la jambe 1 ($(tr '\n' ' ' < "$OUT/last-ride-state.txt" 2>/dev/null))"
+    fi
   fi
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
