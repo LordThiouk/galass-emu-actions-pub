@@ -40,6 +40,30 @@ fg_pkg() {
   echo "${cur:-UNKNOWN}"
 }
 
+# xml_pkg : paquet de la fenêtre applicative d'après le DERNIER dump uiautomator valide
+# (attribut package du premier noeud hors com.android.systemui). Vide si pas de dump valide.
+# Sert de preuve de premier plan quand dumpsys renvoie le launcher alors que l'UI de l'app
+# est bien affichée (steps 14/33 : « marqueur absent » sur 29 points alors que le XML
+# montrait l'app).
+xml_pkg() {
+  [ "${UI_DUMP_VALID:-0}" = "1" ] && [ -s "$UI_XML_PATH" ] || { echo ""; return 0; }
+  grep -oE 'package="[^"]+"' "$UI_XML_PATH" 2>/dev/null \
+    | cut -d'"' -f2 | grep -v '^com.android.systemui$' | head -1
+}
+
+# fg_is pkg : vrai si dumpsys OU un dump uiautomator frais place pkg au premier plan.
+fg_is() {
+  [ "$(fg_pkg)" = "$1" ] && return 0
+  ui_xml && [ "$(xml_pkg)" = "$1" ]
+}
+
+# fg_diag : trace brute des signaux de premier plan (sans secret) pour comprendre un écart.
+fg_diag() {
+  _ulog "fg_diag window: $(adb shell dumpsys window 2>/dev/null | grep -m2 -E 'mCurrentFocus|mFocusedApp' | tr -s ' ' | tr '\n' '|')"
+  _ulog "fg_diag activity: $(adb shell dumpsys activity activities 2>/dev/null | grep -m2 -E 'topResumedActivity|mResumedActivity' | tr -s ' ' | tr '\n' '|')"
+  _ulog "fg_diag xml_pkg=$(xml_pkg)"
+}
+
 # ensure_fg : relance UNIQUEMENT si un AUTRE paquet connu est au premier plan.
 # UNKNOWN (dump illisible, écran de transition) ne justifie jamais une relance.
 ensure_fg() {
@@ -215,8 +239,15 @@ wait_ui() {
     clear_sys
     cur=$(fg_pkg)
     if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ] && [ "$cur" != "$pkg" ]; then
-      _ulog "wait_ui: premier plan $cur != $pkg"
-      return 3
+      # Le dump uiautomator fait foi : si l'app attendue y est, dumpsys se trompe.
+      if [ "$(xml_pkg)" = "$pkg" ]; then
+        _ulog "wait_ui: dumpsys=$cur mais le dump uiautomator montre $pkg (dumpsys ignoré)"
+        fg_diag
+      else
+        _ulog "wait_ui: premier plan $cur != $pkg (xml=$(xml_pkg))"
+        fg_diag
+        return 3
+      fi
     fi
     if _spec_ok "$@"; then
       return 0
@@ -405,6 +436,7 @@ snap() {
   if [ "$st" = MATCH ] && [ -n "$first_hash" ]; then
     if ui_xml; then
       cur=$(fg_pkg)
+      [ "$cur" != "$pkg" ] && [ "$(xml_pkg)" = "$pkg" ] && cur="$pkg"
       if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ] && [ "$cur" != "$pkg" ]; then
         st=ACTION_MISS
         _ulog "snap $name: premier plan $cur != $pkg après capture"

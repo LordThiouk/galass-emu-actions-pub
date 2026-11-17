@@ -101,13 +101,15 @@ def driver_loc(lat, lng):
 
 
 def go_online():
+    """Met le driver En ligne. Retourne True seulement si le backend le confirme."""
     driver_loc(*PICK)
     # online-status est un TOGGLE côté backend: rebasculer si on est passé offline
     for _ in range(2):
         c, j = call("POST", "driver/online-status", DT,
                     {"online_status": 1, "lat": PICK[0], "long": PICK[1]})
         if ((j or {}).get("data") or {}).get("online"):
-            break
+            return True
+    return False
 
 
 def create_ride():
@@ -329,6 +331,18 @@ if step == "ping":
     call("GET", "general-setting", RT)
 elif step == "reset":
     reset_rides()
+elif step == "has_open":
+    # 0 si le rider a déjà une course ouverte (composée dans l'app), 1 sinon. Ne crée rien.
+    sys.exit(0 if open_rides() else 1)
+elif step == "online":
+    # État de départ: driver connecté (jeton injecté dans les prefs) ET en ligne, AVANT
+    # de lancer l'app driver et de composer la course. Ne touche pas au comportement
+    # auto-online de l'app (point D-1, hors périmètre).
+    ok = go_online()
+    st["driver_online"] = bool(ok)
+    save()
+    print("DRIVER_ONLINE", 1 if ok else 0, flush=True)
+    sys.exit(0 if ok else 3)
 elif step == "pick":
     pick_ride()
 elif step == "cancel":

@@ -220,6 +220,32 @@ cap() {
   fi
 }
 
+# compose_ride_ui : compose la course DANS l'app Rider par taps (jamais par l'API), pour que
+# `api pick` l'adopte avec ride_source=ui (B2 / ISC-F13-3 concluants). Libellés = my_strings.dart
+# de Galass_Rider (whereToGo, addStop, cashPayment/cash, findDriver). Best-effort : chaque
+# étape est tracée, et l'échec laisse `api pick` marquer ride-composed FAIL (jamais PASS à tort).
+ui_pick_place() {
+  local query="$1" label="$2"
+  adb shell input text "$(printf '%s' "$query" | sed 's/ /%s/g')" >/dev/null 2>&1
+  sleep 2
+  tap_when "$RIDER_PKG" "$label" || { log "compose_ride_ui: résultat « $label » introuvable"; return 1; }
+}
+compose_ride_ui() {
+  log "compose_ride_ui: début"
+  bring_fg "$RIDER_PKG" || true
+  tap_when "$RIDER_PKG" "Où allez-vous ?" "Où allez-vous" || { log "compose_ride_ui: champ destination absent"; return 1; }
+  ui_pick_place "E2E Dest" "E2E Dest Point E" || return 1
+  local stop
+  for stop in "E2E Stop 1 Médina" "E2E Stop 2 Fann"; do
+    tap_when "$RIDER_PKG" "Ajouter un arrêt" || { log "compose_ride_ui: Ajouter un arrêt absent"; return 1; }
+    ui_pick_place "${stop%% *} ${stop#* }" "$stop" || return 1
+    tap_when "$RIDER_PKG" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || true
+  done
+  tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" >/dev/null 2>&1 || log "compose_ride_ui: choix espèces non trouvé"
+  tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; return 1; }
+  log "compose_ride_ui: demande envoyée par l'UI"
+}
+
 api() { STEP="$1" "$PY" e2e/api_flow.py; }
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
@@ -237,14 +263,20 @@ wait_fg() {
   local pkg="$1" tmo="${2:-45}" t0=$SECONDS
   while [ $((SECONDS - t0)) -lt "$tmo" ]; do
     [ "$(fg_pkg)" = "$pkg" ] && return 0
+    # dumpsys peut rester sur le launcher : le dump uiautomator tranche.
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      log "wait_fg: $pkg prouvé par le dump uiautomator (dumpsys fg=$(fg_pkg))"
+      return 0
+    fi
     sleep 2
   done
+  fg_diag
   log "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
   return 1
 }
 # Bascule explicite entre étapes (jamais depuis un wait).
 bring_fg() {
-  [ "$(fg_pkg)" = "$1" ] && return 0
+  fg_is "$1" && return 0
   log "bring_fg $(fg_pkg) -> $1"
   adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   wait_fg "$1" 30
@@ -428,6 +460,13 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ------------------------------------------------------------------ launch
+# État de départ (step 33 / D-1): le driver doit être connecté (jeton injecté ci-dessus)
+# et EN LIGNE côté backend avant que l'app driver démarre et avant toute course.
+if api online >> "$OUT/run.log" 2>&1; then
+  mark driver-online-api PASS "driver mis en ligne et confirmé par le backend"
+else
+  mark driver-online-api FAIL "driver non confirmé en ligne (backend) — voir run.log"
+fi
 launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" 60 || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
@@ -548,6 +587,11 @@ rc=$?
 mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
 bring_fg "$RIDER_PKG" || true
 cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+
+# Si ni Artemis ni les taps ci-dessus n'ont créé de course, composer par taps (UI), pas par l'API.
+if ! api has_open >> "$OUT/run.log" 2>&1; then
+  compose_ride_ui || log "compose_ride_ui: échec (voir lignes ci-dessus)"
+fi
 
 # ------------------------------------------------------------- driver offer
 deadline_check driver-offer  # budget mur : verdict partiel plutôt qu'un step qui traîne
@@ -803,7 +847,7 @@ adb shell input keyevent 4 >/dev/null 2>&1 || true
 # and only after point 29 was actually observed.
 home_left=0
 for _ in $(seq 1 10); do
-  [ "$(fg_pkg)" = "$RIDER_PKG" ] || { home_left=1; break; }
+  fg_is "$RIDER_PKG" || { home_left=1; break; }
   sleep 1
 done
 if [ "$home_left" = "1" ]; then
