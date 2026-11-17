@@ -316,6 +316,42 @@ PY
   _ulog "tap_exact $1 @ $2,$3"
 }
 
+# dialog_confirm pkg confirm cancel [appear_s] [gone_s] : fenêtre à deux boutons (ex. « Prise en
+# charge du client » : Annuler / Confirmer). Détecte la fenêtre, tape le bouton de confirmation
+# (parent cliquable du nœud), puis ATTEND qu'elle ait disparu. 0 = confirmée et fermée,
+# 2 = aucune fenêtre apparue, 1 = tapée mais toujours là (retap unique à mi-délai).
+dialog_confirm() {
+  local pkg="$1" ok="$2" no="$3" appear="${4:-15}" gone="${5:-20}" t0=$SECONDS seen=0 res x y kind retapped=0 tool
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  while [ $((SECONDS - t0)) -lt "$appear" ]; do
+    if ui_xml && [ -n "$(python3 "$tool" "$UI_XML_PATH" "$ok")" ] && [ -n "$(python3 "$tool" "$UI_XML_PATH" "$no")" ]; then
+      seen=1; break
+    fi
+    sleep 2
+  done
+  [ "$seen" = 1 ] || { _ulog "dialog_confirm: aucune fenêtre $no/$ok en ${appear}s"; return 2; }
+  _ulog "dialog_confirm: fenêtre $no/$ok détectée"
+  t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$gone" ]; do
+    res=$(python3 "$tool" "$UI_XML_PATH" "$ok")
+    if [ -n "$res" ] && { [ "$retapped" = 0 ] || [ $((SECONDS - t0)) -ge $((gone / 2)) ]; }; then
+      read -r x y kind <<<"$res"
+      adb shell input tap "$x" "$y" >/dev/null 2>&1
+      _ulog "dialog_confirm: « $ok » tapé @ $x,$y ($kind)"
+      retapped=1
+    fi
+    sleep 2
+    if ui_xml; then
+      if [ -z "$(python3 "$tool" "$UI_XML_PATH" "$no")" ] || [ -z "$(python3 "$tool" "$UI_XML_PATH" "$ok")" ]; then
+        _ulog "dialog_confirm: fenêtre fermée après $((SECONDS - t0))s"
+        return 0
+      fi
+    fi
+  done
+  _ulog "dialog_confirm: fenêtre toujours présente après ${gone}s"
+  return 1
+}
+
 # tap_node_verified pkg label : tape le centre du nœud (ou de son parent cliquable) trouvé par
 # texte/content-desc dans le dump, puis PROUVE que l'écran a changé : le libellé a disparu ou
 # un champ de saisie est apparu. Jusqu'à 2 retaps. 0 = écran changé, 1 = rien ne s'est passé.

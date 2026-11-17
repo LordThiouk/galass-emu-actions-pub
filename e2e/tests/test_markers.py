@@ -298,9 +298,11 @@ RIDER_STOP1_ACTIVE = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
                           "Terminer la course")
 # Rider RUNNING on leg 2: same banner, but the current-leg label is « Arrêt 2 ».
 RIDER_LEG2 = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2", "Terminer la course")
-RIDER_STOP1_DONE = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2 Fann")
-RIDER_STOP1_DONE_PLURAL = _xml("1/2 arrêts terminés")
-RIDER_STOP2_DONE = _xml("2/2 arrêts terminés", "En route vers E2E Dest Point E")
+# Dumps réels (run 44164174208) : pas de compteur en course ; la bannière ne montre que la
+# jambe courante. « X/2 arrêts terminés » n'apparaît qu'à l'écran de fin.
+RIDER_STOP1_DONE = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2")
+RIDER_STOP2_DONE = _xml("En route vers E2E Dest Point E", "1440 XOF")
+RIDER_FINAL_COUNTER = _xml("2/2 arrêts terminés", "Course terminée")
 # Rider at destination: what stop2_done must NOT accept as proof of a stop confirmation.
 RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
 
@@ -369,17 +371,61 @@ def test_l1_rider_stop1_active_gated_by_api_state():
 def test_l1_rider_stop1_done_requires_progress_text():
     spec = markers()["rider_stop1_done"]
     assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
-    assert spec_ok(spec, RIDER_STOP1_DONE_PLURAL) == 0, spec
     assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    assert spec_ok(spec, RIDER_RUNNING_START) != 0, spec  # encore la jambe 1
+    assert spec_ok(spec, RIDER_STOP2_DONE) != 0, spec     # déjà la jambe finale
 
 
 @case
 def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
     spec = markers()["rider_stop2_done"]
     assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
+    assert spec_ok(spec, RIDER_STOP1_DONE) != 0, spec     # jambe 2 seulement
     # « Vous êtes arrivé » / « Payer maintenant » belong to destination-arrived.
     assert spec_ok(spec, RIDER_END) != 0, spec
     assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_rider_rating_marker_is_avis_screen():
+    spec = markers()["rider_rating"]
+    avis = _xml("Avis", "Course terminée", "Arrêt 1", "Arrêt 2")
+    assert spec_ok(spec, avis) == 0, spec
+    assert spec_ok(spec, RIDER_END) != 0, spec
+    # « Course terminée » seul sur l'écran de paiement ne vaut pas preuve de l'écran Avis.
+    assert spec_ok(spec, _xml("Course terminée", "Payer maintenant")) != 0, spec
+    assert "Notez" not in spec, spec
+
+
+@case
+def test_rider_home_after_marker_is_location_picker():
+    spec = markers()["rider_home_after"]
+    home = _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")
+    assert spec_ok(spec, home) == 0, spec
+    assert spec_ok(spec, _xml("Avis", "Course terminée")) != 0, spec
+
+
+@case
+def test_rider_pays_now_before_waiting_for_methods():
+    t = run_text()
+    i = t.index('"Payer maintenant"')
+    assert i < t.index("cap rider-cash-methods 26-rider-cash-methods"), "tap avant la capture 26"
+    assert i > t.index("cap rider-destination-arrived 25-rider-destination-arrived")
+
+
+@case
+def test_driver_pickup_dialog_confirmed_before_waiting_marker():
+    t = run_text()
+    a = t.index('"Prise en charge du client"')
+    d = t.index('dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler"')
+    w = t.index('wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"')
+    assert a < d < w
+
+
+@case
+def test_driver_stop_button_is_terminer_l_arret():
+    t = run_text()
+    assert 'try_confirm "$DRIVER_PKG" "Terminer l\'arrêt"' in t
 
 
 @case

@@ -98,15 +98,20 @@ MARK_rider_running_start='+En route vers|-Chargement'
 # Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
 # courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
 MARK_rider_stop1_active='+En route vers|-Arrêt 2'
-# Progression d'arrêts (stopsProgressText, my_strings 64-65) : « @done/@total arrêt(s) terminé(s) ».
-MARK_rider_stop1_done='+1/2 arrêts? terminés?|-Chargement'
-MARK_rider_stop2_done='+2/2 arrêts? terminés?|-Chargement'
+# Dumps réels (run 44164174208) : le compteur « X/2 arrêts terminés » n'apparaît qu'à la fin. En
+# course la timeline ne rend QUE la jambe courante (rideItineraryEntries, RUNNING) : après
+# l'arrêt 1 la bannière dit « En route vers E2E Stop 2 Fann », après l'arrêt 2 « En route vers
+# E2E Dest Point E ». Ces libellés sont la preuve de chaque arrêt, pas un compteur.
+MARK_rider_stop1_done='+En route vers E2E Stop 2|-En route vers E2E Dest Point E|-Chargement'
+MARK_rider_stop2_done='+En route vers E2E Dest Point E|-Chargement'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
 MARK_rider_final_itinerary='+Course terminée|+Lieu de prise en charge|+Destination|-Chargement'
-MARK_rider_rating='+Commentaire|Notez|étoile|-Chargement'
-MARK_rider_home_after='+Où allez-vous|+Partons pour une course|-Course terminée'
+# Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
+MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
+# Accueil réel après la course : sélecteur de lieu (my_strings confirmLocation / pickUpLocation).
+MARK_rider_home_after='+Confirmer le lieu|+Lieu de prise en charge|+Destination|-Course terminée'
 # L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
 # construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
 MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
@@ -731,7 +736,10 @@ bring_fg "$DRIVER_PKG" || true
 cap driver-pickup-arrived 36-driver-pickup-arrived "$DRIVER_PKG" 20
 
 if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course"; then
-  if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
+  # La fenêtre « Prise en charge du client » (Annuler / Confirmer) bloque tout l'écran
+  # suivant (37, 35b, 42) : la confirmer et attendre qu'elle disparaisse AVANT de lire l'écran.
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 15 20; pickup_dlg=$?
+  if [ "$pickup_dlg" -ne 1 ] && wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
   else
     mark rider-running-start FAIL "api fallback: start"
@@ -780,7 +788,7 @@ for i in 0 1; do
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
   ui_stop_ok=0
-  if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
+  if try_confirm "$DRIVER_PKG" "Terminer l'arrêt" "Confirmer l'arrêt" \
      && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
     ui_stop_ok=1
   fi
@@ -830,6 +838,9 @@ fi
 ride_state
 bring_fg "$RIDER_PKG" || true
 cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
+# Écran réel : « Facture à payer CFA1440 », « Ajouter un pourboire », « Payer maintenant ».
+# Les méthodes de paiement n'apparaissent qu'après ce tap : le faire avant d'attendre le 26.
+try_tap "$RIDER_PKG" "Payer maintenant" >/dev/null 2>&1 || log "« Payer maintenant » non tapé (26 jugé sur l'écran réel)"
 cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
 
 # --------------------------------------------------------------- cash flow

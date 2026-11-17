@@ -230,22 +230,26 @@ places_diag_start() {
 # places_wait_result label max : sonde toutes les 5 s pendant max s, SANS taper. Journalise
 # si le dump est lisible, si des requêtes réseau apparaissent au logcat, et conclut.
 places_wait_result() {
-  local label="$1" max="${2:-20}" t0=$SECONDS lines reqs errs dumps_ok=0 dumps_ko=0 vis=non pkg
+  local label="$1" max="${2:-20}" t0=$SECONDS lines reqs errs dumps_ok=0 dumps_ko=0 vis=non pkg fresh
   while [ $((SECONDS - t0)) -lt "$max" ]; do
     if ui_xml; then
-      dumps_ok=$((dumps_ok + 1)); pkg=$(xml_pkg)
+      dumps_ok=$((dumps_ok + 1)); fresh=1; pkg=$(xml_pkg)
       grep -qF "$label" "$UI_XML_PATH" 2>/dev/null && vis=oui || vis=non
     else
-      dumps_ko=$((dumps_ko + 1)); pkg=?; vis=non
+      dumps_ko=$((dumps_ko + 1)); fresh=0; pkg=?; vis=non
     fi
     lines=$(tail -n +$((PLACES_LOG_OFF + 1)) "${LOG_FILE:-/dev/null}" 2>/dev/null \
             | grep -aiE 'maps\.googleapis|place/autocomplete|OVER_QUERY_LIMIT|REQUEST_DENIED|UnknownHost|Failed host lookup|SocketException|HttpException' || true)
     reqs=$(printf '%s' "$lines" | grep -aciE 'maps\.googleapis|place/autocomplete' || true)
     errs=$(printf '%s' "$lines" | grep -aciE 'OVER_QUERY_LIMIT|REQUEST_DENIED|UnknownHost|Failed host lookup|SocketException|HttpException' || true)
     _dp_log "places t=$((SECONDS - t0))s: dump=$([ $dumps_ko -gt 0 ] && [ "$pkg" = "?" ] && echo indisponible || echo lisible) pkg=${pkg} résultat_visible=$vis requêtes_logcat=${reqs:-0} erreurs_réseau=${errs:-0}"
+    if [ "$fresh" = 1 ] && { [ "$dumps_ok" -eq 1 ] || [ "$vis" = "oui" ]; }; then
+      _dp_log "places champ: $(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)"
+    fi
     [ "$vis" = "oui" ] && break
     sleep 5
   done
+  [ "$vis" = "oui" ] || { ui_xml && _dp_log "places champ (fin): $(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)"; }
   printf '%s' "${lines:-}" | head -3 | cut -c1-160 | _mask_secrets | while IFS= read -r l; do _dp_log "places logcat: $l"; done
   if [ "$vis" = "oui" ]; then
     _dp_log "places: CONCLUSION résultat « $label » visible après $((SECONDS - t0))s"
