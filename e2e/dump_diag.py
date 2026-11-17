@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""dump_diag.py dump.xml -> diagnostic en clair d'un écran de recherche (sans secret).
+"""dump_diag.py dump.xml [--texts] -> diagnostic en clair d'un écran (sans secret).
 
-Sortie (une ligne) : champs de saisie (texte réel), lignes cliquables sous le champ
-(= résultats), nœuds visibles (premiers textes). Sert à savoir si la saisie arrive dans le
-champ et si la liste de résultats se remplit.
+Défaut (recherche de lieu) : texte COMPLET de chaque champ de saisie, lequel a le focus,
+lignes cliquables sous le champ (= résultats), premiers nœuds visibles. `--texts` : seulement
+les textes visibles (jusqu'à 25), pour expliquer un TIMEOUT de capture.
 """
 import html
 import re
@@ -19,6 +19,15 @@ def box(n):
     return tuple(map(int, b.groups())) if b else None
 
 
+def visible_texts(nodes, limit, width=60):
+    texts = []
+    for n in nodes:
+        t = norm(n.get("text")) or norm(n.get("content-desc"))
+        if t and t[:width] not in texts:
+            texts.append(t[:width])
+    return texts[:limit]
+
+
 def describe(path, max_texts=12):
     try:
         root = ET.parse(path).getroot()
@@ -31,22 +40,34 @@ def describe(path, max_texts=12):
     if bottom is not None:
         for n in nodes:
             b = box(n)
-            if b and b[1] >= bottom and (n.get("clickable") == "true") and norm(n.get("text") or n.get("content-desc")):
+            if b and b[1] >= bottom and n.get("clickable") == "true" and norm(n.get("text") or n.get("content-desc")):
                 rows += 1
-    texts = []
-    for n in nodes:
-        t = norm(n.get("text")) or norm(n.get("content-desc"))
-        if t and t not in texts:
-            texts.append(t[:40])
     return {"readable": True,
-            "fields": [norm(f.get("text")) for f in fields],
-            "rows": rows, "texts": texts[:max_texts]}
+            "fields": [{"text": norm(f.get("text")), "focused": f.get("focused") == "true"} for f in fields],
+            "rows": rows, "texts": visible_texts(nodes, max_texts)}
+
+
+def fold(s):
+    import unicodedata
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+
+
+def field_has(path, query):
+    """True si un champ de saisie contient la requête tapée (comparaison sans accents ni casse)."""
+    d = describe(path)
+    return any(fold(query) in fold(f["text"]) for f in d["fields"])
 
 
 if __name__ == "__main__":
-    d = describe(sys.argv[1])
+    if len(sys.argv) == 4 and sys.argv[1] == "--contains":
+        sys.exit(0 if field_has(sys.argv[2], sys.argv[3]) else 1)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    d = describe(args[0], 25 if "--texts" in sys.argv else 12)
     if not d["readable"]:
         print("dump illisible")
+    elif "--texts" in sys.argv:
+        print("textes visibles=%s" % d["texts"])
     else:
         print("champs=%s lignes_résultat=%d nœuds=%s" % (
-            [f[:40] for f in d["fields"]], d["rows"], d["texts"]))
+            [("FOCUS:" if f["focused"] else "") + f["text"] for f in d["fields"]],
+            d["rows"], d["texts"]))

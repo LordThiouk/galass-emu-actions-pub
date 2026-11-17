@@ -243,6 +243,9 @@ def start_ride():
     c, j = call("POST", f"driver/rides/start/{d.get('id')}", DT, {"otp": otp})
     st["start"] = j
     save()
+    # Preuve pour le repli : « not_found » = la course n'est plus ACTIVE (le start UI avait
+    # atteint le backend) ; « ride_start » = c'est le repli qui l'a démarrée.
+    print(f"START remark={j.get('remark')} status={j.get('status')}", flush=True)
     return j.get("status") == "success"
 
 

@@ -227,6 +227,17 @@ places_diag_start() {
   if [ "${code:-000}" != "000" ] && [ "$rc" -eq 0 ]; then PLACES_NET_OK=oui; else PLACES_NET_OK=non; fi
 }
 
+# places_field_check query : relit l'écran, journalise le texte COMPLET de chaque champ (focus
+# indiqué) et rend 0 si l'un d'eux contient la requête tapée (sans accents ni casse).
+places_field_check() {
+  local q="$1" d rc=1
+  ui_xml || { _dp_log "places saisie: dump illisible"; return 2; }
+  d=$(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)
+  python3 "$(_dp_here)/dump_diag.py" --contains "$UI_XML_PATH" "$q" && rc=0
+  _dp_log "places saisie: requête='${q}' trouvée_dans_un_champ=$([ $rc = 0 ] && echo oui || echo NON) ${d}"
+  return $rc
+}
+
 # places_wait_result label max : sonde toutes les 5 s pendant max s, SANS taper. Journalise
 # si le dump est lisible, si des requêtes réseau apparaissent au logcat, et conclut.
 places_wait_result() {

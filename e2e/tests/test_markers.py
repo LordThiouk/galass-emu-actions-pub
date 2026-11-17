@@ -248,7 +248,6 @@ def test_p0_markers_do_not_match_prestate_screens():
     pre = {
         "rider_running_start": SUMMARY_FIXTURE,
         "rider_stop1_active": SUMMARY_FIXTURE,
-        "rider_stop1_done": SUMMARY_FIXTURE,
         "rider_stop2_done": SUMMARY_FIXTURE,
         "driver_running_stop1": RUNNING_FIXTURE,
         "driver_stop1_done": RUNNING_FIXTURE,
@@ -368,12 +367,17 @@ def test_l1_rider_stop1_active_gated_by_api_state():
 
 
 @case
-def test_l1_rider_stop1_done_requires_progress_text():
-    spec = markers()["rider_stop1_done"]
-    assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
-    assert spec_ok(spec, RIDER_PENDING) != 0, spec
-    assert spec_ok(spec, RIDER_RUNNING_START) != 0, spec  # encore la jambe 1
-    assert spec_ok(spec, RIDER_STOP2_DONE) != 0, spec     # déjà la jambe finale
+def test_rider_stop1_done_has_no_forced_marker_and_fails_with_reason():
+    """Point 23 : l'app rider n'affiche pas l'avancement des arrêts ; aucun marqueur n'est forcé,
+    le point reste FAIL avec la raison, et la capture n'est pas un `cap` à marqueur."""
+    assert "rider_stop1_done" not in markers(), "aucun marqueur forcé pour 23"
+    t = run_text()
+    assert "cap rider-stop1-done" not in t, "23 ne doit pas passer par cap (pas de marqueur)"
+    i = t.index("rider_no_progress_evidence rider-stop1-done 23-rider-stop1-done")
+    assert i > 0
+    body = t[t.index("rider_no_progress_evidence() {"):]
+    assert 'mark "$point" FAIL "l\'app rider n\'affiche pas l\'avancement des arrêts' in body, body[:400]
+    assert "à trancher" in body
 
 
 @case
@@ -423,9 +427,55 @@ def test_driver_pickup_dialog_confirmed_before_waiting_marker():
 
 
 @case
-def test_driver_stop_button_is_terminer_l_arret():
+def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
+    """Galass_Driver my_strings.confirmStop = « Confirmer l'arrêt » ; aucun « Terminer l'arrêt »."""
     t = run_text()
-    assert 'try_confirm "$DRIVER_PKG" "Terminer l\'arrêt"' in t
+    assert 'try_confirm "$DRIVER_PKG" "Confirmer l\'arrêt"' in t
+    assert "Terminer l'arrêt" not in t.replace("Terminer l'arrêt » n'existe", "").replace("« Terminer l'arrêt »", ""), \
+        "plus de tap sur un bouton « Terminer l'arrêt » inexistant"
+    assert "wait_ui \"$DRIVER_PKG\" 45 '+Confirmer l.arrêt'" in t, "attente du bouton avant le tap"
+
+
+DRIVER_ACTIVE = _xml("Arrêt 1", "E2E Stop 1 Médina", "Arrêt 2", "E2E Stop 2 Fann",
+                     "0/2 arrêt terminé", "Prise en charge du client", "Annuler la course")
+DRIVER_RUNNING = _xml("Arrêt 1", "E2E Stop 1 Médina", "0/2 arrêt terminé",
+                      "Confirmer l'arrêt", "Terminer la course")
+DRIVER_HOME = _xml("En ligne", "Accueil", "Activité", "Courses")
+
+
+@case
+def test_driver_running_stop1_requires_the_stop_button_not_the_active_screen():
+    spec = markers()["driver_running_stop1"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    # L'écran ACTIVE réel (run 44192999654) montre déjà « Arrêt 1 » et le compteur.
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, spec
+    assert "Terminer l.arrêt" not in spec, spec
+
+
+@case
+def test_driver_inride_marker_rejects_active_screen():
+    spec = markers()["driver_inride_stops"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, "« Arrêt 1 » seul ne prouve pas la course démarrée"
+
+
+@case
+def test_driver_stop_done_markers_accept_singular_and_plural_counter():
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé", "Confirmer l'arrêt")) == 0
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêts terminés")) == 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) == 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêt terminé")) == 0
+    assert spec_ok(m["driver_stop1_done"], _xml("0/2 arrêt terminé")) != 0
+
+
+@case
+def test_driver_summary_is_the_home_screen_the_app_really_shows():
+    spec = markers()["driver_summary"]
+    assert spec_ok(spec, DRIVER_HOME) == 0, spec
+    assert spec_ok(spec, DRIVER_RUNNING) != 0, spec
+    assert spec_ok(spec, _xml("En ligne", "Reçois le paiement")) != 0, spec
+    assert "Gains" not in spec and "Résumé" not in spec, "l'app n'a pas d'écran de résumé"
 
 
 @case

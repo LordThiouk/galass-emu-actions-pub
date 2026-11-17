@@ -98,11 +98,11 @@ MARK_rider_running_start='+En route vers|-Chargement'
 # Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
 # courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
 MARK_rider_stop1_active='+En route vers|-Arrêt 2'
-# Dumps réels (run 44164174208) : le compteur « X/2 arrêts terminés » n'apparaît qu'à la fin. En
-# course la timeline ne rend QUE la jambe courante (rideItineraryEntries, RUNNING) : après
-# l'arrêt 1 la bannière dit « En route vers E2E Stop 2 Fann », après l'arrêt 2 « En route vers
-# E2E Dest Point E ». Ces libellés sont la preuve de chaque arrêt, pas un compteur.
-MARK_rider_stop1_done='+En route vers E2E Stop 2|-En route vers E2E Dest Point E|-Chargement'
+# Dumps réels (run 44192999654) : l'app rider N'AFFICHE PAS l'avancement des arrêts en course. Le
+# compteur « X/2 arrêts terminés » n'apparaît qu'à l'écran d'arrivée (25) et la bannière reste
+# « En route vers E2E Dest Point E » dès stops_done=1. Point 23 (rider-stop1-done) : aucun
+# marqueur, FAIL explicite (voir la boucle des arrêts). ATTENTION point 24 : ce même libellé
+# s'affiche aussi après l'arrêt 1 ; il ne prouve donc pas à lui seul l'arrêt 2 (à trancher).
 MARK_rider_stop2_done='+En route vers E2E Dest Point E|-Chargement'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
@@ -118,18 +118,24 @@ MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|C
 MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
 # B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
 MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
-MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|+Terminer l.arrêt|Confirmer l.arrêt'
+# Écran RUNNING réel : bouton « Confirmer l'arrêt » (confirmStop) + « Terminer la course ». Aucun bouton
+# « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
+# seul le bouton d'arrêt distingue la course démarrée.
+MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
 # Progression d'arrêts (my_strings driver 82-85) : « Arrêt 2 »/« Arrivée » sont déjà
 # affichés (course en cours) ou appartiennent à l'écran de fin — faux PASS, retirés.
 MARK_driver_stop1_done='+1/2 arrêts? terminés?|-Accepter\s+la\s+course'
 MARK_driver_stop2_done='+2/2 arrêts? terminés?|-Accepter\s+la\s+course'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
 MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
-MARK_driver_summary='+Gains|Résumé|Activité|-Reçois\s+le\s+paiement'
+# L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,
+# Accueil / Activité / Courses). C'est cet écran réel qui est capturé en 43.
+MARK_driver_summary='+En ligne|-Reçois\s+le\s+paiement|Confirmer\s+le\s+paiement|Terminer la course'
 # Non-P0 captures (same table, same rules).
 MARK_driver_home_online='+En ligne'
 # S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
-MARK_driver_inride_stops='+Terminer la course|+Arrêt 1|-Accepter\s+la\s+course|-REFUSER'
+# « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
+MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|REFUSER|Prise en charge du client|+Arrêt 1'
 
 # Les 9 écrans Driver n'ont jamais été atteints par le run 39992138248 (acceptation UI
 # impossible) : leurs libellés sont des hypothèses, taguées dans le sidecar.
@@ -246,13 +252,26 @@ cap() {
 # la composition les capture elle-même, aux moments où ils existent. Retour 0 = demande envoyée,
 # 1 = échec tracé (le repli API reste marqué FAIL, jamais PASS).
 ui_pick_place() {
-  local query="$1" label="$2"
+  local query="$1" label="$2" typed
   [ "${PLACES_PROBED:-0}" = 1 ] || { places_diag_start; PLACES_PROBED=1; }
-  adb shell input text "$(printf '%s' "$query" | sed 's/ /%s/g')" >/dev/null 2>&1
+  # `adb input text` ne tape pas les accents : on tape la forme ASCII (« Médina » → « Medina »).
+  typed=$(printf '%s' "$query" | python3 -c 'import sys,unicodedata;print(unicodedata.normalize("NFKD",sys.stdin.read()).encode("ascii","ignore").decode(),end="")')
+  [ "$typed" = "$query" ] || log "places: requête tapée en ASCII ($typed) car « $query » a des accents"
+  # Le focus n'est PAS acquis : sur l'écran de recherche le champ pickup est rempli et la
+  # destination vide ; sans tap la saisie part ailleurs (champ destination resté vide au run 44192999654).
+  tap_node_mode --empty-input "$RIDER_PKG" || log "places: aucun champ vide à focaliser"
+  adb shell input text "$(printf '%s' "$typed" | sed 's/ /%s/g')" >/dev/null 2>&1
   sleep 2
+  if ! places_field_check "$typed"; then
+    log "places: saisie absente du champ, un seul nouvel essai (tap champ vide + saisie)"
+    tap_node_mode --empty-input "$RIDER_PKG" || true
+    adb shell input text "$(printf '%s' "$typed" | sed 's/ /%s/g')" >/dev/null 2>&1
+    sleep 2
+    places_field_check "$typed" || true
+  fi
   # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
   places_wait_result "$label" 20 || true
-  tap_when "$RIDER_PKG" "$label" || { log "compose_ride_ui: résultat « $label » introuvable"; return 1; }
+  tap_when "$RIDER_PKG" "$label" || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
 }
 compose_ride_ui() {
   log "compose_ride_ui: début"
@@ -284,6 +303,16 @@ api() { STEP="$1" "$PY" e2e/api_flow.py; }
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
 try_tap() { local pkg="$1"; shift; tap_when "$pkg" "$@"; }
+# FAIL explicite d'un point que l'app ne permet pas d'observer, avec preuve (capture + textes
+# visibles) pour que la décision (bug produit ou vérification backend) se prenne sur du réel.
+rider_no_progress_evidence() {
+  local point="$1" name="$2"
+  sleep 3
+  adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null || true
+  ui_xml && cp "$UI_XML_PATH" "$OUT/ui/$name.xml" 2>/dev/null || true
+  ui_screen_diag "$name: écran rider réel après stops_done=1"
+  mark "$point" FAIL "l'app rider n'affiche pas l'avancement des arrêts (bannière inchangée après stops_done=1, compteur seulement à l'arrivée) — bug produit ou vérification backend, à trancher"
+}
 ride_state() {
   STEP=ride_state "$PY" e2e/api_flow.py > "$OUT/last-ride-state.txt" 2>"$OUT/api-flow.err"
   smoke_emit_file "$OUT/api-flow.err"
@@ -739,9 +768,14 @@ if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarre
   # La fenêtre « Prise en charge du client » (Annuler / Confirmer) bloque tout l'écran
   # suivant (37, 35b, 42) : la confirmer et attendre qu'elle disparaisse AVANT de lire l'écran.
   dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 15 20; pickup_dlg=$?
+  # Preuve backend juste après le tap : status=2 → le start UI n'a pas atteint le backend ;
+  # status=3 → il l'a atteint et c'est l'app qui n'a pas rafraîchi son écran.
+  log "prise en charge: état backend juste après « Confirmer » (2 = start UI non pris, 3 = pris)"
+  ride_state
   if [ "$pickup_dlg" -ne 1 ] && wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
   else
+    ui_screen_diag "driver: écran réel après la prise en charge UI (pas de bouton d'arrêt)"
     mark rider-running-start FAIL "api fallback: start"
     api start >> "$OUT/run.log" 2>&1
   fi
@@ -788,7 +822,16 @@ for i in 0 1; do
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
   ui_stop_ok=0
-  if try_confirm "$DRIVER_PKG" "Terminer l'arrêt" "Confirmer l'arrêt" \
+  # Bouton réel : « Confirmer l'arrêt » (écran RUNNING ; il n'existe pas de « Terminer l'arrêt »).
+  # L'app peut rester sur l'écran ACTIVE un moment après le start : on attend le bouton et on
+  # journalise le délai observé.
+  t_btn=$SECONDS
+  if wait_ui "$DRIVER_PKG" 45 '+Confirmer l.arrêt'; then
+    log "bouton « Confirmer l'arrêt » présent après $((SECONDS - t_btn))s"
+  else
+    ui_screen_diag "driver: écran réel sans « Confirmer l'arrêt » (arrêt $n)"
+  fi
+  if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
      && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
     ui_stop_ok=1
   fi
@@ -803,7 +846,8 @@ for i in 0 1; do
   ride_state
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
-    cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
+    # 23 : l'app rider n'affiche pas l'avancement des arrêts en course → pas de marqueur forcé.
+    rider_no_progress_evidence rider-stop1-done 23-rider-stop1-done
   else
     cap rider-stop2-done 24-rider-stop2-done "$RIDER_PKG" 25
   fi
@@ -840,14 +884,37 @@ bring_fg "$RIDER_PKG" || true
 cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 # Écran réel : « Facture à payer CFA1440 », « Ajouter un pourboire », « Payer maintenant ».
 # Les méthodes de paiement n'apparaissent qu'après ce tap : le faire avant d'attendre le 26.
-try_tap "$RIDER_PKG" "Payer maintenant" >/dev/null 2>&1 || log "« Payer maintenant » non tapé (26 jugé sur l'écran réel)"
-cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
+# Après « Payer maintenant » : écran « Paiement » (Récapitulatif de la course, Mode de paiement,
+# Pourboire, code promo, bouton « Payer »). Le sélecteur s'ouvre par l'icône cliquable de la ligne
+# « Mode de paiement » ; on y choisit Espèces PUIS on tape « Payer ». 27 et 31 viennent après.
+pay_ui=0
+if try_tap "$RIDER_PKG" "Payer maintenant"; then
+  if wait_ui "$RIDER_PKG" 20 '+Mode de paiement' \
+     && tap_node_mode --row-control "$RIDER_PKG" "Mode de paiement"; then
+    cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
+    tap_when "$RIDER_PKG" "Espèces" "Cash" >/dev/null 2>&1 || log "paiement: « Espèces » non trouvé dans le sélecteur"
+    tap_exact "Payer" && pay_ui=1
+  else
+    ui_screen_diag "rider: écran « Paiement » absent ou sélecteur non ouvert"
+    cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 5
+  fi
+else
+  log "« Payer maintenant » non tapé"
+  cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 5
+fi
 
 # --------------------------------------------------------------- cash flow
 deadline_check cash  # budget mur : verdict partiel plutôt qu'un step qui traîne
-api pay_rider >> "$OUT/run.log" 2>&1
-bring_fg "$RIDER_PKG" || true
-cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+if [ "$pay_ui" = 1 ]; then
+  cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+  if grep -q '^rider-cash-waiting|FAIL|' <<<"$(printf '%s\n' "${RESULTS[@]}")"; then
+    api pay_rider >> "$OUT/run.log" 2>&1
+  fi
+else
+  api pay_rider >> "$OUT/run.log" 2>&1
+  bring_fg "$RIDER_PKG" || true
+  cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+fi
 bring_fg "$DRIVER_PKG" || true
 cap driver-cash-request 41-driver-cash-request "$DRIVER_PKG" 35
 if ! [ -s "$OUT/ui/41-driver-cash-request.xml" ]; then

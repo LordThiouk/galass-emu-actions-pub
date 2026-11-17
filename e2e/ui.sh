@@ -316,6 +316,37 @@ PY
   _ulog "tap_exact $1 @ $2,$3"
 }
 
+# ui_screen_diag label : journalise les textes visibles (sans secret) de l'écran courant, pour
+# expliquer un TIMEOUT ou un repli API sans déchiffrer les preuves.
+ui_screen_diag() {
+  local lab="$1" d
+  ui_xml || { _ulog "$lab: écran illisible (dump indisponible)"; return 0; }
+  d=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g')
+  _ulog "$lab: ${d:-textes indisponibles}"
+}
+
+# tap_node_mode mode pkg [label] : tape le nœud trouvé par tap_node.py (--empty-input |
+# --row-control label). rc 0 si un nœud a été tapé.
+tap_node_mode() {
+  local mode="$1" pkg="$2" lab="${3:-}" res x y kind t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt 15 ]; do
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      if [ -n "$lab" ]; then res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$mode" "$UI_XML_PATH" "$lab")
+      else res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$mode" "$UI_XML_PATH"); fi
+      if [ -n "$res" ]; then
+        read -r x y kind <<<"$res"
+        adb shell input tap "$x" "$y" >/dev/null 2>&1
+        _ulog "tap_node_mode $mode ${lab:+« $lab » }@ $x,$y ($kind)"
+        sleep 2
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "tap_node_mode $mode ${lab:+« $lab » }: aucun nœud en 15s"
+  return 1
+}
+
 # dialog_confirm pkg confirm cancel [appear_s] [gone_s] : fenêtre à deux boutons (ex. « Prise en
 # charge du client » : Annuler / Confirmer). Détecte la fenêtre, tape le bouton de confirmation
 # (parent cliquable du nœud), puis ATTEND qu'elle ait disparu. 0 = confirmée et fermée,
@@ -537,6 +568,7 @@ snap() {
   echo "$name|$st|fg=$(fg_pkg)|point=$point|marker=$spec|wait=$((SECONDS - t0))s" \
     >> "$OUT/captures.txt"
   _ulog "snap $name $st ($((SECONDS - t0))s)"
+  [ "$st" = TIMEOUT ] && ui_screen_diag "snap $name TIMEOUT : écran réel"
   case "$st" in
     MATCH) return 0 ;;
     DUMP_UNAVAILABLE) return 4 ;;
