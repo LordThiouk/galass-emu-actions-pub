@@ -84,28 +84,36 @@ export P0_POINTS
 # marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
 MARK_rider_destination_selected='+E2E Dest Point E|-Où allez-vous'
-MARK_rider_stop_picker='+Arrêt 1|Rechercher un lieu|-Où allez-vous'
+# Picker ouvert par « Ajouter un arrêt » : my_strings.dart confirmLocation (766) + stopPickerHint (47).
+MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
 # B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
-# Un libellé présent dès l'écran précédent (« Arrêt 1 », « Destination ») ne prouve rien.
-MARK_rider_running_start='+En course|Terminez votre course|-Arrêt 1|-Chargement'
+# Un libellé présent dès l'écran précédent ne prouve rien ; « Arrêt 1 » est rendu en
+# course (ride_itinerary_timeline : titre de la jambe courante), donc jamais un négatif.
+# RUNNING = currentLegBanner « En route vers <stop> » (ride_details_bottom_sheet_widget).
+MARK_rider_running_start='+En route vers|E2E Stop 1|-Chargement'
 MARK_rider_stop1_active='+Arrêt en cours|En route vers|ETA|\bmin\b|-Arrêt 1'
-MARK_rider_stop1_done='+2/2|1/2 terminé|Arrêt 1\s+terminé|-Chargement'
-MARK_rider_stop2_done='+Vous êtes arrivé|Payer maintenant|Facture à payer|-Chargement'
+# Progression d'arrêts (stopsProgressText, my_strings 64-65) : « @done/@total arrêt(s) terminé(s) ».
+MARK_rider_stop1_done='+1/2 arrêts? terminés?|-Chargement'
+MARK_rider_stop2_done='+2/2 arrêts? terminés?|-Chargement'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
 MARK_rider_final_itinerary='+Course terminée|+Lieu de prise en charge|+Destination|-Chargement'
 MARK_rider_rating='+Commentaire|Notez|étoile|-Chargement'
 MARK_rider_home_after='+Où allez-vous|+Partons pour une course|-Course terminée'
-MARK_driver_offer_with_stops='+Accepter\s+la\s+course|+REFUSER|+Prix recommandé|+Consignes du client|-Accueil'
+# L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
+# construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
+MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
 MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
 # B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
 MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
-MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|+Terminer l.arrêt|Confirmer l.arrêt|\b1\s*/\s*2\b'
-MARK_driver_stop1_done='+2/2|Arrêt 2|-Arrêt 1|-Accepter\s+la\s+course'
-MARK_driver_stop2_done='+2/2|Arrivée|Vous êtes arrivé|-Accepter\s+la\s+course'
+MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|+Terminer l.arrêt|Confirmer l.arrêt'
+# Progression d'arrêts (my_strings driver 82-85) : « Arrêt 2 »/« Arrivée » sont déjà
+# affichés (course en cours) ou appartiennent à l'écran de fin — faux PASS, retirés.
+MARK_driver_stop1_done='+1/2 arrêts? terminés?|-Accepter\s+la\s+course'
+MARK_driver_stop2_done='+2/2 arrêts? terminés?|-Accepter\s+la\s+course'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
 MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
 MARK_driver_summary='+Gains|Résumé|Activité|-Reçois\s+le\s+paiement'
@@ -223,8 +231,10 @@ cap() {
 
 # compose_ride_ui : compose la course DANS l'app Rider par taps (jamais par l'API), pour que
 # `api pick` l'adopte avec ride_source=ui (B2 / ISC-F13-3 concluants). Libellés = my_strings.dart
-# de Galass_Rider (whereToGo, addStop, cashPayment/cash, findDriver). Best-effort : chaque
-# étape est tracée, et l'échec laisse `api pick` marquer ride-composed FAIL (jamais PASS à tort).
+# de Galass_Rider (whereToGo, addStop, confirmLocation, cashPayment/cash, findDriver). Seul
+# chemin vers les états rider-destination-selected / rider-stop-picker / rider-multistop-summary :
+# la composition les capture elle-même, aux moments où ils existent. Retour 0 = demande envoyée,
+# 1 = échec tracé (le repli API reste marqué FAIL, jamais PASS).
 ui_pick_place() {
   local query="$1" label="$2"
   adb shell input text "$(printf '%s' "$query" | sed 's/ /%s/g')" >/dev/null 2>&1
@@ -236,15 +246,25 @@ compose_ride_ui() {
   bring_fg "$RIDER_PKG" || true
   tap_node_verified "$RIDER_PKG" "Où allez-vous ?" || { log "compose_ride_ui: le tap sur « Où allez-vous ? » n'a rien ouvert (repli API, FAIL)"; return 1; }
   ui_pick_place "E2E Dest" "E2E Dest Point E" || return 1
-  local stop
+  # 15 : destination seule retenue, avant tout arrêt.
+  cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
+  local stop n=0
   for stop in "E2E Stop 1 Médina" "E2E Stop 2 Fann"; do
+    n=$((n + 1))
     tap_when "$RIDER_PKG" "Ajouter un arrêt" || { log "compose_ride_ui: Ajouter un arrêt absent"; return 1; }
+    if [ "$n" -eq 1 ]; then
+      # 16 : picker ouvert, AVANT toute saisie (hint « Adresse de l'arrêt », « Confirmer le lieu »).
+      cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
+    fi
     ui_pick_place "${stop%% *} ${stop#* }" "$stop" || return 1
     tap_when "$RIDER_PKG" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || true
   done
+  # 17 : les deux arrêts sont posés, AVANT la demande.
+  cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
   tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" >/dev/null 2>&1 || log "compose_ride_ui: choix espèces non trouvé"
   tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; return 1; }
   log "compose_ride_ui: demande envoyée par l'UI"
+  return 0
 }
 
 api() { STEP="$1" "$PY" e2e/api_flow.py; }
@@ -485,7 +505,9 @@ dismiss_bg_dialog && log "boîte batterie fermée par Allow" || true
 if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
   mark driver-home-online PASS "ui cap=33-driver-home-online.png"
 else
-  mark driver-home-online WARN "driver home sans « En ligne » (33)"
+  # Un driver hors ligne ne reçoit aucune offre : la suite tournerait à vide, chaque
+  # point aval en échec attribué à l'app. L'assertion est dure, pas un WARN.
+  mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver"
 fi
 # Baseline B7 prise AVANT toute composition de course : l'offre peut être poussée dès
 # la création, donc une baseline juste avant `api pick` serait déjà polluée.
@@ -573,36 +595,19 @@ deadline_check rider-compose  # budget mur : verdict partiel plutôt qu'un step 
 api reset >> "$OUT/run.log" 2>&1
 bring_fg "$RIDER_PKG" || true
 
-artemis_run rider-destination \
-  "Open the Galass Rider app. On the home screen choose the destination \"E2E Dest Point E\" (search it if needed) and return to the ride summary. Do not add stops yet." \
-  180 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-destination.log)"
-bring_fg "$RIDER_PKG" || true
-cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
+# Les trois états rider-* ne sont plus joués par le LLM : la composition UI les produit
+# par taps et les capture elle-même. Les points restent émis, en SKIP, avec le motif.
+mark artemis-rider-destination SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
+mark artemis-rider-stop1 SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
+mark artemis-rider-stop2 SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
 
-# 16 : picker ouvert par « Ajouter un arrêt »
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
-cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
-
-artemis_run rider-stop1 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 1 Médina\" and confirm. Return to the ride summary." \
-  180 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop1.log)"
-
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
-artemis_run rider-stop2 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 2 Fann\", confirm, select cash payment, then confirm the ride request. Stay on the ride screen." \
-  210 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
-bring_fg "$RIDER_PKG" || true
-cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
-
-# Si ni Artemis ni les taps ci-dessus n'ont créé de course, composer par taps (UI), pas par l'API.
-if ! api has_open >> "$OUT/run.log" 2>&1; then
-  compose_ride_ui || log "compose_ride_ui: échec (voir lignes ci-dessus)"
+# Composition INCONDITIONNELLE : aucun repli ne peut produire les états d'écran rider,
+# et `ui_compose` garde le point ride-composed en FAIL si elle échoue.
+ui_compose=0
+if compose_ride_ui; then
+  ui_compose=1
+else
+  log "compose_ride_ui: échec — api pick créera la course (ride_source=api) et ride-composed restera FAIL"
 fi
 
 # ------------------------------------------------------------- driver offer
@@ -619,8 +624,10 @@ print(r.get('uid') or (st.get('ride_create') or {}).get('uid') or '')
 " 2>/dev/null)
 RIDE_SOURCE=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_source') or 'unknown')" 2>/dev/null)
 [ -n "$RIDE_SOURCE" ] || RIDE_SOURCE=unknown
-# B8: a ride composed by the harness proves nothing about the Rider UI.
-if [ "$RIDE_SOURCE" = "api" ]; then
+# B8: a ride composed by the harness proves nothing about the Rider UI. Et si la
+# composition UI a échoué (ou n'a pas été concluante), aucun repli ne rend le point PASS :
+# `api pick` a alors créé la course côté API pour que la suite s'exécute.
+if [ "${ui_compose:-0}" != "1" ] || [ "$RIDE_SOURCE" = "api" ]; then
   mark ride-composed FAIL "api fallback: compose"
 elif [ "$RIDE_SOURCE" = "ui" ]; then
   mark ride-composed PASS "course composée dans l'app (adoptée par l'API)"
@@ -836,6 +843,8 @@ ride_state
 api status >> "$OUT/run.log" 2>&1
 bring_fg "$DRIVER_PKG" || true
 cap driver-cash-confirmed 42-driver-cash-confirmed "$DRIVER_PKG" 30
+# 43 : acceptPaymentRide ne pop pas l'écran — retour arrière explicite avant la synthèse.
+adb shell input keyevent 4 >/dev/null 2>&1 || true
 cap driver-summary 43-driver-summary "$DRIVER_PKG" 25
 bring_fg "$RIDER_PKG" || true
 cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 35

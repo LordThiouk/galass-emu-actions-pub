@@ -264,6 +264,166 @@ def test_p0_markers_do_not_match_prestate_screens():
     assert not bad, f"marqueurs satisfaits par l'écran pré-existant: {bad}"
 
 
+# ------------------------------------------------ L1 markers re-grounded on UI
+# Every fixture below carries the labels the Rider/Driver widgets actually render:
+# Galass_Rider my_strings.dart:47/64/65/68/232/766 + ride_details_bottom_sheet_widget
+# (stopsProgressText / currentLegBanner) and Galass_Driver my_strings.dart:74/82-85/935.
+
+def _xml(*texts):
+    """uiautomator dump with one visible, non-empty node per label."""
+    rows = "".join(
+        '    <node index="%d" text="%s" content-desc="" visible-to-user="true" '
+        'bounds="[50,%d][900,%d]" />\n' % (i, t, 200 + i * 80, 260 + i * 80)
+        for i, t in enumerate(texts))
+    return ("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n"
+            '<hierarchy rotation="0">\n'
+            '  <node index="0" text="" content-desc="" visible-to-user="true" '
+            'bounds="[0,0][1080,2400]">\n' + rows + "  </node>\n</hierarchy>\n")
+
+
+# Rider: stop picker opened by « Ajouter un arrêt ».
+RIDER_STOP_PICKER = _xml("Adresse de l'arrêt", "Confirmer le lieu", "Recherchez votre position")
+# Rider: PENDING summary with the search toggle still open — pre-state of every
+# post-start marker. NOTE: the full timeline (hence the stop labels) is rendered at
+# PENDING too, so the `E2E Stop 1` alternative of running_start is not covered here.
+RIDER_PENDING = _xml("Où allez-vous ?", "Arrêt 1", "Ajouter un arrêt",
+                     "Trouver un chauffeur", "Paiement en espèces")
+# Rider RUNNING: current-leg banner, first stop not completed.
+RIDER_RUNNING_START = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
+                           "E2E Stop 1 Médina", "Terminer la course")
+RIDER_STOP1_DONE = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2 Fann")
+RIDER_STOP1_DONE_PLURAL = _xml("1/2 arrêts terminés")
+RIDER_STOP2_DONE = _xml("2/2 arrêts terminés", "En route vers E2E Dest Point E")
+# Rider at destination: what stop2_done must NOT accept as proof of a stop confirmation.
+RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
+
+# Driver: offer toast above the dashboard, navbar « Accueil » still visible.
+DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
+                    "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
+                    "Consignes du client:")
+DRIVER_STOP1_DONE = _xml("1/2 arrêt terminé", "Arrêt 2", "Terminer la course")
+DRIVER_STOP2_DONE = _xml("2/2 arrêts terminés", "Terminer la course")
+
+
+def compose_body():
+    m = re.search(r"^compose_ride_ui\(\) \{.*?^\}", run_text(), re.M | re.S)
+    assert m, "compose_ride_ui introuvable"
+    return m.group(0)
+
+
+@case
+def test_l1_rider_stop_picker_matches_real_picker_labels():
+    spec = markers()["rider_stop_picker"]
+    assert spec_ok(spec, RIDER_STOP_PICKER) == 0, spec
+    # The old positives (« Arrêt 1 », « Rechercher un lieu ») exist nowhere in the picker.
+    assert spec_ok(spec, _xml("Arrêt 1", "Rechercher un lieu")) != 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_rider_running_start_needs_current_leg_banner():
+    spec = markers()["rider_running_start"]
+    assert spec_ok(spec, RIDER_RUNNING_START) == 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    # « Arrêt 1 » IS rendered while RUNNING: negating it made the point unreachable.
+    assert "-Arrêt 1" not in spec and "-Arret 1" not in spec, spec
+
+
+@case
+def test_l1_rider_stop1_done_requires_progress_text():
+    spec = markers()["rider_stop1_done"]
+    assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
+    assert spec_ok(spec, RIDER_STOP1_DONE_PLURAL) == 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
+    spec = markers()["rider_stop2_done"]
+    assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
+    # « Vous êtes arrivé » / « Payer maintenant » belong to destination-arrived.
+    assert spec_ok(spec, RIDER_END) != 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_driver_stop_done_markers_require_progress_text():
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0, m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0, m["driver_stop2_done"]
+    # « Arrêt 2 » (déjà affiché en course) et « Vous êtes arrivé » (écran de fin) ne
+    # prouvent pas la confirmation de l'arrêt 1 : faux PASS de l'ancien spec.
+    assert spec_ok(m["driver_stop1_done"], _xml("Arrêt 2", "Terminer la course")) != 0, \
+        m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], _xml("Arrivée", "Vous êtes arrivé", "Terminer la course")) != 0, \
+        m["driver_stop2_done"]
+    for name in ("driver_stop1_done", "driver_stop2_done"):
+        assert spec_ok(m[name], DRIVER_OFFER) != 0, (name, m[name])
+
+
+@case
+def test_l1_driver_offer_accepts_home_navbar_under_the_toast():
+    spec = markers()["driver_offer_with_stops"]
+    assert spec_ok(spec, DRIVER_OFFER) == 0, spec
+    # The four labels are ALTERNATIVES: an offer without the instruction block is still
+    # an offer, and « Accueil » is expected under the toast (dashboard stays visible).
+    assert spec_ok(spec, _xml("Accueil", "Accepter la course")) == 0, spec
+    assert spec_ok(spec, _xml("Accueil")) != 0, spec
+
+
+@case
+def test_l1_composition_is_unconditional_after_api_reset():
+    text = run_text()
+    reset = text.index("api reset")
+    pick = text.index("api pick >>", reset)
+    window = text[reset:pick]
+    assert "compose_ride_ui" in window, window
+    assert "has_open" not in window, "la composition reste conditionnée à api has_open"
+    assert "artemis_run rider-" not in text, "les étapes Artemis rider-* sont encore sur le chemin"
+    for name in ("artemis-rider-destination", "artemis-rider-stop1", "artemis-rider-stop2"):
+        assert re.search(rf'mark {name} SKIP "[^"]+"', text), name
+    assert "ui_compose" in text, "ui_compose absent"
+
+
+@case
+def test_l1_compose_emits_the_picker_and_summary_captures():
+    body = compose_body()
+    for name in ("15-rider-destination-selected", "16-rider-stop-picker",
+                 "17-rider-multistop-summary"):
+        assert name in body, (name, body)
+    # 16 is taken right after the tap that opens the picker, before any typing.
+    assert body.index('"Ajouter un arrêt"') < body.index("16-rider-stop-picker"), body
+    # 17 is taken once both stops are set, before the request is sent.
+    assert body.index("17-rider-multistop-summary") < body.index('"Trouver un chauffeur"'), body
+
+
+@case
+def test_l1_ui_compose_failure_cannot_pass_ride_composed():
+    text = run_text()
+    block = re.search(r'if \[ "\$\{ui_compose:-0\}" != "1" \].*?\nfi', text, re.S)
+    assert block, "garde ui_compose introuvable avant ride-composed"
+    assert 'mark ride-composed FAIL "api fallback: compose"' in block.group(0), block.group(0)
+
+
+@case
+def test_l1_driver_home_online_is_a_hard_assertion():
+    text = run_text()
+    idx = text.index("33-driver-home-online")
+    window = text[idx:idx + 400]
+    assert "mark driver-home-online FAIL" in window, window
+    assert "mark driver-home-online WARN" not in window, window
+
+
+@case
+def test_l1_back_press_before_driver_summary_capture():
+    text = run_text()
+    i42 = text.index("42-driver-cash-confirmed")
+    i43 = text.index("43-driver-summary")
+    assert i42 < i43, (i42, i43)
+    window = text[i42:i43]
+    assert "adb shell input keyevent 4" in window, window
+
+
 @case
 def test_tap_exact_collapses_whitespace_and_taps_node_center():
     tmp = tempfile.mkdtemp(prefix="e2e-tap-")

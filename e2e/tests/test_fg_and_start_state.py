@@ -66,7 +66,11 @@ def test_online_step_requires_backend_confirmation():
 
 
 def test_ui_compose_runs_before_api_pick_and_never_creates():
-    assert RUN.find("compose_ride_ui ||") < RUN.find("api pick >>")
+    # Composition inconditionnelle : `if compose_ride_ui; then ui_compose=1` remplace
+    # l'ancien `compose_ride_ui ||` conditionné à `api has_open`.
+    compose = RUN.find("if compose_ride_ui; then")
+    pick = RUN.find("api pick >>")
+    assert -1 < compose < pick, (compose, pick)
     body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.M | re.S).group(0)
     assert "api create" not in body and "api pick" not in body
 
