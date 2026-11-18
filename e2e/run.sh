@@ -1117,8 +1117,22 @@ DIGEST_SRC="$OUT/results.txt"
 [ -s "$DIGEST_SRC" ] || DIGEST_SRC="$OUT/results-raw.txt"
 if [ -s "$DIGEST_SRC" ]; then
   log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$DIGEST_SRC") point(s) (src=$(basename "$DIGEST_SRC"))"
-  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>150) r=substr(r,1,150); printf "  FAIL %s = %s\n", $1, r}' \
-    "$DIGEST_SRC" | while IFS= read -r _dl; do log "$_dl"; done
+  # « brut= » = la ligne que cap/api a écrite AVANT l'overwrite de report.py (worst-wins
+  # remplace la raison à rang égal) : sans elle on ne sait pas si cap a dit PASS ou
+  # « marker absent » — c'est ce qui départage un vrai écran d'un sonde fausse.
+  awk -F'|' 'FNR==NR{raw[$1]=$3; next}
+             $2=="FAIL"{r=$3; gsub(/\|/,"/",r); if(length(r)>140)r=substr(r,1,140);
+                        rt=($1 in raw)?raw[$1]:"-"; gsub(/\|/,"/",rt); if(length(rt)>110)rt=substr(rt,1,110);
+                        printf "  FAIL %s = %s || brut=%s\n", $1, r, rt}' \
+    "$OUT/results-raw.txt" "$DIGEST_SRC" | while IFS= read -r _dl; do log "$_dl"; done
+fi
+# Diag final 3 : pourquoi le premier plan retombe sur le launcher (classe B10). Le scan
+# d'instabilité émulateur ne voit que system_server/ANR — un crash d'app y est invisible.
+if [ -s "$OUT/logcat/full.log" ]; then
+  CRF="$OUT/logcat/full.log"
+  log "diag crash: FATAL=$(grep -ac 'FATAL EXCEPTION' "$CRF" || true) force_finish=$(grep -ac 'Force finishing activity' "$CRF" || true) galass_die=$(grep -acE 'Process sn\.galass\.(galassrider|galassdriver)[^ ]* (has died|died)' "$CRF" || true) am_crash=$(grep -ac 'am_crash' "$CRF" || true)"
+  grep -a -m6 -E "FATAL EXCEPTION|Force finishing activity|Process: sn\.galass\." "$CRF" 2>/dev/null \
+    | cut -c1-170 | while IFS= read -r _cl; do log "  crash:$_cl"; done
 fi
 # Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
 # lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
