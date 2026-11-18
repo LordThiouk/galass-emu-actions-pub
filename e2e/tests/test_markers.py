@@ -297,10 +297,12 @@ RIDER_STOP1_ACTIVE = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
                           "Terminer la course")
 # Rider RUNNING on leg 2: same banner, but the current-leg label is « Arrêt 2 ».
 RIDER_LEG2 = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2", "Terminer la course")
-# Dumps réels (run 44164174208) : pas de compteur en course ; la bannière ne montre que la
-# jambe courante. « X/2 arrêts terminés » n'apparaît qu'à l'écran de fin.
-RIDER_STOP1_DONE = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2")
-RIDER_STOP2_DONE = _xml("En route vers E2E Dest Point E", "1440 XOF")
+# App rider corrigée (my_strings.dart 64-65, stopsProgressSingular/Plural) : le compteur
+# « X/2 arrêt(s) terminé(s) » est rendu en course. Écran post-arrêt-1 : compteur 1/2 + bannière
+# vers la jambe suivante. C'est le pré-état que le marqueur 24 (2/2) doit refuser.
+RIDER_STOP1_DONE = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")
+# Écran post-arrêt-2 : compteur 2/2 + bannière vers la destination.
+RIDER_STOP2_DONE = _xml("2/2 arrêts terminés", "En route vers E2E Dest Point E")
 RIDER_FINAL_COUNTER = _xml("2/2 arrêts terminés", "Course terminée")
 # Rider at destination: what stop2_done must NOT accept as proof of a stop confirmation.
 RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
@@ -367,27 +369,44 @@ def test_l1_rider_stop1_active_gated_by_api_state():
 
 
 @case
-def test_rider_stop1_done_has_no_forced_marker_and_fails_with_reason():
-    """Point 23 : l'app rider n'affiche pas l'avancement des arrêts ; aucun marqueur n'est forcé,
-    le point reste FAIL avec la raison, et la capture n'est pas un `cap` à marqueur."""
-    assert "rider_stop1_done" not in markers(), "aucun marqueur forcé pour 23"
+def test_rider_stop1_done_requires_counter_marker():
+    """Point 23 — décision Papa : bug produit (compteur jamais visible en RUNNING), fix app
+    rider en cours parallèlement. Le marqueur réel est le compteur « 1/2 arrêt terminé »
+    (stopsProgressSingular) rendu par l'app corrigée après la confirmation de l'arrêt 1."""
+    spec = markers().get("rider_stop1_done")
+    assert spec == "+1/2 arrêts? terminés?", spec
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")) == 0, spec
+    # « 0/2 arrêt terminé » est l'écran RUNNING avant toute confirmation : pas un PASS.
+    assert spec_ok(spec, _xml("0/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
     t = run_text()
-    assert "cap rider-stop1-done" not in t, "23 ne doit pas passer par cap (pas de marqueur)"
-    i = t.index("rider_no_progress_evidence rider-stop1-done 23-rider-stop1-done")
-    assert i > 0
-    body = t[t.index("rider_no_progress_evidence() {"):]
-    assert 'mark "$point" FAIL "l\'app rider n\'affiche pas l\'avancement des arrêts' in body, body[:400]
-    assert "à trancher" in body
+    assert "cap rider-stop1-done 23-rider-stop1-done" in t, \
+        "23 doit capturer par cap (marqueur compteur)"
+    assert "rider_no_progress_evidence rider-stop1-done" not in t, \
+        "plus de chemin sans marqueur pour 23"
 
 
 @case
 def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
     spec = markers()["rider_stop2_done"]
+    assert spec == "+2/2 arrêts? terminés?", spec
     assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
+    # « 1/2 arrêt terminé » + bannière jambe 2 (écran post-arrêt-1) n'est pas un 2/2.
     assert spec_ok(spec, RIDER_STOP1_DONE) != 0, spec     # jambe 2 seulement
     # « Vous êtes arrivé » / « Payer maintenant » belong to destination-arrived.
     assert spec_ok(spec, RIDER_END) != 0, spec
     assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_rider_stop2_done_banner_alone_is_not_proof():
+    """L'ancienne preuve « En route vers E2E Dest Point E » s'affiche dès l'arrêt 1 (stops
+    vides) : elle ne peut plus être la preuve — même seule — de l'arrêt 2."""
+    spec = markers()["rider_stop2_done"]
+    assert "En route vers" not in spec, spec
+    # Bannière vers la destination + compteur 1/2 seulement : état post-arrêt-1, pas un PASS.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Dest Point E")) != 0, spec
+    # La bannière seule (écran buggy, sans compteur) ne prouve rien non plus.
+    assert spec_ok(spec, _xml("En route vers E2E Dest Point E")) != 0, spec
 
 
 @case

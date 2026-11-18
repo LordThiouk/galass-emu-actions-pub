@@ -1,0 +1,1 @@
+bash -n e2e/run.sh: rc 0

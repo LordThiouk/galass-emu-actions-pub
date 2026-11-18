@@ -98,12 +98,14 @@ MARK_rider_running_start='+En route vers|-Chargement'
 # Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
 # courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
 MARK_rider_stop1_active='+En route vers|-Arrêt 2'
-# Dumps réels (run 44192999654) : l'app rider N'AFFICHE PAS l'avancement des arrêts en course. Le
-# compteur « X/2 arrêts terminés » n'apparaît qu'à l'écran d'arrivée (25) et la bannière reste
-# « En route vers E2E Dest Point E » dès stops_done=1. Point 23 (rider-stop1-done) : aucun
-# marqueur, FAIL explicite (voir la boucle des arrêts). ATTENTION point 24 : ce même libellé
-# s'affiche aussi après l'arrêt 1 ; il ne prouve donc pas à lui seul l'arrêt 2 (à trancher).
-MARK_rider_stop2_done='+En route vers E2E Dest Point E|-Chargement'
+# B2 — avancement des arrêts (my_strings.dart rider 64-65, stopsProgressSingular/Plural) :
+# l'app corrigée rend le compteur « X/2 arrêt(s) terminé(s) » en course (décision Papa : le
+# compteur jamais visible en RUNNING était un bug produit, fix app parallèle). Les marqueurs
+# mesurent le rendu réel : après l'arrêt 1 confirmé, « 1/2 arrêt terminé » (point 23) ; après
+# l'arrêt 2, « 2/2 arrêts terminés » (point 24). La bannière « En route vers … » seule n'est
+# plus une preuve : elle s'affiche dès l'arrêt 1 (stops vides), donc jamais un positif du 24.
+MARK_rider_stop1_done='+1/2 arrêts? terminés?'
+MARK_rider_stop2_done='+2/2 arrêts? terminés?'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
@@ -303,16 +305,6 @@ api() { STEP="$1" "$PY" e2e/api_flow.py; }
 # ui_action exige le dialogue de confirmation ; try_tap ne l'exige pas (navigation).
 try_confirm() { local pkg="$1"; shift; local l; for l in "$@"; do ui_action "$pkg" "$l" && return 0; done; return 1; }
 try_tap() { local pkg="$1"; shift; tap_when "$pkg" "$@"; }
-# FAIL explicite d'un point que l'app ne permet pas d'observer, avec preuve (capture + textes
-# visibles) pour que la décision (bug produit ou vérification backend) se prenne sur du réel.
-rider_no_progress_evidence() {
-  local point="$1" name="$2"
-  sleep 3
-  adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null || true
-  ui_xml && cp "$UI_XML_PATH" "$OUT/ui/$name.xml" 2>/dev/null || true
-  ui_screen_diag "$name: écran rider réel après stops_done=1"
-  mark "$point" FAIL "l'app rider n'affiche pas l'avancement des arrêts (bannière inchangée après stops_done=1, compteur seulement à l'arrivée) — bug produit ou vérification backend, à trancher"
-}
 ride_state() {
   STEP=ride_state "$PY" e2e/api_flow.py > "$OUT/last-ride-state.txt" 2>"$OUT/api-flow.err"
   smoke_emit_file "$OUT/api-flow.err"
@@ -846,8 +838,8 @@ for i in 0 1; do
   ride_state
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
-    # 23 : l'app rider n'affiche pas l'avancement des arrêts en course → pas de marqueur forcé.
-    rider_no_progress_evidence rider-stop1-done 23-rider-stop1-done
+    # 23 : compteur « 1/2 arrêt terminé » rendu par l'app corrigée (marqueur ci-dessus).
+    cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
   else
     cap rider-stop2-done 24-rider-stop2-done "$RIDER_PKG" 25
   fi
