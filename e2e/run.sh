@@ -247,7 +247,14 @@ cap() {
   case $? in
     0) mark "$point" PASS "ui cap=$name.png marker ok ($src)$([ "$SNAP_REPLAYED" = 1 ] && echo " — rejoué après reprise émulateur, preuve d'écran")" ;;
     2) mark "$point" INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (cap=$name, point non compté comme échec de l'app)" ;;
-    *) mark "$point" FAIL "ui cap=$name.png marker absent ($spec)" ;;
+    *) # L'écran RÉELLEMENT capturé, dans la raison même : le digest de fin de log le
+       # publie alors qu'un extrait borné ne verrait jamais la ligne de capture.
+       local txt=""
+       if [ -s "$OUT/ui/$name.xml" ]; then
+         txt=$("$PY" e2e/dump_diag.py "$OUT/ui/$name.xml" --texts 2>/dev/null \
+                 | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g' | cut -c1-140)
+       fi
+       mark "$point" FAIL "ui cap=$name.png marker absent ($spec)${txt:+ | écran=$txt}" ;;
   esac
 }
 
@@ -1106,8 +1113,8 @@ write_flags
 # dise *pourquoi* chaque point tombe au lieu de seulement *lesquels*. Aucun verdict changé.
 if [ -s "$OUT/results-raw.txt" ]; then
   log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$OUT/results-raw.txt") point(s)"
-  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>80) r=substr(r,1,80); printf "%s=%s; ", $1, r}' \
-    "$OUT/results-raw.txt" | fold -s -w 220 | head -n 5 | while IFS= read -r _dl; do log "  FAIL:$_dl"; done
+  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>140) r=substr(r,1,140); printf "%s=%s; ", $1, r}' \
+    "$OUT/results-raw.txt" | fold -s -w 240 | head -n 6 | while IFS= read -r _dl; do log "  FAIL:$_dl"; done
 fi
 # Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
 # lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
