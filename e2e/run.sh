@@ -1102,6 +1102,13 @@ fi
 flush_results
 write_flags
 "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"; report_rc=$?
+# Diag final 2 : les RAISONS des FAIL, compactes, pour qu'un extrait borné (80 lignes)
+# dise *pourquoi* chaque point tombe au lieu de seulement *lesquels*. Aucun verdict changé.
+if [ -s "$OUT/results-raw.txt" ]; then
+  log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$OUT/results-raw.txt") point(s)"
+  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>80) r=substr(r,1,80); printf "%s=%s; ", $1, r}' \
+    "$OUT/results-raw.txt" | fold -s -w 220 | head -n 5 | while IFS= read -r _dl; do log "  FAIL:$_dl"; done
+fi
 # Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
 # lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
 log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
