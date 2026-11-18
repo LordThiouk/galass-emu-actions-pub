@@ -776,6 +776,9 @@ if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarre
   mark pickup-backend-status WARN "tap_ui=$PICKUP_TAP_UI start_status=${PICKUP_START_STATUS:-inconnu}"
   if [ "$pickup_dlg" -ne 1 ] && wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
+    # Le marqueur peut être vu puis perdu (écran qui repart en ACTIVE) : la capture 37
+    # dirait seulement « absent ». On journalise l'écran réel juste après le start borné.
+    ui_screen_diag "driver: écran réel juste après le start (attendu 37)"
   else
     ui_screen_diag "driver: écran réel après la prise en charge UI (pas de bouton d'arrêt)"
     mark rider-running-start FAIL "api fallback: start"
