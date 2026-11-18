@@ -140,7 +140,9 @@ clear_sys() {
   _ulog "dialogue système fermé"; sleep 2; ui_xml
 }
 
-# _spec_ok : chaque argument est une spec `+A|B|-C` (le type se propage sur les |).
+# _spec_ok : chaque argument est une spec `+A|B&-C` (le type se propage sur les | et les &).
+# `|` = OU à l'intérieur d'un groupe, `&` = ET (nouveau groupe, même type hérité) : deux
+# signaux distincts du même écran (compteur ET bannière) s'écrivent `+compteur&+bannière`.
 # Négatif : seuls les noeuds visibles et non vides comptent (Flutter garde les routes
 # précédentes en mémoire, visible-to-user="false"). Écrit la spec fautive dans ui/.last-spec-fail.
 _spec_ok() {
@@ -172,9 +174,19 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
 
 
 def groups(spec):
-    """`+A|B|-C` -> [('+', ['A','B']), ('-', ['C'])] (le type se propage sur les |)."""
-    out, kind = [], None
-    for raw in spec.split("|"):
+    """`+A|B&-C` -> [('+', ['A','B']), ('-', ['C'])] (OU dans un groupe, ET entre groupes).
+
+    `|` ajoute une alternative au groupe courant ; `&` ouvre un nouveau groupe (le type
+    se propage) : deux signaux distincts s'écrivent `+compteur&+bannière`.
+    """
+    out, kind, new_group = [], None, True
+    for raw in re.split(r"([|&])", spec):
+        if raw == "|":
+            new_group = False
+            continue
+        if raw == "&":
+            new_group = True
+            continue
         raw = raw.strip()
         if not raw:
             continue
@@ -182,10 +194,11 @@ def groups(spec):
             kind, raw = raw[0], raw[1:]
         if not kind or not raw:
             continue
-        if out and out[-1][0] == kind:
-            out[-1][1].append(raw)
-        else:
+        if new_group or not out or out[-1][0] != kind:
             out.append((kind, [raw]))
+        else:
+            out[-1][1].append(raw)
+        new_group = False
     return out
 
 

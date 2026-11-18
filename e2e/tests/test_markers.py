@@ -44,19 +44,37 @@ def p0_points():
     return set(m.group(1).replace("\\\n", " ").split())
 
 
-def spec_chunks(spec):
-    """Split `+A|B|-C` into [(kind, value)] with kind inheritance."""
-    chunks, kind = [], None
-    for raw in spec.split("|"):
+def spec_groups(spec):
+    """`+A|B&-C` -> [('+', ['A','B']), ('-', ['C'])] comme le `groups()` de e2e/ui.sh.
+
+    `|` = OU dans le groupe courant ; `&` = ET (nouveau groupe, type hérité).
+    """
+    out, kind, new_group = [], None, True
+    for raw in re.split(r"([|&])", spec):
+        if raw == "|":
+            new_group = False
+            continue
+        if raw == "&":
+            new_group = True
+            continue
         raw = raw.strip()
         if not raw:
             continue
         if raw[0] in "+-":
             kind, raw = raw[0], raw[1:]
-        if kind is None or not raw:
+        if not kind or not raw:
             continue
-        chunks.append((kind, raw))
-    return chunks
+        if new_group or not out or out[-1][0] != kind:
+            out.append((kind, [raw]))
+        else:
+            out[-1][1].append(raw)
+        new_group = False
+    return out
+
+
+def spec_chunks(spec):
+    """Vue plate de `spec_groups` : [(kind, valeur)] — pour les gardes de specs."""
+    return [(kind, pat) for kind, pats in spec_groups(spec) for pat in pats]
 
 
 FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -191,6 +209,30 @@ def test_spec_ok_honours_or_and_whitespace():
     assert spec_ok("+Nope|+Où allez-vous") == 0
     assert spec_ok("+Nope") == 1
     assert spec_ok("-Où allez-vous") == 2
+
+
+@case
+def test_spec_ok_honours_and_operator():
+    """`&` = ET entre groupes : deux signaux distincts du même écran sont tous deux exigés.
+    `|` reste un OU : `+Nope|+Où allez-vous` passe. Aucune assertion n'est relâchée."""
+    both = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2", both) == 0
+    # compteur sans bannière -> ET non satisfait
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2",
+                   _xml("1/2 arrêt terminé")) == 1
+    # bannière sans compteur -> ET non satisfait
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2",
+                   _xml("En route vers E2E Stop 2")) == 1
+    # le OU reste un OU à l'intérieur d'un groupe
+    assert spec_ok(r"+Nope|+Où allez-vous&+Accepter\s+la\s+course") == 0
+    # groupes de type différent : ET conservé (positif et négatif)
+    assert spec_ok("+Où allez-vous&-Chargement") == 0
+    assert spec_ok(r"+Où allez-vous&-Accepter\s+la\s+course") == 2
+    # un groupe positif non satisfait fait échouer le ET, même si le reste passe
+    assert spec_ok(r"+Nope|-Chargement&+Où allez-vous") == 1
+    # le type hérité traverse `&`
+    assert spec_chunks("+A&+B") == [("+", "A"), ("+", "B")]
+    assert spec_groups("+A|B&+C") == [("+", ["A", "B"]), ("+", ["C"])]
 
 
 @case
@@ -369,18 +411,26 @@ def test_l1_rider_stop1_active_gated_by_api_state():
 
 
 @case
-def test_rider_stop1_done_requires_counter_marker():
+def test_rider_stop1_done_requires_counter_and_next_leg_banner():
     """Point 23 — décision Papa : bug produit (compteur jamais visible en RUNNING), fix app
-    rider en cours parallèlement. Le marqueur réel est le compteur « 1/2 arrêt terminé »
-    (stopsProgressSingular) rendu par l'app corrigée après la confirmation de l'arrêt 1."""
+    rider en cours parallèlement. Le marqueur exige les DEUX signaux réels de l'écran après
+    confirmation de l'arrêt 1 : le compteur « 1/2 arrêt terminé » (stopsProgressSingular) ET
+    la bannière remise à jour sur la jambe suivante (« En route vers E2E Stop 2 Fann »,
+    currentLegBanner). Un compteur avec bannière figée est exactement l'ancien bug."""
     spec = markers().get("rider_stop1_done")
-    assert spec == "+1/2 arrêts? terminés?", spec
-    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")) == 0, spec
+    assert spec == "+1/2 arrêts? terminés?&+En route vers E2E Stop 2", spec
+    assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
     # « 0/2 arrêt terminé » est l'écran RUNNING avant toute confirmation : pas un PASS.
     assert spec_ok(spec, _xml("0/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
+    # Compteur 1/2 mais bannière figée (l'ancien bug produit) : pas un PASS.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
+    # Compteur 1/2 sans bannière du tout : pas un PASS non plus.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé")) != 0, spec
+    # Bannière de la jambe 2 sans compteur : l'état d'AVANT le fix, jamais un PASS.
+    assert spec_ok(spec, _xml("En route vers E2E Stop 2 Fann")) != 0, spec
     t = run_text()
     assert "cap rider-stop1-done 23-rider-stop1-done" in t, \
-        "23 doit capturer par cap (marqueur compteur)"
+        "23 doit capturer par cap (marqueur compteur + bannière)"
     assert "rider_no_progress_evidence rider-stop1-done" not in t, \
         "plus de chemin sans marqueur pour 23"
 
@@ -388,7 +438,7 @@ def test_rider_stop1_done_requires_counter_marker():
 @case
 def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
     spec = markers()["rider_stop2_done"]
-    assert spec == "+2/2 arrêts? terminés?", spec
+    assert spec == "+2/2 arrêts? terminés?&+En route vers E2E Dest Point E", spec
     assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
     # « 1/2 arrêt terminé » + bannière jambe 2 (écran post-arrêt-1) n'est pas un 2/2.
     assert spec_ok(spec, RIDER_STOP1_DONE) != 0, spec     # jambe 2 seulement
@@ -400,13 +450,18 @@ def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
 @case
 def test_l1_rider_stop2_done_banner_alone_is_not_proof():
     """L'ancienne preuve « En route vers E2E Dest Point E » s'affiche dès l'arrêt 1 (stops
-    vides) : elle ne peut plus être la preuve — même seule — de l'arrêt 2."""
+    vides) : elle ne peut jamais être la preuve, seule, de l'arrêt 2. Le marqueur 24 l'exige
+    comme second signal d'un ET — le compteur 2/2 reste indispensable."""
     spec = markers()["rider_stop2_done"]
-    assert "En route vers" not in spec, spec
+    groups = spec_groups(spec)
+    assert ("+", ["2/2 arrêts? terminés?"]) in groups, spec
+    assert ("+", ["En route vers E2E Dest Point E"]) in groups, spec
     # Bannière vers la destination + compteur 1/2 seulement : état post-arrêt-1, pas un PASS.
     assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Dest Point E")) != 0, spec
     # La bannière seule (écran buggy, sans compteur) ne prouve rien non plus.
     assert spec_ok(spec, _xml("En route vers E2E Dest Point E")) != 0, spec
+    # Le compteur 2/2 seul, bannière absente, ne suffit pas non plus (ET).
+    assert spec_ok(spec, _xml("2/2 arrêts terminés")) != 0, spec
 
 
 @case

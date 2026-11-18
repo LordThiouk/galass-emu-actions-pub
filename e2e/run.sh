@@ -101,11 +101,15 @@ MARK_rider_stop1_active='+En route vers|-Arrêt 2'
 # B2 — avancement des arrêts (my_strings.dart rider 64-65, stopsProgressSingular/Plural) :
 # l'app corrigée rend le compteur « X/2 arrêt(s) terminé(s) » en course (décision Papa : le
 # compteur jamais visible en RUNNING était un bug produit, fix app parallèle). Les marqueurs
-# mesurent le rendu réel : après l'arrêt 1 confirmé, « 1/2 arrêt terminé » (point 23) ; après
-# l'arrêt 2, « 2/2 arrêts terminés » (point 24). La bannière « En route vers … » seule n'est
-# plus une preuve : elle s'affiche dès l'arrêt 1 (stops vides), donc jamais un positif du 24.
-MARK_rider_stop1_done='+1/2 arrêts? terminés?'
-MARK_rider_stop2_done='+2/2 arrêts? terminés?'
+# mesurent les DEUX signaux du même écran, ET : le compteur, et la bannière de destination
+# (`currentLegBanner`, my_strings currentLeg) remise à jour sur la jambe suivante. Après
+# l'arrêt 1 : « 1/2 arrêt terminé » + « En route vers E2E Stop 2 Fann » (point 23). Après
+# l'arrêt 2 : « 2/2 arrêts terminés » + « En route vers E2E Dest Point E », la bannière
+# retombant sur la destination quand toutes les escales sont faites (point 24).
+# Un compteur seul peut mentir (bannière figée = l'ancien bug) et la bannière seule ne prouve
+# rien (elle s'affiche dès l'arrêt 1, stops vides) : chaque point exige les deux.
+MARK_rider_stop1_done='+1/2 arrêts? terminés?&+En route vers E2E Stop 2'
+MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
