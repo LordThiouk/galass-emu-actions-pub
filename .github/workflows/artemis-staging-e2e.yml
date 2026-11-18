@@ -204,6 +204,18 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           script: bash e2e/ci-opencode-run.sh run
 
+      - name: Publier le diagnostic texte (non chiffré, sans captures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-e2e-diag-text
+          path: |
+            e2e-out/summary.md
+            e2e-out/report.json
+            e2e-out/ui/*.xml
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Chiffrer les preuves
         if: always()
         env: {PASS: "${{ secrets.E2E_ARCHIVE_PASS }}"}
