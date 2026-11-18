@@ -40,15 +40,21 @@ fg_pkg() {
   echo "${cur:-UNKNOWN}"
 }
 
-# xml_pkg : paquet de la fenêtre applicative d'après le DERNIER dump uiautomator valide
-# (attribut package du premier noeud hors com.android.systemui). Vide si pas de dump valide.
-# Sert de preuve de premier plan quand dumpsys renvoie le launcher alors que l'UI de l'app
-# est bien affichée (steps 14/33 : « marqueur absent » sur 29 points alors que le XML
-# montrait l'app).
-xml_pkg() {
-  [ "${UI_DUMP_VALID:-0}" = "1" ] && [ -s "$UI_XML_PATH" ] || { echo ""; return 0; }
-  grep -oE 'package="[^"]+"' "$UI_XML_PATH" 2>/dev/null \
+# xml_pkg_of file : paquet de la fenêtre applicative d'après un dump uiautomator donné
+# (attribut package du premier noeud hors com.android.systemui). Vide si illisible.
+xml_pkg_of() {
+  [ -n "${1:-}" ] && [ -s "$1" ] || { echo ""; return 0; }
+  grep -oE 'package="[^"]+"' "$1" 2>/dev/null \
     | cut -d'"' -f2 | grep -v '^com.android.systemui$' | head -1
+}
+
+# xml_pkg : paquet de la fenêtre applicative d'après le DERNIER dump uiautomator valide.
+# Vide si pas de dump valide. Sert de preuve de premier plan quand dumpsys renvoie le
+# launcher alors que l'UI de l'app est bien affichée (steps 14/33 : « marqueur absent »
+# sur 29 points alors que le XML montrait l'app).
+xml_pkg() {
+  [ "${UI_DUMP_VALID:-0}" = "1" ] || { echo ""; return 0; }
+  xml_pkg_of "$UI_XML_PATH"
 }
 
 # fg_is pkg : vrai si dumpsys OU un dump uiautomator frais place pkg au premier plan.
@@ -465,16 +471,17 @@ tap_when() {
 }
 
 _write_sidecar() {
-  # name pkg spec status waited action action_ok point marker_source failed_spec [fg]
-  # $11 = premier plan déjà arbitré par snap (dumpsys, corrigé par xml_pkg) : c'est la preuve
-  # que report.py doit lire. Sans $11 (appelant historique) on retombe sur le dumpsys brut.
+  # name pkg spec status waited action action_ok point marker_source failed_spec [fg] [fg_source]
+  # $11 = premier plan arbitré par snap (dumpsys, corrigé par un dump uiautomator) : c'est la
+  # preuve que report.py doit lire. Sans $11 (appelant historique) on retombe sur le dumpsys brut.
+  # $12 = provenance de cette valeur : "dumpsys" ou "ui-dump" (le dump fait foi).
   python3 - "$OUT/screens/$1.json" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" \
             "$OUT/screens/$1.png" "$OUT/ui/$1.xml" \
-            "${11:-$(fg_pkg 2>/dev/null || echo UNKNOWN)}" <<'PY'
+            "${11:-$(fg_pkg 2>/dev/null || echo UNKNOWN)}" "${12:-dumpsys}" <<'PY'
 import hashlib, json, os, re, sys, time
 
 (path, name, pkg, spec, status, waited, action, action_ok,
- point, source, failed, png, xml, fg) = sys.argv[1:15]
+ point, source, failed, png, xml, fg, fg_source) = sys.argv[1:16]
 
 
 def sha(path):
@@ -508,7 +515,7 @@ labels = labels[:40]
 
 json.dump({
     "name": name, "point": point, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "pkg": pkg, "fg_pkg": fg, "marker": spec, "marker_source": source,
+    "pkg": pkg, "fg_pkg": fg, "fg_source": fg_source, "marker": spec, "marker_source": source,
     "status": status, "waited_s": int(waited or 0),
     "action": action, "action_ok": action_ok == "1",
     "dump_sha256": sha(xml), "dump_bytes": count, "png_sha256": sha(png),
@@ -538,6 +545,14 @@ snap() {
     *) st=TIMEOUT ;;
   esac
   first_hash="$UI_DUMP_HASH"
+  # Le dump qui vient de servir (marqueur trouvé, ou dernier dump du wait) est figé AVANT
+  # le second dump : un re-dump raté effaçait cet écran et le sidecar sortait sans
+  # libellés, sur 0 octet de XML.
+  local matched_dump="$OUT/ui/.marker-$name.xml" matched_pkg=""
+  rm -f "$matched_dump"
+  if [ -n "$first_hash" ] && [ -s "$UI_XML_PATH" ]; then
+    cp "$UI_XML_PATH" "$matched_dump" 2>/dev/null && matched_pkg=$(xml_pkg_of "$matched_dump")
+  fi
   # The screencap is taken immediately after the dump that satisfied the marker.
   adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null
   png_bytes=$(wc -c < "$OUT/screens/$name.png" 2>/dev/null || echo 0)
@@ -571,31 +586,41 @@ snap() {
   fi
   if [ -n "$UI_DUMP_VALID" ] && [ "$UI_DUMP_VALID" = "1" ]; then
     cp "$UI_XML_PATH" "$OUT/ui/$name.xml" 2>/dev/null || true
+  elif [ -s "$matched_dump" ]; then
+    # Re-dump indisponible : on garde l'écran qui vient d'être capturé. Un fichier vide
+    # n'est pas une preuve, c'est une perte de preuve.
+    cp "$matched_dump" "$OUT/ui/$name.xml" 2>/dev/null || : > "$OUT/ui/$name.xml"
+    _ulog "snap $name: re-dump indisponible, dump capturé conservé"
   else
     : > "$OUT/ui/$name.xml"
   fi
   # Premier plan AU MOMENT DES PIXELS (donc avant le tap, qui déplacerait l'écran) : c'est la
   # preuve que report.py doit lire dans le sidecar. dumpsys window renvoie régulièrement le
-  # launcher alors que le dump uiautomator qui vient de MATCHer porte l'app — cas déjà arbitré
-  # par S8 ci-dessus et documenté dans xml_pkg (ui.sh:43-47, « marqueur absent sur 29 points
-  # alors que le XML montrait l'app »). Enregistrer le dumpsys brut y rendait report.py INVALID
-  # sur une capture que snap venait d'accepter. La correction n'existe que pour st=MATCH, et la
-  # valeur brute est conservée à côté dans captures.txt.
-  local cap_fg_raw cap_fg
+  # launcher alors que le dump uiautomator porte l'app — cas déjà arbitré par S8 ci-dessus et
+  # documenté dans xml_pkg (ui.sh:43-47, « marqueur absent sur 29 points alors que le XML
+  # montrait l'app »). Ordre de preuve : dumpsys, puis le dump post-capture, puis — seulement
+  # s'il n'y a pas de dump frais — le dump qui a servi à la capture. Le dump d'après-capture
+  # fait foi sur l'écran d'après-capture : il ne peut pas être remplacé par celui d'avant.
+  local cap_fg_raw cap_fg cap_fg_src
   cap_fg_raw=$(fg_pkg 2>/dev/null || echo UNKNOWN)
   cap_fg="$cap_fg_raw"
-  if [ "$st" = MATCH ] && [ -n "$pkg" ] && [ "$cap_fg" != "$pkg" ] \
-     && [ "$(xml_pkg)" = "$pkg" ]; then
-    cap_fg="$pkg"
+  cap_fg_src="dumpsys"
+  if [ -n "$pkg" ] && [ "$cap_fg" != "$pkg" ]; then
+    if [ "$(xml_pkg)" = "$pkg" ]; then
+      cap_fg="$pkg"; cap_fg_src="ui-dump"
+    elif [ "${UI_DUMP_VALID:-0}" != "1" ] && [ -n "$matched_pkg" ] && [ "$matched_pkg" = "$pkg" ]; then
+      cap_fg="$pkg"; cap_fg_src="ui-dump"
+    fi
   fi
+  rm -f "$matched_dump"
   local action_ok=0 failed=""
   [ -f "$OUT/ui/.last-spec-fail" ] && failed=$(cat "$OUT/ui/.last-spec-fail")
   if [ -n "$action" ] && [ "$st" = MATCH ]; then
     if tap_exact "$action"; then action_ok=1; sleep 2; else st=ACTION_MISS; fi
   fi
   _write_sidecar "$name" "$pkg" "$spec" "$st" "$((SECONDS - t0))" "$action" "$action_ok" \
-                 "$point" "$source" "$failed" "$cap_fg"
-  echo "$name|$st|fg=$cap_fg|point=$point|marker=$spec|wait=$((SECONDS - t0))s$([ "$cap_fg" != "$cap_fg_raw" ] && echo " (dumpsys=$cap_fg_raw, corrigé par le dump)")" \
+                 "$point" "$source" "$failed" "$cap_fg" "$cap_fg_src"
+  echo "$name|$st|fg=$cap_fg|point=$point|marker=$spec|wait=$((SECONDS - t0))s$([ "$cap_fg" != "$cap_fg_raw" ] && echo " (dumpsys=$cap_fg_raw, corrigé par $cap_fg_src)")" \
     >> "$OUT/captures.txt"
   _ulog "snap $name $st ($((SECONDS - t0))s)"
   [ "$st" = TIMEOUT ] && ui_screen_diag "snap $name TIMEOUT : écran réel"

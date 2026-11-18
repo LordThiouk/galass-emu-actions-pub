@@ -116,9 +116,38 @@ def expected_pkg(point):
     return ""
 
 
+# Une capture ne peut être "invalidée" que si elle prétend être une preuve. Une capture
+# TIMEOUT/ACTION_MISS n'est déjà pas une preuve : sa raison doit dire ce qui a échoué
+# (le marqueur, le tap), pas "foreground … != package" — c'était le faux positif du run
+# 44354825315, où six points P0 semblaient casser le harnais alors que l'app était à l'écran.
+EVIDENCE_STATUS = "MATCH"
+
+
+def capture_reason(cap):
+    """Short, true reason for a capture that is not evidence."""
+    status = str(cap.get("status") or "UNKNOWN")
+    parts = [status]
+    if status == "ACTION_MISS" and cap.get("action") and not cap.get("action_ok"):
+        parts.append(f"tap « {cap.get('action')} » manqué")
+    failed = str(cap.get("failed_spec") or "").strip()
+    if failed:
+        parts.append(f"marqueur absent: {failed}")
+    fg = str(cap.get("fg_pkg") or "").strip()
+    if fg and fg not in ("", "UNKNOWN"):
+        parts.append(f"fg={fg} ({cap.get('fg_source') or 'dumpsys'})")
+    return f"{cap.get('name')} ({' ; '.join(parts)})"
+
+
 def validate_captures(out_dir, caps):
-    """B4: a sidecar is only evidence when the pixels exist and the app is the right one."""
+    """B4: a sidecar is only evidence when the pixels exist and the app is the right one.
+
+    Applied to evidence-grade captures (MATCH). A capture that never claimed the screen
+    keeps its own status and is reported through `capture_reason`, so a FAIL always names
+    the step that failed.
+    """
     for cap in caps:
+        if cap.get("status") != EVIDENCE_STATUS:
+            continue
         reasons = []
         png = os.path.join(out_dir, "screens", f"{cap.get('name')}.png")
         try:
@@ -269,8 +298,9 @@ def build(out_dir, p0=None):
                         + "; ".join(f"{c['name']} ({c.get('invalid_reason')})"
                                     for c in invalid))
             else:
-                names = ",".join(f"{c['name']}({c.get('status')})" for c in caps)
-                _upsert(points, point, "FAIL", f"no MATCH capture: {names}")
+                _upsert(points, point, "FAIL",
+                        "no MATCH capture: "
+                        + " ; ".join(capture_reason(c) for c in caps))
 
     duplicates = check_distinct(sidecars)
     for dup in duplicates:
@@ -320,8 +350,8 @@ def build(out_dir, p0=None):
         "ui_flags": flags,
         "captures": [{k: c.get(k) for k in
                       ("name", "point", "status", "marker", "marker_source",
-                       "fg_pkg", "dump_sha256", "png_sha256", "failed_spec",
-                       "node_count", "invalid_reason")}
+                       "fg_pkg", "fg_source", "dump_sha256", "png_sha256",
+                       "failed_spec", "node_count", "invalid_reason")}
                      for c in sidecars],
         "duplicates": duplicates,
     }

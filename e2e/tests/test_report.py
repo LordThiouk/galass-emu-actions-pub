@@ -55,6 +55,7 @@ def make_out(rows, captures=()):
             "png_sha256": cap.get("png_sha256", f"png{i}"),
             "marker_source": cap.get("marker_source", "grounded"),
             "fg_pkg": cap.get("fg_pkg") or default_fg(point),
+            "fg_source": cap.get("fg_source", "dumpsys"),
             "labels": cap.get("labels", []),
             "node_count": cap.get("node_count", 0),
             "failed_spec": cap.get("failed_spec", ""),
@@ -271,6 +272,54 @@ def test_capture_with_wrong_foreground_is_invalid():
     assert row["result"] == "FAIL", row
     assert "capture invalid" in row["detail"], row
     assert "foreground" in row["detail"], row
+
+
+# --------------------------------- B4b the reason must name what actually failed
+@case
+def test_timeout_capture_reports_the_marker_not_capture_invalid():
+    """A capture that timed out is already a failure; calling it "capture invalid:
+    foreground …" (run 44354825315) masked the marker/step that really failed."""
+    import report
+
+    out = make_out([("driver-cash-request", "FAIL", "marker absent")],
+                   [{"name": "41-driver-cash-request", "point": "driver-cash-request",
+                     "status": "TIMEOUT", "marker": "+Confirmer le paiement",
+                     "failed_spec": "+Confirmer le paiement",
+                     "fg_pkg": "com.google.android.apps.nexuslauncher"}])
+    res = report.build(out, p0={"driver-cash-request"})
+    row = [p for p in res["points"] if p["point"] == "driver-cash-request"][0]
+    assert row["result"] == "FAIL", row
+    assert "capture invalid" not in row["detail"], row
+    assert "TIMEOUT" in row["detail"], row
+    assert "Confirmer le paiement" in row["detail"], row
+
+
+@case
+def test_non_match_capture_is_never_promoted_to_evidence():
+    """Same run, the other direction: a TIMEOUT capture must not close a P0 point."""
+    import report
+
+    out = make_out([("rider-home-after", "PASS", "row claims pass")],
+                   [{"name": "31-rider-home-after", "point": "rider-home-after",
+                     "status": "TIMEOUT", "marker": "+Confirmer le lieu"}])
+    res = report.build(out, p0={"rider-home-after"})
+    row = [p for p in res["points"] if p["point"] == "rider-home-after"][0]
+    assert row["result"] == "FAIL", row
+    assert "no MATCH capture" in row["detail"], row
+
+
+@case
+def test_match_capture_with_dump_foreground_proof_is_valid():
+    """`fg_source=ui-dump` is the documented arbitration; it must not invalidate."""
+    import report
+
+    out = make_out([("rider-home-loaded", "PASS", "ok")],
+                   [{"name": "14-rider-home", "point": "rider-home-loaded",
+                     "marker": "+Où allez-vous", "fg_pkg": RIDER_PKG,
+                     "fg_source": "ui-dump"}])
+    res = report.build(out, p0={"rider-home-loaded"})
+    row = [p for p in res["points"] if p["point"] == "rider-home-loaded"][0]
+    assert row["result"] == "PASS", row
 
 
 # ------------------------------------------------- S1 zero-P0 guard
