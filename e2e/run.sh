@@ -1109,12 +1109,16 @@ fi
 flush_results
 write_flags
 "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"; report_rc=$?
-# Diag final 2 : les RAISONS des FAIL, compactes, pour qu'un extrait borné (80 lignes)
-# dise *pourquoi* chaque point tombe au lieu de seulement *lesquels*. Aucun verdict changé.
-if [ -s "$OUT/results-raw.txt" ]; then
-  log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$OUT/results-raw.txt") point(s)"
-  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>140) r=substr(r,1,140); printf "%s=%s; ", $1, r}' \
-    "$OUT/results-raw.txt" | fold -s -w 240 | head -n 6 | while IFS= read -r _dl; do log "  FAIL:$_dl"; done
+# Diag final 2 : les RAISONS de CHAQUE FAIL, une ligne par point, pour qu'un extrait
+# borné (80 lignes) dise *pourquoi* chaque point tombe. Source = results.txt (rapport
+# agrégé de report.py, qui ajoute les FAIL « not attempted »/« no MATCH capture »),
+# results-raw.txt en repli. Aucun verdict, aucun point P0 changé.
+DIGEST_SRC="$OUT/results.txt"
+[ -s "$DIGEST_SRC" ] || DIGEST_SRC="$OUT/results-raw.txt"
+if [ -s "$DIGEST_SRC" ]; then
+  log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$DIGEST_SRC") point(s) (src=$(basename "$DIGEST_SRC"))"
+  awk -F'|' '$2=="FAIL"{r=$3; gsub(/\|/,"/",r); if (length(r)>150) r=substr(r,1,150); printf "  FAIL %s = %s\n", $1, r}' \
+    "$DIGEST_SRC" | while IFS= read -r _dl; do log "$_dl"; done
 fi
 # Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
 # lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
