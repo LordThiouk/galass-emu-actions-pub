@@ -764,10 +764,16 @@ if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarre
   # La fenêtre « Prise en charge du client » (Annuler / Confirmer) bloque tout l'écran
   # suivant (37, 35b, 42) : la confirmer et attendre qu'elle disparaisse AVANT de lire l'écran.
   dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 15 20; pickup_dlg=$?
-  # Preuve backend juste après le tap : status=2 → le start UI n'a pas atteint le backend ;
-  # status=3 → il l'a atteint et c'est l'app qui n'a pas rafraîchi son écran.
+  # Preuve backend juste après le tap : status=2 → le start UI n'a pas atteint le backend
+  # (l'appel du Driver est en cause) ; status=3 → il l'a atteint et c'est l'app qui n'a pas
+  # rafraîchi son écran. Le statut est capturé, puis re-signalé en fin de run (diag final)
+  # pour survivre au tail borné des logs.
   log "prise en charge: état backend juste après « Confirmer » (2 = start UI non pris, 3 = pris)"
   ride_state
+  PICKUP_START_STATUS=$(sed -n 's/^status=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | head -n1)
+  PICKUP_TAP_UI=$([ "${pickup_dlg:-9}" = 1 ] && echo confirmed || echo failed)
+  log "diag pickup: tap_ui=$PICKUP_TAP_UI start_status=${PICKUP_START_STATUS:-inconnu} (2 = start UI jamais reçu par le backend, 3 = reçu)"
+  mark pickup-backend-status WARN "tap_ui=$PICKUP_TAP_UI start_status=${PICKUP_START_STATUS:-inconnu}"
   if [ "$pickup_dlg" -ne 1 ] && wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
   else
@@ -1092,5 +1098,8 @@ if emu_unstable_scan "$LOG_FILE" >> "$OUT/run.log" 2>&1; then
 fi
 flush_results
 write_flags
-"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"
-exit $?
+"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"; report_rc=$?
+# Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
+# lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
+log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
+exit $report_rc

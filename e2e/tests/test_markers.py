@@ -501,6 +501,27 @@ def test_driver_pickup_dialog_confirmed_before_waiting_marker():
 
 
 @case
+def test_pickup_diag_captures_backend_status_right_after_the_tap():
+    """Diag 37/38/39 : le statut backend est lu JUSTE après le tap « Confirmer », et
+    re-signalé en dernière ligne du run (sinon il sort du tail borné des logs).
+    status=2 → start UI jamais reçu ; status=3 → reçu, bug de rafraîchissement Driver."""
+    t = run_text()
+    d = t.index('dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler"')
+    r = t.index("ride_state", d)
+    c = t.index("PICKUP_START_STATUS=$(sed -n", r)
+    m = t.index('mark pickup-backend-status WARN', c)
+    assert d < r < c < m, "l'ordre tap → state → capture → mark doit tenir"
+    assert "status=3" in t and "status=2" in t, "les deux hypothèses doivent être nommées"
+    # re-signalé après le rapport : la dernière ligne du log reste lisible dans un tail
+    rep = t.index('"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"')
+    diag = t.index("diag final pickup:", rep)
+    assert 'start_status=${PICKUP_START_STATUS:-inconnu}' in t[diag:diag + 400]
+    # le diag ne touche aucun point P0 ni aucun verdict
+    p0 = re.search(r'P0_POINTS="([^"]+)"', t, re.S).group(1)
+    assert "pickup-backend-status" not in p0
+
+
+@case
 def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
     """Galass_Driver my_strings.confirmStop = « Confirmer l'arrêt » ; aucun « Terminer l'arrêt »."""
     t = run_text()
