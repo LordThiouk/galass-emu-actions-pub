@@ -465,9 +465,12 @@ tap_when() {
 }
 
 _write_sidecar() {
-  # name pkg spec status waited action action_ok point marker_source failed_spec
+  # name pkg spec status waited action action_ok point marker_source failed_spec [fg]
+  # $11 = premier plan déjà arbitré par snap (dumpsys, corrigé par xml_pkg) : c'est la preuve
+  # que report.py doit lire. Sans $11 (appelant historique) on retombe sur le dumpsys brut.
   python3 - "$OUT/screens/$1.json" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" \
-            "$OUT/screens/$1.png" "$OUT/ui/$1.xml" "$(fg_pkg 2>/dev/null || echo UNKNOWN)" <<'PY'
+            "$OUT/screens/$1.png" "$OUT/ui/$1.xml" \
+            "${11:-$(fg_pkg 2>/dev/null || echo UNKNOWN)}" <<'PY'
 import hashlib, json, os, re, sys, time
 
 (path, name, pkg, spec, status, waited, action, action_ok,
@@ -571,26 +574,28 @@ snap() {
   else
     : > "$OUT/ui/$name.xml"
   fi
+  # Premier plan AU MOMENT DES PIXELS (donc avant le tap, qui déplacerait l'écran) : c'est la
+  # preuve que report.py doit lire dans le sidecar. dumpsys window renvoie régulièrement le
+  # launcher alors que le dump uiautomator qui vient de MATCHer porte l'app — cas déjà arbitré
+  # par S8 ci-dessus et documenté dans xml_pkg (ui.sh:43-47, « marqueur absent sur 29 points
+  # alors que le XML montrait l'app »). Enregistrer le dumpsys brut y rendait report.py INVALID
+  # sur une capture que snap venait d'accepter. La correction n'existe que pour st=MATCH, et la
+  # valeur brute est conservée à côté dans captures.txt.
+  local cap_fg_raw cap_fg
+  cap_fg_raw=$(fg_pkg 2>/dev/null || echo UNKNOWN)
+  cap_fg="$cap_fg_raw"
+  if [ "$st" = MATCH ] && [ -n "$pkg" ] && [ "$cap_fg" != "$pkg" ] \
+     && [ "$(xml_pkg)" = "$pkg" ]; then
+    cap_fg="$pkg"
+  fi
   local action_ok=0 failed=""
   [ -f "$OUT/ui/.last-spec-fail" ] && failed=$(cat "$OUT/ui/.last-spec-fail")
   if [ -n "$action" ] && [ "$st" = MATCH ]; then
     if tap_exact "$action"; then action_ok=1; sleep 2; else st=ACTION_MISS; fi
   fi
-  # Premier plan pour le rapport : la même preuve que celle déjà utilisée par S8 ci-dessus.
-  # dumpsys window renvoie régulièrement le launcher alors que le dump uiautomator (fraîchement
-  # produit par le wait_ui qui a MATCHé) porte l'app — cas documenté dans xml_pkg (ui.sh:43-47,
-  # « marqueur absent sur 29 points alors que le XML montrait l'app »). Enregistrer le dumpsys
-  # brut dans le sidecar rendait report.py INVALID sur une capture que snap venait d'accepter.
-  # La correction est tracée : dumpsys= est conservé à côté de la valeur retenue.
-  local fg_raw fg_now
-  fg_raw=$(fg_pkg 2>/dev/null || echo UNKNOWN)
-  fg_now="$fg_raw"
-  if [ -n "$pkg" ] && [ "$fg_now" != "$pkg" ] && [ "$(xml_pkg)" = "$pkg" ]; then
-    fg_now="$pkg"
-  fi
   _write_sidecar "$name" "$pkg" "$spec" "$st" "$((SECONDS - t0))" "$action" "$action_ok" \
-                 "$point" "$source" "$failed" "$fg_now"
-  echo "$name|$st|fg=$fg_now|point=$point|marker=$spec|wait=$((SECONDS - t0))s$([ "$fg_now" != "$fg_raw" ] && echo " (dumpsys=$fg_raw, corrigé par le dump)")" \
+                 "$point" "$source" "$failed" "$cap_fg"
+  echo "$name|$st|fg=$cap_fg|point=$point|marker=$spec|wait=$((SECONDS - t0))s$([ "$cap_fg" != "$cap_fg_raw" ] && echo " (dumpsys=$cap_fg_raw, corrigé par le dump)")" \
     >> "$OUT/captures.txt"
   _ulog "snap $name $st ($((SECONDS - t0))s)"
   [ "$st" = TIMEOUT ] && ui_screen_diag "snap $name TIMEOUT : écran réel"
