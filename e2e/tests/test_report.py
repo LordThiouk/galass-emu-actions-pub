@@ -58,6 +58,7 @@ def make_out(rows, captures=()):
             "fg_source": cap.get("fg_source", "dumpsys"),
             "labels": cap.get("labels", []),
             "node_count": cap.get("node_count", 0),
+            "ts": cap.get("ts", ""),
             "failed_spec": cap.get("failed_spec", ""),
         }
         with open(os.path.join(out, "screens", name + ".json"), "w") as fh:
@@ -263,6 +264,63 @@ def test_label_signature_duplicate_detected():
     rows = {p["point"]: p for p in res["points"]}
     assert rows["rider-stop1-active"]["result"] == "FAIL", rows["rider-stop1-active"]
     assert "duplicate-state" in rows["rider-stop1-active"]["detail"]
+
+
+@case
+def test_duplicate_blames_the_later_capture_in_time_not_the_later_name():
+    """Measure run 44441344957: `driver-running-stop1` (P0) fell in duplicate-state
+    against `35b-driver-inride` — a capture taken TWO SECONDS LATER, whose name simply
+    sorts first ("35b" < "37"). The "previous capture" is the earlier one in time.
+
+    Same dump + same pixels => the two captures show the same screen: the point that
+    came second added nothing, so it is the one whose distinctness is unproven.
+    """
+    import report
+
+    caps = [
+        {"name": "35b-driver-inride", "point": "driver-inride-stops",
+         "marker": "+Arrêt 1|+Terminer la course", "dump_sha256": "same",
+         "png_sha256": "png-same", "ts": "2026-11-19T02:20:02Z"},
+        {"name": "37-driver-running-stop1", "point": "driver-running-stop1",
+         "marker": "+Arrêt 1|+Terminer la course", "dump_sha256": "same",
+         "png_sha256": "png-same", "ts": "2026-11-19T02:20:00Z"},
+    ]
+    out = make_out([("driver-inride-stops", "PASS", "ok"),
+                    ("driver-running-stop1", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-inride-stops", "driver-running-stop1"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["driver-running-stop1"]["result"] == "PASS", rows["driver-running-stop1"]
+    assert rows["driver-inride-stops"]["result"] == "FAIL", rows["driver-inride-stops"]
+    assert res["duplicates"][0]["name"] == "35b-driver-inride", res["duplicates"]
+
+
+@case
+def test_label_signature_keeps_progress_counters_distinct():
+    """Measure run 44441344957: `driver-stop1-done` (0/2 -> 1/2 stops done) was flagged
+    as the same screen as `35b-driver-inride` (png=diff: the counter is rendered).
+
+    Masking EVERY digit to catch a ticking timer also masks real progress: "0/2 arrêt
+    terminé" and "1/2 arrêt terminé" are two different states. Only time-like tokens
+    (durations, clocks) may be masked.
+    """
+    import report
+
+    caps = [
+        {"name": "35b-driver-inride", "point": "driver-inride-stops",
+         "marker": "+0/2 arrêt terminé", "dump_sha256": "dump-a", "png_sha256": "png-a",
+         "labels": ["Terminer la course", "0/2 arrêt terminé", "5 Min"],
+         "node_count": 42, "ts": "2026-11-19T02:20:02Z"},
+        {"name": "38-driver-stop1-done", "point": "driver-stop1-done",
+         "marker": "+1/2 arrêt terminé", "dump_sha256": "dump-b", "png_sha256": "png-b",
+         "labels": ["Terminer la course", "1/2 arrêt terminé", "5 Min"],
+         "node_count": 42, "ts": "2026-11-19T02:21:30Z"},
+    ]
+    out = make_out([("driver-inride-stops", "PASS", "ok"),
+                    ("driver-stop1-done", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-inride-stops", "driver-stop1-done"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["driver-stop1-done"]["result"] == "PASS", rows["driver-stop1-done"]
+    assert not res["duplicates"], res["duplicates"]
 
 
 # ------------------------------------------------- B4 capture integrity
