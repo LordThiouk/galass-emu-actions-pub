@@ -289,7 +289,7 @@ tap_exact() {
     return 4
   fi
   res=$(python3 - "$UI_XML_PATH" "$label" <<'PY'
-import html, re, sys
+import html, os, re, sys
 
 path, label = sys.argv[1], sys.argv[2]
 norm = lambda s: re.sub(r"\s+", " ", html.unescape(s)).strip()
@@ -322,7 +322,9 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
         continue
     if norm_attr(attr("text")) == want or norm_attr(attr("content-desc")) == want:
         best = ((x1 + x2) // 2, (y1 + y2) // 2)
-        break
+        # TAP_PICK=last : le dernier nœud gagne (bouton placé sous un titre au même libellé).
+        if os.environ.get("TAP_PICK") != "last":
+            break
 print("" if best is None else "%d %d" % best)
 PY
 )

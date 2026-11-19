@@ -319,8 +319,13 @@ compose_ride_ui() {
   done
   # 17 : les deux arrêts sont posés, AVANT la demande.
   cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+  # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
+  # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
+  tap_prefix "$RIDER_PKG" "Economie" 20 || { log "compose_ride_ui: service Economie absent"; return 1; }
+  tap_when "$RIDER_PKG" "Mode de paiement" >/dev/null 2>&1 || log "compose_ride_ui: sélecteur de paiement non trouvé"
   tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" >/dev/null 2>&1 || log "compose_ride_ui: choix espèces non trouvé"
-  tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; return 1; }
+  # Le titre du formulaire porte le même libellé que le bouton : viser le DERNIER nœud (le bouton).
+  TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; return 1; }
   log "compose_ride_ui: demande envoyée par l'UI"
   return 0
 }

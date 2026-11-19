@@ -92,6 +92,41 @@ def test_each_stop_confirmed_with_real_label():
     assert 'tap_when "$RIDER_PKG" "Confirmer le lieu"' in loop, loop
 
 
+def tap_exact(nodes, label, pick=None):
+    d = tempfile.mkdtemp()
+    xml = os.path.join(d, "w.xml")
+    open(xml, "w", encoding="utf-8").write("<hierarchy>" + "".join(nodes) + "</hierarchy>")
+    script = (
+        f'. "{UI}"\nUI_XML_PATH="{xml}"\n'
+        'ui_xml() { UI_DUMP_VALID=1; return 0; }\n_ulog() { :; }\n'
+        'adb() { echo "adb $*" >> "$TAPLOG"; }\n'
+        f'{("TAP_PICK=" + pick + " ") if pick else ""}tap_exact "{label}"; echo "rc=$?"'
+    )
+    env = dict(os.environ, TAPLOG=os.path.join(d, "taps.txt"))
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env).stdout
+    taps = open(env["TAPLOG"]).read() if os.path.exists(env["TAPLOG"]) else ""
+    return out.strip(), taps
+
+
+def test_tap_exact_last_hits_button_not_title():
+    # Écran « Trouver un chauffeur » : le titre (Text) précède le bouton (RoundedButton) avec le même libellé.
+    nodes = [node("Trouver un chauffeur", "[0,100][1080,160]"), node("Trouver un chauffeur", "[0,2000][1080,2100]")]
+    _, first = tap_exact(nodes, "Trouver un chauffeur")
+    _, last = tap_exact(nodes, "Trouver un chauffeur", pick="last")
+    assert "input tap 540 130" in first, first
+    assert "input tap 540 2050" in last, last
+
+
+def test_compose_selects_service_then_payment_then_taps_button_last():
+    body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
+    tail = body[body.index("17-rider-multistop-summary"):]
+    svc = tail.index('tap_prefix "$RIDER_PKG" "Economie"')
+    pay = tail.index('"Mode de paiement"')
+    cash = tail.index("Paiement en espèces")
+    btn = tail.index("TAP_PICK=last tap_when")
+    assert svc < pay < cash < btn, tail
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):
