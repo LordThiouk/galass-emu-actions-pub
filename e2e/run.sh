@@ -89,7 +89,7 @@ export P0_POINTS
 # absent, '|' = OR, the kind propagates over the alternatives. 'cap' resolves a point's
 # marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
-MARK_rider_destination_selected='+E2E Dest Point E|-Où allez-vous'
+MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
 # Picker ouvert par « Ajouter un arrêt » : my_strings.dart confirmLocation (766) + stopPickerHint (47).
 MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
@@ -114,8 +114,8 @@ MARK_rider_stop1_active='+En route vers|-Arrêt 2'
 # retombant sur la destination quand toutes les escales sont faites (point 24).
 # Un compteur seul peut mentir (bannière figée = l'ancien bug) et la bannière seule ne prouve
 # rien (elle s'affiche dès l'arrêt 1, stops vides) : chaque point exige les deux.
-MARK_rider_stop1_done='+1/2 arrêts? terminés?&+En route vers E2E Stop 2'
-MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E'
+MARK_rider_stop1_done='+1/2 arrêts? terminés?&+En route vers E2E Stop 2|En route vers Fann'
+MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E|En route vers Point E'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
@@ -294,24 +294,25 @@ ui_pick_place() {
   fi
   # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
   places_wait_result "$label" 20 || true
-  tap_when "$RIDER_PKG" "$label" || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
+  tap_prefix "$RIDER_PKG" "$label" 20 || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
 }
 compose_ride_ui() {
   log "compose_ride_ui: début"
   bring_fg "$RIDER_PKG" || true
   tap_node_verified "$RIDER_PKG" "Où allez-vous ?" || { log "compose_ride_ui: le tap sur « Où allez-vous ? » n'a rien ouvert (repli API, FAIL)"; return 1; }
-  ui_pick_place "E2E Dest" "E2E Dest Point E" || return 1
+  # Lieux RÉELS de Dakar : Google Places ne connaît aucun nom inventé.
+  ui_pick_place "Point E" "Point E," || return 1
   # 15 : destination seule retenue, avant tout arrêt.
   cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
   local stop n=0
-  for stop in "E2E Stop 1 Médina" "E2E Stop 2 Fann"; do
+  for stop in "Médina" "Fann"; do
     n=$((n + 1))
     tap_when "$RIDER_PKG" "Ajouter un arrêt" || { log "compose_ride_ui: Ajouter un arrêt absent"; return 1; }
     if [ "$n" -eq 1 ]; then
       # 16 : picker ouvert, AVANT toute saisie (hint « Adresse de l'arrêt », « Confirmer le lieu »).
       cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
     fi
-    ui_pick_place "${stop%% *} ${stop#* }" "$stop" || return 1
+    ui_pick_place "$stop" "$stop," || return 1
     tap_when "$RIDER_PKG" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || true
   done
   # 17 : les deux arrêts sont posés, AVANT la demande.

@@ -418,8 +418,11 @@ def test_rider_stop1_done_requires_counter_and_next_leg_banner():
     la bannière remise à jour sur la jambe suivante (« En route vers E2E Stop 2 Fann »,
     currentLegBanner). Un compteur avec bannière figée est exactement l'ancien bug."""
     spec = markers().get("rider_stop1_done")
-    assert spec == "+1/2 arrêts? terminés?&+En route vers E2E Stop 2", spec
+    assert spec == "+1/2 arrêts? terminés?&+En route vers E2E Stop 2|En route vers Fann", spec
     assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
+    # Course composée par l'UI avec de vrais lieux : la bannière porte « Fann, Dakar, Senegal ».
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers Fann, Dakar, Senegal")) == 0, spec
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers Médina, Dakar, Senegal")) != 0, spec
     # « 0/2 arrêt terminé » est l'écran RUNNING avant toute confirmation : pas un PASS.
     assert spec_ok(spec, _xml("0/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
     # Compteur 1/2 mais bannière figée (l'ancien bug produit) : pas un PASS.
@@ -438,8 +441,9 @@ def test_rider_stop1_done_requires_counter_and_next_leg_banner():
 @case
 def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
     spec = markers()["rider_stop2_done"]
-    assert spec == "+2/2 arrêts? terminés?&+En route vers E2E Dest Point E", spec
+    assert spec == "+2/2 arrêts? terminés?&+En route vers E2E Dest Point E|En route vers Point E", spec
     assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
+    assert spec_ok(spec, _xml("2/2 arrêts terminés", "En route vers Point E, Dakar, Senegal")) == 0, spec
     # « 1/2 arrêt terminé » + bannière jambe 2 (écran post-arrêt-1) n'est pas un 2/2.
     assert spec_ok(spec, RIDER_STOP1_DONE) != 0, spec     # jambe 2 seulement
     # « Vous êtes arrivé » / « Payer maintenant » belong to destination-arrived.
@@ -455,11 +459,12 @@ def test_l1_rider_stop2_done_banner_alone_is_not_proof():
     spec = markers()["rider_stop2_done"]
     groups = spec_groups(spec)
     assert ("+", ["2/2 arrêts? terminés?"]) in groups, spec
-    assert ("+", ["En route vers E2E Dest Point E"]) in groups, spec
+    assert ("+", ["En route vers E2E Dest Point E", "En route vers Point E"]) in groups, spec
     # Bannière vers la destination + compteur 1/2 seulement : état post-arrêt-1, pas un PASS.
     assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Dest Point E")) != 0, spec
     # La bannière seule (écran buggy, sans compteur) ne prouve rien non plus.
     assert spec_ok(spec, _xml("En route vers E2E Dest Point E")) != 0, spec
+    assert spec_ok(spec, _xml("En route vers Point E, Dakar, Senegal")) != 0, spec
     # Le compteur 2/2 seul, bannière absente, ne suffit pas non plus (ET).
     assert spec_ok(spec, _xml("2/2 arrêts terminés")) != 0, spec
 

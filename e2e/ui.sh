@@ -335,6 +335,66 @@ PY
   _ulog "tap_exact $1 @ $2,$3"
 }
 
+# tap_prefix pkg prefix [timeout_s] : tape la première suggestion (nœud visible, hors champ de saisie)
+# dont le texte COMMENCE par prefix, sans accent ni casse. Google Places rend la description
+# complète (« Point E, Dakar, Senegal ») : un libellé exact ne peut pas la viser.
+tap_prefix() {
+  local pkg="$1" pre="$2" limit="${3:-20}" res t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$limit" ]; do
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      res=$(python3 - "$UI_XML_PATH" "$pre" <<'PY'
+import html, re, sys, unicodedata
+
+path, pre = sys.argv[1], sys.argv[2]
+
+
+def norm(s):
+    s = unicodedata.normalize("NFKD", html.unescape(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+want = norm(pre)
+try:
+    xml = open(path, encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+
+    def attr(name):
+        a = re.search(name + r'="([^"]*)"', tag)
+        return a.group(1) if a else ""
+
+    if attr("visible-to-user").lower() == "false" or "EditText" in attr("class"):
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+    if not b:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if x2 <= x1 or y2 <= y1:
+        continue
+    for t in (attr("text"), attr("content-desc")):
+        n = norm(t)
+        if n.startswith(want) and len(n) > len(want):
+            print((x1 + x2) // 2, (y1 + y2) // 2)
+            sys.exit(0)
+PY
+)
+      if [ -n "$res" ]; then
+        set -- $res
+        adb shell input tap "$1" "$2" >/dev/null 2>&1
+        _ulog "tap_prefix $pre @ $1,$2"
+        sleep 2
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "tap_prefix miss: $pre"
+  return 1
+}
+
 # ui_screen_diag label : journalise les textes visibles (sans secret) de l'écran courant, pour
 # expliquer un TIMEOUT ou un repli API sans déchiffrer les preuves.
 ui_screen_diag() {
