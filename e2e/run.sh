@@ -304,6 +304,8 @@ compose_ride_ui() {
   ui_pick_place "Point E" "Point E," || return 1
   # 15 : destination seule retenue, avant tout arrêt.
   cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
+  # Le picker reste ouvert après le choix : l'ajout d'arrêt n'apparaît qu'après la confirmation.
+  tap_when "$RIDER_PKG" "Confirmer le lieu" || { log "compose_ride_ui: Confirmer le lieu absent"; return 1; }
   local stop n=0
   for stop in "Médina" "Fann"; do
     n=$((n + 1))

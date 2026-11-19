@@ -65,6 +65,16 @@ def test_compose_uses_real_dakar_places():
     assert 'ui_pick_place "Point E"' in body and "Médina" in body and "Fann" in body, body
 
 
+def test_destination_confirmed_before_adding_stop():
+    # Run 44602357716 : après « Point E » l'écran porte encore « Confirmer le lieu » (picker) ;
+    # « Ajouter un arrêt » n'existe qu'après cette confirmation.
+    body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
+    cap15 = body.index("15-rider-destination-selected")
+    confirm = body.index("Confirmer le lieu", cap15)
+    add_stop = body.index("Ajouter un arrêt", cap15)
+    assert cap15 < confirm < add_stop, body
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):
