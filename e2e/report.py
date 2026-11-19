@@ -179,6 +179,21 @@ def _revisited(prev_point, point):
     return (prev_point or "", point or "") in REVISITED
 
 
+def _png_verdict(prev_png, cap):
+    """Les pixels tranchent : même dump + pixels différents = dump périmé, pas même écran.
+
+    Mesure run 44412970992 : quatre points tombaient en « duplicate-state » sans qu'on
+    puisse distinguer un écran réellement identique d'un dump qui n'a pas suivi l'écran.
+    La raison du FAIL nomme donc la preuve (`png=same` / `png=diff`) au lieu de la seule
+    égalité du dump — aucun seuil, aucun point P0, aucune porte ne change.
+    """
+    cur_png = cap.get("png_sha256") or ""
+    prev_png = prev_png or ""
+    if not prev_png or not cur_png:
+        return {"png": "unknown"}
+    return {"png": "same" if prev_png == cur_png else "diff"}
+
+
 def check_distinct(sidecars):
     """B5: same pixels (or same app + same labels + same node count) is a lie.
 
@@ -192,24 +207,26 @@ def check_distinct(sidecars):
         point = cap.get("point") or ""
         digest = cap.get("dump_sha256") or ""
         if digest and digest in seen:
-            prev_name, prev_point = seen[digest]
+            prev_name, prev_point, prev_png = seen[digest]
             if not _revisited(prev_point, point):
                 duplicates.append({"name": cap["name"], "point": point,
-                                   "duplicate_of": prev_name, "signal": "dump"})
+                                   "duplicate_of": prev_name, "signal": "dump",
+                                   **_png_verdict(prev_png, cap)})
         if digest:
-            seen.setdefault(digest, (cap["name"], point))
+            seen.setdefault(digest, (cap["name"], point, cap.get("png_sha256") or ""))
         labels = [l for l in (cap.get("labels") or []) if str(l).strip()]
         if labels:
             sig = (cap.get("fg_pkg") or "",
                    tuple(sorted({_norm_label(l) for l in labels})),
                    int(cap.get("node_count") or 0))
             if sig in sig_seen:
-                prev_name, prev_point = sig_seen[sig]
+                prev_name, prev_point, prev_png = sig_seen[sig]
                 if (not _revisited(prev_point, point)
                         and not any(d["name"] == cap["name"] for d in duplicates)):
                     duplicates.append({"name": cap["name"], "point": point,
-                                       "duplicate_of": prev_name, "signal": "labels"})
-            sig_seen.setdefault(sig, (cap["name"], point))
+                                       "duplicate_of": prev_name, "signal": "labels",
+                                       **_png_verdict(prev_png, cap)})
+            sig_seen.setdefault(sig, (cap["name"], point, cap.get("png_sha256") or ""))
     return duplicates
 
 
@@ -307,7 +324,7 @@ def build(out_dir, p0=None):
         if dup["point"]:
             _upsert(points, dup["point"], "FAIL",
                     f"duplicate-state: {dup.get('signal', 'dump')} identical to "
-                    f"{dup['duplicate_of']}")
+                    f"{dup['duplicate_of']} (png={dup.get('png', 'unknown')})")
 
     b2 = check_b2(sidecars)
     if b2 is not None:

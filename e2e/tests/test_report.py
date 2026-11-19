@@ -200,6 +200,51 @@ def test_revisited_screen_pair_is_allowlisted():
 
 
 @case
+def test_duplicate_reason_reports_pixels_when_the_dump_repeats():
+    """Mesure run 44412970992 : quatre captures tombaient en « duplicate-state » sans
+    qu'on puisse dire si l'écran était vraiment identique ou si le dump était périmé.
+    La raison doit donc nommer la seule preuve qui tranche : les pixels.
+
+    Même dump + pixels différents = le dump n'a pas suivi l'écran (défaut de dump).
+    Même dump + mêmes pixels = l'écran est réellement le même (fait produit).
+    """
+    import report
+
+    caps = [
+        {"name": "35-driver-accepted-details", "point": "driver-accepted-details",
+         "marker": "+Arrêt 1", "dump_sha256": "same", "png_sha256": "png-a"},
+        {"name": "36-driver-pickup-arrived", "point": "driver-pickup-arrived",
+         "marker": "+Prise en charge du client", "dump_sha256": "same",
+         "png_sha256": "png-b"},
+    ]
+    out = make_out([("driver-accepted-details", "PASS", "ok"),
+                    ("driver-pickup-arrived", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-accepted-details", "driver-pickup-arrived"})
+    row = [p for p in res["points"] if p["point"] == "driver-pickup-arrived"][0]
+    assert "premise" not in row["detail"], row
+    assert "png=diff" in row["detail"], row
+    assert "35-driver-accepted-details" in row["detail"], row
+
+
+@case
+def test_duplicate_reason_says_png_same_when_pixels_repeat():
+    import report
+
+    caps = [
+        {"name": "37-driver-running-stop1", "point": "driver-running-stop1",
+         "marker": "+Arrêt 1", "dump_sha256": "same", "png_sha256": "png-a"},
+        {"name": "38-driver-stop1-done", "point": "driver-stop1-done",
+         "marker": "+1/2 arrêt terminé", "dump_sha256": "same", "png_sha256": "png-a"},
+    ]
+    out = make_out([("driver-running-stop1", "PASS", "ok"),
+                    ("driver-stop1-done", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-running-stop1", "driver-stop1-done"})
+    row = [p for p in res["points"] if p["point"] == "driver-stop1-done"][0]
+    assert row["result"] == "FAIL", row
+    assert "png=same" in row["detail"], row
+
+
+@case
 def test_label_signature_duplicate_detected():
     """B5 secondary signal: same app + same visible labels + same node count is a
     duplicate even when the dump bytes drifted (timestamps, ids)."""
