@@ -315,7 +315,7 @@ compose_ride_ui() {
       cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
     fi
     ui_pick_place "$stop" "$stop," || return 1
-    tap_when "$RIDER_PKG" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || true
+    tap_when "$RIDER_PKG" "Confirmer le lieu" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || log "compose_ride_ui: confirmation de l'arrêt « $stop » absente"
   done
   # 17 : les deux arrêts sont posés, AVANT la demande.
   cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25

@@ -84,6 +84,14 @@ def test_pickup_capture_taken_after_tap_on_confirmation_dialog():
     assert tap < cap < confirm, (tap, cap, confirm)
 
 
+def test_each_stop_confirmed_with_real_label():
+    # Run 44609821983 : après « Médina » le picker garde « Confirmer le lieu » ; « Confirmer » seul
+    # (tap_exact) ne le touche pas -> « Ajouter un arrêt » absent pour le second arrêt.
+    body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
+    loop = body[body.index("for stop in"):]
+    assert 'tap_when "$RIDER_PKG" "Confirmer le lieu"' in loop, loop
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):
