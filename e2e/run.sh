@@ -113,7 +113,11 @@ MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
-MARK_rider_final_itinerary='+Course terminée|+Lieu de prise en charge|+Destination|-Chargement'
+# Run 44441344957 : les captures 26/27/29/30 tombaient sur l'écran de composition (« Lieu de
+# prise en charge », « Destination », « Confirmer le lieu »), où les deux alternatives « Lieu de
+# prise en charge » et « Destination » suffisaient à faire PASSER 29 — faux PASS écarté par le
+# négatif « Confirmer le lieu », l'affordance de composition.
+MARK_rider_final_itinerary='+Course terminée|-Chargement|-Confirmer le lieu'
 # Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
 MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
 # Accueil réel après la course : sélecteur de lieu (my_strings confirmLocation / pickUpLocation).

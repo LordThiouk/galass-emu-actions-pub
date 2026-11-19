@@ -475,6 +475,24 @@ def test_rider_rating_marker_is_avis_screen():
     assert "Notez" not in spec, spec
 
 
+# Écran de composition réel (run 44441344957, capture 30 rider-rating) : le marqueur 29
+# l'acceptait, donc la capture 29 était un faux PASS.
+RIDER_COMPOSITION = _xml("Lieu de prise en charge", "PG8J+MWG, 611 Av. El Hadj Mansour Sy.",
+                         "Destination", "E2E Dest", "Confirmer le lieu")
+
+
+@case
+def test_rider_final_itinerary_rejects_composition_screen():
+    """Run 44441344957 : les captures 26/27/29/30 tombaient sur l'écran de composition
+    (« Lieu de prise en charge », « Destination », « Confirmer le lieu ») ; le marqueur 29
+    acceptait cet écran, donc la capture 29 était un faux PASS. L'écran de clôture réel
+    porte « Course terminée » + « Avis » + les arrêts, jamais « Confirmer le lieu »."""
+    spec = markers()["rider_final_itinerary"]
+    assert spec_ok(spec, RIDER_COMPOSITION) != 0, spec
+    final = _xml("Course terminée", "Avis", "Arrêt 1", "Arrêt 2")
+    assert spec_ok(spec, final) == 0, spec
+
+
 @case
 def test_rider_home_after_marker_is_location_picker():
     spec = markers()["rider_home_after"]
