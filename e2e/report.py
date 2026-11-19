@@ -170,9 +170,26 @@ def validate_captures(out_dir, caps):
     return caps
 
 
+# Unité de temps : le seul jeton dont les chiffres tichent tout seuls.
+_TIME_UNIT = (r"(?:min|mins|minute|minutes|s|sec|secs|seconde|secondes"
+              r"|h|heure|heures|j|jour|jours)")
+
+
 def _norm_label(label):
-    """Normalise a visible label, masking digits so a ticking timer cannot hide a copy."""
-    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", str(label))).strip().lower()
+    """Normalise un libellé pour comparer deux écrans.
+
+    Seuls les jetons qui tichent sont masqués (durée, horloge) : un minuteur qui avance ne
+    doit pas masquer une copie d'écran. Un compteur de progression reste entier.
+
+    Mesure run 44441344957 : masquer *tous* les chiffres faisait passer « 1/2 arrêt
+    terminé » pour une copie de « 0/2 arrêt terminé » alors que les pixels diffèrent
+    (driver-stop1-done en duplicate-state, png=diff). Un compteur qui change est un état
+    qui change.
+    """
+    text = re.sub(r"\s+", " ", str(label)).strip().lower()
+    text = re.sub(r"\b\d+(?=\s*" + _TIME_UNIT + r"\b)", "#", text)
+    text = re.sub(r"\b\d{1,2}:\d{2}\b", "#:#", text)
+    return text
 
 
 def _revisited(prev_point, point):
@@ -194,6 +211,19 @@ def _png_verdict(prev_png, cap):
     return {"png": "same" if prev_png == cur_png else "diff"}
 
 
+def _time_order(sidecars):
+    """Les captures dans l'ordre du TEMPS : « la capture précédente » est celle qui a été
+    prise avant, jamais celle dont le nom de fichier se trie avant.
+
+    Mesure run 44441344957 : 35b-driver-inride, prise 2 s APRÈS 37-driver-running-stop1,
+    la faisait tomber en duplicate-state alors que les deux captures montrent le même
+    écran (png=same) — c'est la seconde qui n'ajoute rien, pas la première.
+    """
+    if not any(cap.get("ts") for cap in sidecars):
+        return list(sidecars)
+    return sorted(sidecars, key=lambda c: (c.get("ts") or "", c.get("name") or ""))
+
+
 def check_distinct(sidecars):
     """B5: same pixels (or same app + same labels + same node count) is a lie.
 
@@ -201,7 +231,7 @@ def check_distinct(sidecars):
     the same pixels; only the explicit revisited-screen pair is exempt.
     """
     duplicates, seen, sig_seen = [], {}, {}
-    for cap in sidecars:
+    for cap in _time_order(sidecars):
         if cap.get("status") != "MATCH":
             continue
         point = cap.get("point") or ""
