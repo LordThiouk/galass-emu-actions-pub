@@ -24,7 +24,7 @@ PY="${PY:-python3}"
 mkdir -p "$OUT"
 rm -rf "$OUT"/screens "$OUT"/ui "$OUT"/state.json "$OUT"/results-raw.txt \
        "$OUT"/results-live.txt "$OUT"/captures.txt "$OUT"/ui-flags.txt \
-       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt \
+       "$OUT"/last-ride-state.txt "$OUT"/assign-pre.txt "$OUT"/watchdog-report.txt \
        "$OUT"/report.json "$OUT"/results.txt "$OUT"/verdict.txt
 mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
@@ -708,6 +708,13 @@ else
   mark bug-b2-offer-stops WARN "B2 reproduit: offre sans arrêt visible (34)"
 fi
 
+# Sonde PRE (diagnostic read-only) : l'état du chauffeur AVANT la fenêtre d'accept.
+# Le step n'écrit rien et ne bascule pas online (online-status est un TOGGLE).
+ASSIGN_PRE_RAW=$(api assign_pre 2>> "$OUT/run.log" || true)
+ASSIGN_PRE_LINE=$(printf '%s\n' "$ASSIGN_PRE_RAW" | grep -a -F "assign_pre" | tail -n1)
+[ -n "$ASSIGN_PRE_LINE" ] || ASSIGN_PRE_LINE="assign_pre bal=? online=?"
+printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
+
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 if tap_exact "Accepter la course"; then
@@ -727,6 +734,22 @@ ride_state
 DECLINES_AFTER=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 declines_pre=$(( DECLINES_AFTER - DECLINES_BEFORE ))
 [ "$declines_pre" -lt 0 ] && declines_pre=0
+
+# diag-driver-assign — MESURE, pas une porte : status==0 (aucun chauffeur assigné)
+# est explicite dans le digest, avec la cause nommée par le remark backend.
+ASSIGN_DIAG=$("$PY" e2e/diag_assign.py "$OUT" 2>> "$OUT/run.log" || true)
+ASSIGN_DIAG_V=${ASSIGN_DIAG%%$'\t'*}
+ASSIGN_DIAG_D=${ASSIGN_DIAG#*$'\t'}
+case "$ASSIGN_DIAG_V" in
+  PASS|FAIL|WARN) ;;
+  *) ASSIGN_DIAG_V=WARN; ASSIGN_DIAG_D="diag illisible (${ASSIGN_DIAG_D:-aucune ligne})";;
+esac
+mark diag-driver-assign "$ASSIGN_DIAG_V" "$ASSIGN_DIAG_D"
+ASSIGN_DRIVER=$("$PY" -c "import json,sys
+st=json.load(open(sys.argv[1]))
+vals=(st.get('ride_picked') or {}, st.get('ride_create') or {}, st.get('driver_final') or {}, st.get('rider_final') or {})
+print(next((x.get('driver_id') for x in vals if x.get('driver_id') is not None), ''))" "$OUT/state.json" 2>/dev/null || true)
+[ -n "$ASSIGN_DRIVER" ] || ASSIGN_DRIVER=inconnu
 
 bring_fg "$RIDER_PKG" || true
 cap rider-driver-assigned 19-rider-driver-assigned "$RIDER_PKG" 30
@@ -1161,4 +1184,6 @@ fi
 # Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
 # lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
 log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
+# Re-signalé après le rapport (une ligne log, jamais un mark : le digest est déjà écrit).
+log "diag-driver-assign: ${ASSIGN_DIAG_V:-inconnu} ${ASSIGN_DIAG_D:-aucun} asg=${ASSIGN_DRIVER:-inconnu}"
 exit $report_rc

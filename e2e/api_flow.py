@@ -346,6 +346,25 @@ elif step == "online":
     save()
     print("DRIVER_ONLINE", 1 if ok else 0, flush=True)
     sys.exit(0 if ok else 3)
+elif step == "assign_pre":
+    # Sonde READ-ONLY : l'état du chauffeur AVANT la fenêtre d'accept. Aucune
+    # écriture d'état, aucune bascule online (online-status est un TOGGLE).
+    # dashboard expose online_status (balance masqué) ; driver-info rend balance
+    # visible (makeVisible). Les deux routes sont lues, rien d'autre.
+    c, d = call("GET", "driver/dashboard", DT)
+    drv = (d.get("data") or {}).get("driver") or {}
+    online = drv.get("online_status")
+    if online is None:
+        online = (d.get("data") or {}).get("online")
+    c, i = call("GET", "driver/driver-info", DT)
+    info = (i.get("data") or {}).get("driver") or {}
+    bal = info.get("balance")
+    if bal is None:
+        bal = drv.get("balance")
+    if online is None:
+        online = info.get("online_status")
+    print(f"assign_pre bal={bal if bal is not None else '?'} "
+          f"online={1 if online else 0}", flush=True)
 elif step == "pick":
     pick_ride()
 elif step == "cancel":
