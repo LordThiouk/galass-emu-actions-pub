@@ -66,6 +66,12 @@ count_in() { # pattern file -> count on stdout, rc=2 on grep error
   [ "$rc" -gt 1 ] && return 2
   printf '%s' "${n:-0}"
 }
+count_in_ci() { # comme count_in, insensible à la casse (l'app journalise DRIVER_ASSIGNED en majuscules)
+  local n rc
+  n=$(grep -a -i -F -c "$1" "$2" 2>/dev/null); rc=$?
+  [ "$rc" -gt 1 ] && return 2
+  printf '%s' "${n:-0}"
+}
 
 # P0 = parcours critique. Un WARN ou un SKIP sur l'un de ces points => verdict FAIL.
 P0_POINTS="api-preflight apk-base-url emulator-boot apk-install \
@@ -934,7 +940,7 @@ cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 # driver_assigned est arrivé dans le flux logcat, combien de lignes pusher existent au total, et
 # quelle activité était au premier plan au moment de la mesure. Hors P0_DEFAULT et hors
 # UI_POINTS : report.py l'affiche sans le compter comme warn/skip (test_report.py).
-PUSHER_ASSIGNED=$(count_in "driver_assigned" "$LOG_FILE" 2>/dev/null || echo 0)
+PUSHER_ASSIGNED=$(count_in_ci "driver_assigned" "$LOG_FILE" 2>/dev/null || echo 0)
 PUSHER_TOTAL=$(grep -a -i -c "pusher" "$LOG_FILE" 2>/dev/null || true)
 PUSHER_FG=$(adb shell dumpsys activity activities 2>/dev/null \
   | grep -m1 -E "mResumedActivity|topResumedActivity" \
