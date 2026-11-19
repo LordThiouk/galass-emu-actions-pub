@@ -801,9 +801,13 @@ fi
 adb emu geo fix -17.4677 14.7167 >/dev/null 2>&1 || true
 sleep 3
 bring_fg "$DRIVER_PKG" || true
+# 36 : écran de la fenêtre de confirmation ouverte par « Prise en charge du client » (le Driver n'a
+# pas d'état « arrivé » : capturer avant le tap redonnait l'écran de 35, duplicate-state).
+pickup_tapped=0
+try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course" && pickup_tapped=1
 cap driver-pickup-arrived 36-driver-pickup-arrived "$DRIVER_PKG" 20
 
-if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course"; then
+if [ "$pickup_tapped" = 1 ]; then
   # La fenêtre « Prise en charge du client » (Annuler / Confirmer) bloque tout l'écran
   # suivant (37, 35b, 42) : la confirmer et attendre qu'elle disparaisse AVANT de lire l'écran.
   dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 15 20; pickup_dlg=$?

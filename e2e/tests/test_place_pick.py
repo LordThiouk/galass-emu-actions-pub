@@ -75,6 +75,15 @@ def test_destination_confirmed_before_adding_stop():
     assert cap15 < confirm < add_stop, body
 
 
+def test_pickup_capture_taken_after_tap_on_confirmation_dialog():
+    # ISC-F19-6 : la capture 36 prise AVANT le tap était identique à 35 (duplicate-state).
+    # Le bouton « Prise en charge du client » existe : on capture la fenêtre de confirmation qu'il ouvre.
+    tap = RUN.index('try_tap "$DRIVER_PKG" "Prise en charge du client"')
+    cap = RUN.index("cap driver-pickup-arrived 36-driver-pickup-arrived")
+    confirm = RUN.index('dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler"')
+    assert tap < cap < confirm, (tap, cap, confirm)
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):
