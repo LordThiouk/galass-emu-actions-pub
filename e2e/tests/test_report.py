@@ -569,6 +569,33 @@ def test_build_cli_exit_code():
     assert "verdict=FAIL" in proc.stdout, proc.stdout
 
 
+@case
+def test_diag_rider_pusher_is_a_measurement_not_a_gate():
+    """Run 44441344957 : le rider n'a jamais rendu la course (captures 26/27/29/30 =
+    écran de composition) et le tail CI est borné à 80 lignes. `diag-rider-pusher` est émis
+    comme résultat pour survivre au tail ; il ne doit être ni P0 ni un point UI, et
+    report.py doit l'afficher sans le compter comme warn/skip."""
+    import report
+
+    assert "diag-rider-pusher" not in report.P0_DEFAULT, report.P0_DEFAULT
+    assert "diag-rider-pusher" not in report.UI_POINTS, report.UI_POINTS
+    row = "diag-rider-pusher|PASS|n=2 pusher=5 fg=sn.galass.galassrider"
+    rows = report.parse_rows(row)
+    assert rows == [{"point": "diag-rider-pusher", "result": "PASS",
+                     "detail": "n=2 pusher=5 fg=sn.galass.galassrider"}], rows
+    fail_row = "diag-rider-pusher|FAIL|n=0 pusher=0 fg=com.android.launcher"
+    fail_rows = report.parse_rows(fail_row)
+    assert fail_rows[0]["result"] == "FAIL" and "n=0" in fail_rows[0]["detail"], fail_rows
+    out = make_out([("diag-rider-pusher", "PASS", "n=2 pusher=5 fg=sn.galass.galassrider")])
+    res = report.build(out, p0={"rider-home-loaded"})
+    diag = [p for p in res["points"] if p["point"] == "diag-rider-pusher"]
+    assert diag and diag[0]["result"] == "PASS", res["points"]
+    assert diag[0]["detail"] == "n=2 pusher=5 fg=sn.galass.galassrider", diag
+    assert res["warn_count"] == 0 and res["skip_count"] == 0, res
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "diag-rider-pusher" in summary, summary
+
+
 # ------------------------------------------------------------------- main
 def main():
     failed = 0

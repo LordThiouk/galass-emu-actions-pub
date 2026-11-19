@@ -903,6 +903,26 @@ cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 # Après « Payer maintenant » : écran « Paiement » (Récapitulatif de la course, Mode de paiement,
 # Pourboire, code promo, bouton « Payer »). Le sélecteur s'ouvre par l'icône cliquable de la ligne
 # « Mode de paiement » ; on y choisit Espèces PUIS on tape « Payer ». 27 et 31 viennent après.
+# diag-rider-pusher — MESURE, pas une porte. Run 44441344957 : l'app rider n'a jamais rendu la
+# course (captures 26/27/29/30 = écran de composition, 35 s après backend-flow=PASS) et le tail
+# CI est borné à 80 lignes, donc un simple `log` s'y perd. Ce résultat dit si l'événement pusher
+# driver_assigned est arrivé dans le flux logcat, combien de lignes pusher existent au total, et
+# quelle activité était au premier plan au moment de la mesure. Hors P0_DEFAULT et hors
+# UI_POINTS : report.py l'affiche sans le compter comme warn/skip (test_report.py).
+PUSHER_ASSIGNED=$(count_in "driver_assigned" "$LOG_FILE" 2>/dev/null || echo 0)
+PUSHER_TOTAL=$(grep -a -i -c "pusher" "$LOG_FILE" 2>/dev/null || true)
+PUSHER_FG=$(adb shell dumpsys activity activities 2>/dev/null \
+  | grep -m1 -E "mResumedActivity|topResumedActivity" \
+  | grep -oE "[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+" | head -1 | cut -d/ -f1)
+[ -n "$PUSHER_FG" ] || PUSHER_FG=$(fg_pkg)
+case "$PUSHER_ASSIGNED" in ''|*[!0-9]*) PUSHER_ASSIGNED=0 ;; esac
+case "$PUSHER_TOTAL" in ''|*[!0-9]*) PUSHER_TOTAL=0 ;; esac
+PUSHER_REASON="n=${PUSHER_ASSIGNED} pusher=${PUSHER_TOTAL} fg=${PUSHER_FG:-UNKNOWN}"
+if [ "$PUSHER_ASSIGNED" -ge 1 ]; then
+  mark diag-rider-pusher PASS "$PUSHER_REASON"
+else
+  mark diag-rider-pusher FAIL "$PUSHER_REASON"
+fi
 pay_ui=0
 if try_tap "$RIDER_PKG" "Payer maintenant"; then
   if wait_ui "$RIDER_PKG" 20 '+Mode de paiement' \
