@@ -907,6 +907,7 @@ adb emu geo fix -17.4467 14.6928 >/dev/null 2>&1 || true
 api loc_dest >> "$OUT/run.log" 2>&1
 bring_fg "$DRIVER_PKG" || true
 if tap_exact "Terminer la course"; then
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true
   bring_fg "$RIDER_PKG" || true
   if wait_ui "$RIDER_PKG" 25 "$MARK_rider_destination_arrived"; then
     UI_END=1; log "fin par l'UI chauffeur (écran rider prouvé)"
@@ -925,7 +926,8 @@ cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
 # Les méthodes de paiement n'apparaissent qu'après ce tap : le faire avant d'attendre le 26.
 # Après « Payer maintenant » : écran « Paiement » (Récapitulatif de la course, Mode de paiement,
 # Pourboire, code promo, bouton « Payer »). Le sélecteur s'ouvre par l'icône cliquable de la ligne
-# « Mode de paiement » ; on y choisit Espèces PUIS on tape « Payer ». 27 et 31 viennent après.
+# « Mode de paiement » ; on y choisit « Paiement en espèces » (libellé content-desc exact) PUIS
+# on tape « Payer » après fermeture du sélecteur. 27 et 31 viennent après.
 # diag-rider-pusher — MESURE, pas une porte. Run 44441344957 : l'app rider n'a jamais rendu la
 # course (captures 26/27/29/30 = écran de composition, 35 s après backend-flow=PASS) et le tail
 # CI est borné à 80 lignes, donc un simple `log` s'y perd. Ce résultat dit si l'événement pusher
@@ -951,8 +953,11 @@ if try_tap "$RIDER_PKG" "Payer maintenant"; then
   if wait_ui "$RIDER_PKG" 20 '+Mode de paiement' \
      && tap_node_mode --row-control "$RIDER_PKG" "Mode de paiement"; then
     cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
-    tap_when "$RIDER_PKG" "Espèces" "Cash" >/dev/null 2>&1 || log "paiement: « Espèces » non trouvé dans le sélecteur"
-    tap_exact "Payer" && pay_ui=1
+    if tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" "Cash"; then
+      wait_ui "$RIDER_PKG" 15 '+Payer' && tap_exact "Payer" && pay_ui=1
+    else
+      log "paiement: « Paiement en espèces » non trouvé dans le sélecteur"
+    fi
   else
     ui_screen_diag "rider: écran « Paiement » absent ou sélecteur non ouvert"
     cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 5
@@ -984,6 +989,7 @@ else
   mark bug-b5-estimated-time PASS "pas de « Temps estimé » après la fin"
 fi
 if tap_exact "Confirmer le paiement"; then
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
     UI_CASH=1; log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
   else

@@ -243,14 +243,24 @@ def test_payment_goes_through_the_paiement_screen_in_order():
            "wait_ui \"$RIDER_PKG\" 20 '+Mode de paiement'",
            'tap_node_mode --row-control "$RIDER_PKG" "Mode de paiement"',
            "cap rider-cash-methods 26-rider-cash-methods \"$RIDER_PKG\" 15",
-           'tap_when "$RIDER_PKG" "Espèces"',
-           'tap_exact "Payer" && pay_ui=1',
+           'tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" "Cash"',
+           "wait_ui \"$RIDER_PKG\" 15 '+Payer' && tap_exact \"Payer\" && pay_ui=1",
            "cap rider-cash-waiting 27-rider-cash-waiting \"$RIDER_PKG\" 25"]
     pos = [t.index(x) for x in seq]
     assert pos == sorted(pos), pos
     # 31 (accueil) ne vient qu'après 27
     assert t.index("cap rider-cash-waiting 27") < t.index("cap rider-home-after 31")
 
+
+
+
+@case
+def test_end_ride_and_cash_confirm_handle_dialog():
+    t = open(os.path.join(ROOT, "run.sh"), encoding="utf-8").read()
+    i = t.index('tap_exact "Terminer la course";')
+    assert t[i:].split('\n')[1].strip() == 'dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true'
+    j = t.index('tap_exact "Confirmer le paiement";')
+    assert t[j:].split('\n')[1].strip() == 'dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true'
 
 @case
 def test_places_wait_result_logs_field_diagnostic():
