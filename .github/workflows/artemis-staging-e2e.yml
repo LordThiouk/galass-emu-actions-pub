@@ -120,6 +120,13 @@ jobs:
           }
           GRADLE
           echo "init script: $(wc -l < ~/.gradle/init.d/zz-debug-signing.gradle) lignes"
+      - name: Tests unitaires Flutter (preuve ISC — avant rm -rf src)
+        run: |
+          set -e
+          for a in rider driver; do
+            echo "== flutter test ($a) =="
+            (cd src/$a && flutter pub get >/dev/null && flutter test)
+          done
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
