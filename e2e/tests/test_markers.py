@@ -44,19 +44,37 @@ def p0_points():
     return set(m.group(1).replace("\\\n", " ").split())
 
 
-def spec_chunks(spec):
-    """Split `+A|B|-C` into [(kind, value)] with kind inheritance."""
-    chunks, kind = [], None
-    for raw in spec.split("|"):
+def spec_groups(spec):
+    """`+A|B&-C` -> [('+', ['A','B']), ('-', ['C'])] comme le `groups()` de e2e/ui.sh.
+
+    `|` = OU dans le groupe courant ; `&` = ET (nouveau groupe, type hérité).
+    """
+    out, kind, new_group = [], None, True
+    for raw in re.split(r"([|&])", spec):
+        if raw == "|":
+            new_group = False
+            continue
+        if raw == "&":
+            new_group = True
+            continue
         raw = raw.strip()
         if not raw:
             continue
         if raw[0] in "+-":
             kind, raw = raw[0], raw[1:]
-        if kind is None or not raw:
+        if not kind or not raw:
             continue
-        chunks.append((kind, raw))
-    return chunks
+        if new_group or not out or out[-1][0] != kind:
+            out.append((kind, [raw]))
+        else:
+            out[-1][1].append(raw)
+        new_group = False
+    return out
+
+
+def spec_chunks(spec):
+    """Vue plate de `spec_groups` : [(kind, valeur)] — pour les gardes de specs."""
+    return [(kind, pat) for kind, pats in spec_groups(spec) for pat in pats]
 
 
 FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -194,6 +212,30 @@ def test_spec_ok_honours_or_and_whitespace():
 
 
 @case
+def test_spec_ok_honours_and_operator():
+    """`&` = ET entre groupes : deux signaux distincts du même écran sont tous deux exigés.
+    `|` reste un OU : `+Nope|+Où allez-vous` passe. Aucune assertion n'est relâchée."""
+    both = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2", both) == 0
+    # compteur sans bannière -> ET non satisfait
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2",
+                   _xml("1/2 arrêt terminé")) == 1
+    # bannière sans compteur -> ET non satisfait
+    assert spec_ok("+1/2 arrêt terminé&+En route vers E2E Stop 2",
+                   _xml("En route vers E2E Stop 2")) == 1
+    # le OU reste un OU à l'intérieur d'un groupe
+    assert spec_ok(r"+Nope|+Où allez-vous&+Accepter\s+la\s+course") == 0
+    # groupes de type différent : ET conservé (positif et négatif)
+    assert spec_ok("+Où allez-vous&-Chargement") == 0
+    assert spec_ok(r"+Où allez-vous&-Accepter\s+la\s+course") == 2
+    # un groupe positif non satisfait fait échouer le ET, même si le reste passe
+    assert spec_ok(r"+Nope|-Chargement&+Où allez-vous") == 1
+    # le type hérité traverse `&`
+    assert spec_chunks("+A&+B") == [("+", "A"), ("+", "B")]
+    assert spec_groups("+A|B&+C") == [("+", ["A", "B"]), ("+", ["C"])]
+
+
+@case
 def test_spec_ok_ignores_invisible_and_zero_area_nodes_for_negatives():
     # hidden Chargement node and zero-area Arrêt 1 node must not trip a negative spec
     assert spec_ok("-Chargement") == 0
@@ -248,7 +290,6 @@ def test_p0_markers_do_not_match_prestate_screens():
     pre = {
         "rider_running_start": SUMMARY_FIXTURE,
         "rider_stop1_active": SUMMARY_FIXTURE,
-        "rider_stop1_done": SUMMARY_FIXTURE,
         "rider_stop2_done": SUMMARY_FIXTURE,
         "driver_running_stop1": RUNNING_FIXTURE,
         "driver_stop1_done": RUNNING_FIXTURE,
@@ -262,6 +303,375 @@ def test_p0_markers_do_not_match_prestate_screens():
         if spec_ok(spec, fixture) == 0:
             bad[name] = spec
     assert not bad, f"marqueurs satisfaits par l'écran pré-existant: {bad}"
+
+
+# ------------------------------------------------ L1 markers re-grounded on UI
+# Every fixture below carries the labels the Rider/Driver widgets actually render:
+# Galass_Rider my_strings.dart:47/64/65/68/232/766 + ride_details_bottom_sheet_widget
+# (stopsProgressText / currentLegBanner) and Galass_Driver my_strings.dart:74/82-85/935.
+
+def _xml(*texts):
+    """uiautomator dump with one visible, non-empty node per label."""
+    rows = "".join(
+        '    <node index="%d" text="%s" content-desc="" visible-to-user="true" '
+        'bounds="[50,%d][900,%d]" />\n' % (i, t, 200 + i * 80, 260 + i * 80)
+        for i, t in enumerate(texts))
+    return ("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n"
+            '<hierarchy rotation="0">\n'
+            '  <node index="0" text="" content-desc="" visible-to-user="true" '
+            'bounds="[0,0][1080,2400]">\n' + rows + "  </node>\n</hierarchy>\n")
+
+
+# Rider: stop picker opened by « Ajouter un arrêt ».
+RIDER_STOP_PICKER = _xml("Adresse de l'arrêt", "Confirmer le lieu", "Recherchez votre position")
+# Rider: PENDING summary with the search toggle still open — pre-state of every
+# post-start marker. The FULL timeline is rendered at PENDING, so the stop labels
+# (« E2E Stop 1 Médina », « Arrêt 2 ») are already on screen here: neither can ever be
+# a positive of a post-start marker.
+RIDER_PENDING = _xml("Où allez-vous ?", "Arrêt 1", "E2E Stop 1 Médina", "Arrêt 2",
+                     "Ajouter un arrêt", "Trouver un chauffeur", "Paiement en espèces")
+# Rider RUNNING: current-leg banner, first stop not completed.
+RIDER_RUNNING_START = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
+                           "E2E Stop 1 Médina", "Terminer la course")
+# Rider RUNNING on leg 1: the timeline is cut to the current leg, so « Arrêt 2 » is
+# NOT rendered before the driver acks stop 1 (ride_itinerary_timeline:288-295).
+RIDER_STOP1_ACTIVE = _xml("En route vers E2E Stop 1 Médina", "Arrêt 1",
+                          "Terminer la course")
+# Rider RUNNING on leg 2: same banner, but the current-leg label is « Arrêt 2 ».
+RIDER_LEG2 = _xml("En route vers E2E Stop 2 Fann", "Arrêt 2", "Terminer la course")
+# App rider corrigée (my_strings.dart 64-65, stopsProgressSingular/Plural) : le compteur
+# « X/2 arrêt(s) terminé(s) » est rendu en course. Écran post-arrêt-1 : compteur 1/2 + bannière
+# vers la jambe suivante. C'est le pré-état que le marqueur 24 (2/2) doit refuser.
+RIDER_STOP1_DONE = _xml("1/2 arrêt terminé", "En route vers E2E Stop 2")
+# Écran post-arrêt-2 : compteur 2/2 + bannière vers la destination.
+RIDER_STOP2_DONE = _xml("2/2 arrêts terminés", "En route vers E2E Dest Point E")
+RIDER_FINAL_COUNTER = _xml("2/2 arrêts terminés", "Course terminée")
+# Rider at destination: what stop2_done must NOT accept as proof of a stop confirmation.
+RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
+
+# Driver: offer toast above the dashboard, navbar « Accueil » still visible.
+DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
+                    "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
+                    "Consignes du client:")
+DRIVER_STOP1_DONE = _xml("1/2 arrêt terminé", "Arrêt 2", "Terminer la course")
+DRIVER_STOP2_DONE = _xml("2/2 arrêts terminés", "Terminer la course")
+
+
+def compose_body():
+    m = re.search(r"^compose_ride_ui\(\) \{.*?^\}", run_text(), re.M | re.S)
+    assert m, "compose_ride_ui introuvable"
+    return m.group(0)
+
+
+@case
+def test_l1_rider_stop_picker_matches_real_picker_labels():
+    spec = markers()["rider_stop_picker"]
+    assert spec_ok(spec, RIDER_STOP_PICKER) == 0, spec
+    # The old positives (« Arrêt 1 », « Rechercher un lieu ») exist nowhere in the picker.
+    assert spec_ok(spec, _xml("Arrêt 1", "Rechercher un lieu")) != 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_rider_running_start_needs_current_leg_banner():
+    spec = markers()["rider_running_start"]
+    assert spec_ok(spec, RIDER_RUNNING_START) == 0, spec
+    # PENDING carries the full timeline, so it renders « E2E Stop 1 Médina » too: the
+    # stop label made the marker match the waiting screen. Only the banner is exclusive.
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    assert not re.search(r"E2E Stop", spec), spec
+    # « Arrêt 1 » IS rendered while RUNNING: negating it made the point unreachable.
+    assert "-Arrêt 1" not in spec and "-Arret 1" not in spec, spec
+
+
+@case
+def test_l1_rider_stop1_active_is_leg1_only():
+    spec = markers()["rider_stop1_active"]
+    assert spec_ok(spec, RIDER_STOP1_ACTIVE) == 0, spec
+    # Leg 2 shows the same banner; « Arrêt 2 » is what makes leg 1 exclusive.
+    assert spec_ok(spec, RIDER_LEG2) != 0, spec
+    # PENDING renders both stop labels: no banner, and « Arrêt 2 » present.
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+    # The old positives exist nowhere in the Rider code (no « Arrêt en cours », no ETA),
+    # and « Arrêt 1 » is rendered while RUNNING, so it can never be the negative.
+    assert spec_chunks(spec) == [("+", "En route vers"), ("-", "Arrêt 2")], spec
+
+
+@case
+def test_l1_rider_stop1_active_gated_by_api_state():
+    """Point 22 is closed by the API state, not by the screen: stops_done=0 is asserted
+    between the capture and the driver confirmation loop."""
+    text = run_text()
+    start = text.index("cap rider-stop1-active")
+    end = text.index("next_marker=", start)
+    window = text[start:end]
+    assert 'grep -q "stops_done=0" "$OUT/last-ride-state.txt"' in window, window
+    assert 'mark rider-stop1-active FAIL "état API incohérent : stops_done' in window, window
+    assert '${!next_marker}' not in window, "la garde doit précéder la boucle de confirmation"
+
+
+@case
+def test_rider_stop1_done_requires_counter_and_next_leg_banner():
+    """Point 23 — décision Papa : bug produit (compteur jamais visible en RUNNING), fix app
+    rider en cours parallèlement. Le marqueur exige les DEUX signaux réels de l'écran après
+    confirmation de l'arrêt 1 : le compteur « 1/2 arrêt terminé » (stopsProgressSingular) ET
+    la bannière remise à jour sur la jambe suivante (« En route vers E2E Stop 2 Fann »,
+    currentLegBanner). Un compteur avec bannière figée est exactement l'ancien bug."""
+    spec = markers().get("rider_stop1_done")
+    assert spec == "+1/2 arrêts? terminés?&+En route vers E2E Stop 2|En route vers Fann", spec
+    assert spec_ok(spec, RIDER_STOP1_DONE) == 0, spec
+    # Course composée par l'UI avec de vrais lieux : la bannière porte « Fann, Dakar, Senegal ».
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers Fann, Dakar, Senegal")) == 0, spec
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers Médina, Dakar, Senegal")) != 0, spec
+    # « 0/2 arrêt terminé » est l'écran RUNNING avant toute confirmation : pas un PASS.
+    assert spec_ok(spec, _xml("0/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
+    # Compteur 1/2 mais bannière figée (l'ancien bug produit) : pas un PASS.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Stop 1")) != 0, spec
+    # Compteur 1/2 sans bannière du tout : pas un PASS non plus.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé")) != 0, spec
+    # Bannière de la jambe 2 sans compteur : l'état d'AVANT le fix, jamais un PASS.
+    assert spec_ok(spec, _xml("En route vers E2E Stop 2 Fann")) != 0, spec
+    t = run_text()
+    assert "cap rider-stop1-done 23-rider-stop1-done" in t, \
+        "23 doit capturer par cap (marqueur compteur + bannière)"
+    assert "rider_no_progress_evidence rider-stop1-done" not in t, \
+        "plus de chemin sans marqueur pour 23"
+
+
+@case
+def test_l1_rider_stop2_done_requires_progress_text_not_end_screen():
+    spec = markers()["rider_stop2_done"]
+    assert spec == "+2/2 arrêts? terminés?&+En route vers E2E Dest Point E|En route vers Point E", spec
+    assert spec_ok(spec, RIDER_STOP2_DONE) == 0, spec
+    assert spec_ok(spec, _xml("2/2 arrêts terminés", "En route vers Point E, Dakar, Senegal")) == 0, spec
+    # « 1/2 arrêt terminé » + bannière jambe 2 (écran post-arrêt-1) n'est pas un 2/2.
+    assert spec_ok(spec, RIDER_STOP1_DONE) != 0, spec     # jambe 2 seulement
+    # « Vous êtes arrivé » / « Payer maintenant » belong to destination-arrived.
+    assert spec_ok(spec, RIDER_END) != 0, spec
+    assert spec_ok(spec, RIDER_PENDING) != 0, spec
+
+
+@case
+def test_l1_rider_stop2_done_banner_alone_is_not_proof():
+    """L'ancienne preuve « En route vers E2E Dest Point E » s'affiche dès l'arrêt 1 (stops
+    vides) : elle ne peut jamais être la preuve, seule, de l'arrêt 2. Le marqueur 24 l'exige
+    comme second signal d'un ET — le compteur 2/2 reste indispensable."""
+    spec = markers()["rider_stop2_done"]
+    groups = spec_groups(spec)
+    assert ("+", ["2/2 arrêts? terminés?"]) in groups, spec
+    assert ("+", ["En route vers E2E Dest Point E", "En route vers Point E"]) in groups, spec
+    # Bannière vers la destination + compteur 1/2 seulement : état post-arrêt-1, pas un PASS.
+    assert spec_ok(spec, _xml("1/2 arrêt terminé", "En route vers E2E Dest Point E")) != 0, spec
+    # La bannière seule (écran buggy, sans compteur) ne prouve rien non plus.
+    assert spec_ok(spec, _xml("En route vers E2E Dest Point E")) != 0, spec
+    assert spec_ok(spec, _xml("En route vers Point E, Dakar, Senegal")) != 0, spec
+    # Le compteur 2/2 seul, bannière absente, ne suffit pas non plus (ET).
+    assert spec_ok(spec, _xml("2/2 arrêts terminés")) != 0, spec
+
+
+@case
+def test_rider_rating_marker_is_avis_screen():
+    spec = markers()["rider_rating"]
+    avis = _xml("Avis", "Course terminée", "Arrêt 1", "Arrêt 2")
+    assert spec_ok(spec, avis) == 0, spec
+    assert spec_ok(spec, RIDER_END) != 0, spec
+    # « Course terminée » seul sur l'écran de paiement ne vaut pas preuve de l'écran Avis.
+    assert spec_ok(spec, _xml("Course terminée", "Payer maintenant")) != 0, spec
+    assert "Notez" not in spec, spec
+
+
+# Écran de composition réel (run 44441344957, capture 30 rider-rating) : le marqueur 29
+# l'acceptait, donc la capture 29 était un faux PASS.
+RIDER_COMPOSITION = _xml("Lieu de prise en charge", "PG8J+MWG, 611 Av. El Hadj Mansour Sy.",
+                         "Destination", "E2E Dest", "Confirmer le lieu")
+
+
+@case
+def test_rider_final_itinerary_rejects_composition_screen():
+    """Run 44441344957 : les captures 26/27/29/30 tombaient sur l'écran de composition
+    (« Lieu de prise en charge », « Destination », « Confirmer le lieu ») ; le marqueur 29
+    acceptait cet écran, donc la capture 29 était un faux PASS. L'écran de clôture réel
+    porte « Course terminée » + « Avis » + les arrêts, jamais « Confirmer le lieu »."""
+    spec = markers()["rider_final_itinerary"]
+    assert spec_ok(spec, RIDER_COMPOSITION) != 0, spec
+    final = _xml("Course terminée", "Avis", "Arrêt 1", "Arrêt 2")
+    assert spec_ok(spec, final) == 0, spec
+
+
+@case
+def test_rider_home_after_marker_is_location_picker():
+    spec = markers()["rider_home_after"]
+    home = _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")
+    assert spec_ok(spec, home) == 0, spec
+    assert spec_ok(spec, _xml("Avis", "Course terminée")) != 0, spec
+
+
+@case
+def test_rider_pays_now_before_waiting_for_methods():
+    t = run_text()
+    i = t.index('"Payer maintenant"')
+    assert i < t.index("cap rider-cash-methods 26-rider-cash-methods"), "tap avant la capture 26"
+    assert i > t.index("cap rider-destination-arrived 25-rider-destination-arrived")
+
+
+@case
+def test_driver_pickup_dialog_confirmed_before_waiting_marker():
+    t = run_text()
+    a = t.index('"Prise en charge du client"')
+    d = t.index('dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler"')
+    w = t.index('wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"')
+    assert a < d < w
+
+
+@case
+def test_pickup_diag_captures_backend_status_right_after_the_tap():
+    """Diag 37/38/39 : le statut backend est lu JUSTE après le tap « Confirmer », et
+    re-signalé en dernière ligne du run (sinon il sort du tail borné des logs).
+    status=2 → start UI jamais reçu ; status=3 → reçu, bug de rafraîchissement Driver."""
+    t = run_text()
+    d = t.index('dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler"')
+    r = t.index("ride_state", d)
+    c = t.index("PICKUP_START_STATUS=$(sed -n", r)
+    m = t.index('mark pickup-backend-status WARN', c)
+    assert d < r < c < m, "l'ordre tap → state → capture → mark doit tenir"
+    assert "status=3" in t and "status=2" in t, "les deux hypothèses doivent être nommées"
+    # re-signalé après le rapport : la dernière ligne du log reste lisible dans un tail
+    rep = t.index('"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"')
+    diag = t.index("diag final pickup:", rep)
+    assert 'start_status=${PICKUP_START_STATUS:-inconnu}' in t[diag:diag + 400]
+    # le diag ne touche aucun point P0 ni aucun verdict
+    p0 = re.search(r'P0_POINTS="([^"]+)"', t, re.S).group(1)
+    assert "pickup-backend-status" not in p0
+
+
+@case
+def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
+    """Galass_Driver my_strings.confirmStop = « Confirmer l'arrêt » ; aucun « Terminer l'arrêt »."""
+    t = run_text()
+    assert 'try_confirm "$DRIVER_PKG" "Confirmer l\'arrêt"' in t
+    assert "Terminer l'arrêt" not in t.replace("Terminer l'arrêt » n'existe", "").replace("« Terminer l'arrêt »", ""), \
+        "plus de tap sur un bouton « Terminer l'arrêt » inexistant"
+    assert "wait_ui \"$DRIVER_PKG\" 45 '+Confirmer l.arrêt'" in t, "attente du bouton avant le tap"
+
+
+DRIVER_ACTIVE = _xml("Arrêt 1", "E2E Stop 1 Médina", "Arrêt 2", "E2E Stop 2 Fann",
+                     "0/2 arrêt terminé", "Prise en charge du client", "Annuler la course")
+DRIVER_RUNNING = _xml("Arrêt 1", "E2E Stop 1 Médina", "0/2 arrêt terminé",
+                      "Confirmer l'arrêt", "Terminer la course")
+DRIVER_HOME = _xml("En ligne", "Accueil", "Activité", "Courses")
+
+
+@case
+def test_driver_running_stop1_requires_the_stop_button_not_the_active_screen():
+    spec = markers()["driver_running_stop1"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    # L'écran ACTIVE réel (run 44192999654) montre déjà « Arrêt 1 » et le compteur.
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, spec
+    assert "Terminer l.arrêt" not in spec, spec
+
+
+@case
+def test_driver_inride_marker_rejects_active_screen():
+    spec = markers()["driver_inride_stops"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, "« Arrêt 1 » seul ne prouve pas la course démarrée"
+
+
+@case
+def test_driver_stop_done_markers_accept_singular_and_plural_counter():
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé", "Confirmer l'arrêt")) == 0
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêts terminés")) == 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) == 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêt terminé")) == 0
+    assert spec_ok(m["driver_stop1_done"], _xml("0/2 arrêt terminé")) != 0
+
+
+@case
+def test_driver_summary_is_the_home_screen_the_app_really_shows():
+    spec = markers()["driver_summary"]
+    assert spec_ok(spec, DRIVER_HOME) == 0, spec
+    assert spec_ok(spec, DRIVER_RUNNING) != 0, spec
+    assert spec_ok(spec, _xml("En ligne", "Reçois le paiement")) != 0, spec
+    assert "Gains" not in spec and "Résumé" not in spec, "l'app n'a pas d'écran de résumé"
+
+
+@case
+def test_l1_driver_stop_done_markers_require_progress_text():
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0, m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0, m["driver_stop2_done"]
+    # « Arrêt 2 » (déjà affiché en course) et « Vous êtes arrivé » (écran de fin) ne
+    # prouvent pas la confirmation de l'arrêt 1 : faux PASS de l'ancien spec.
+    assert spec_ok(m["driver_stop1_done"], _xml("Arrêt 2", "Terminer la course")) != 0, \
+        m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], _xml("Arrivée", "Vous êtes arrivé", "Terminer la course")) != 0, \
+        m["driver_stop2_done"]
+    for name in ("driver_stop1_done", "driver_stop2_done"):
+        assert spec_ok(m[name], DRIVER_OFFER) != 0, (name, m[name])
+
+
+@case
+def test_l1_driver_offer_accepts_home_navbar_under_the_toast():
+    spec = markers()["driver_offer_with_stops"]
+    assert spec_ok(spec, DRIVER_OFFER) == 0, spec
+    # The four labels are ALTERNATIVES: an offer without the instruction block is still
+    # an offer, and « Accueil » is expected under the toast (dashboard stays visible).
+    assert spec_ok(spec, _xml("Accueil", "Accepter la course")) == 0, spec
+    assert spec_ok(spec, _xml("Accueil")) != 0, spec
+
+
+@case
+def test_l1_composition_is_unconditional_after_api_reset():
+    text = run_text()
+    reset = text.index("api reset")
+    pick = text.index("api pick >>", reset)
+    window = text[reset:pick]
+    assert "compose_ride_ui" in window, window
+    assert "has_open" not in window, "la composition reste conditionnée à api has_open"
+    assert "artemis_run rider-" not in text, "les étapes Artemis rider-* sont encore sur le chemin"
+    for name in ("artemis-rider-destination", "artemis-rider-stop1", "artemis-rider-stop2"):
+        assert re.search(rf'mark {name} SKIP "[^"]+"', text), name
+    assert "ui_compose" in text, "ui_compose absent"
+
+
+@case
+def test_l1_compose_emits_the_picker_and_summary_captures():
+    body = compose_body()
+    for name in ("15-rider-destination-selected", "16-rider-stop-picker",
+                 "17-rider-multistop-summary"):
+        assert name in body, (name, body)
+    # 16 is taken right after the tap that opens the picker, before any typing.
+    assert body.index('"Ajouter un arrêt"') < body.index("16-rider-stop-picker"), body
+    # 17 is taken once both stops are set, before the request is sent.
+    assert body.index("17-rider-multistop-summary") < body.index('"Trouver un chauffeur"'), body
+
+
+@case
+def test_l1_ui_compose_failure_cannot_pass_ride_composed():
+    text = run_text()
+    block = re.search(r'if \[ "\$\{ui_compose:-0\}" != "1" \].*?\nfi', text, re.S)
+    assert block, "garde ui_compose introuvable avant ride-composed"
+    assert 'mark ride-composed FAIL "api fallback: compose"' in block.group(0), block.group(0)
+
+
+@case
+def test_l1_driver_home_online_is_a_hard_assertion():
+    text = run_text()
+    idx = text.index("33-driver-home-online")
+    window = text[idx:idx + 400]
+    assert "mark driver-home-online FAIL" in window, window
+    assert "mark driver-home-online WARN" not in window, window
+
+
+@case
+def test_l1_back_press_before_driver_summary_capture():
+    text = run_text()
+    i42 = text.index("42-driver-cash-confirmed")
+    i43 = text.index("43-driver-summary")
+    assert i42 < i43, (i42, i43)
+    window = text[i42:i43]
+    assert "adb shell input keyevent 4" in window, window
 
 
 @case

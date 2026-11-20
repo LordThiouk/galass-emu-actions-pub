@@ -55,8 +55,10 @@ def make_out(rows, captures=()):
             "png_sha256": cap.get("png_sha256", f"png{i}"),
             "marker_source": cap.get("marker_source", "grounded"),
             "fg_pkg": cap.get("fg_pkg") or default_fg(point),
+            "fg_source": cap.get("fg_source", "dumpsys"),
             "labels": cap.get("labels", []),
             "node_count": cap.get("node_count", 0),
+            "ts": cap.get("ts", ""),
             "failed_spec": cap.get("failed_spec", ""),
         }
         with open(os.path.join(out, "screens", name + ".json"), "w") as fh:
@@ -199,6 +201,51 @@ def test_revisited_screen_pair_is_allowlisted():
 
 
 @case
+def test_duplicate_reason_reports_pixels_when_the_dump_repeats():
+    """Mesure run 44412970992 : quatre captures tombaient en « duplicate-state » sans
+    qu'on puisse dire si l'écran était vraiment identique ou si le dump était périmé.
+    La raison doit donc nommer la seule preuve qui tranche : les pixels.
+
+    Même dump + pixels différents = le dump n'a pas suivi l'écran (défaut de dump).
+    Même dump + mêmes pixels = l'écran est réellement le même (fait produit).
+    """
+    import report
+
+    caps = [
+        {"name": "35-driver-accepted-details", "point": "driver-accepted-details",
+         "marker": "+Arrêt 1", "dump_sha256": "same", "png_sha256": "png-a"},
+        {"name": "36-driver-pickup-arrived", "point": "driver-pickup-arrived",
+         "marker": "+Prise en charge du client", "dump_sha256": "same",
+         "png_sha256": "png-b"},
+    ]
+    out = make_out([("driver-accepted-details", "PASS", "ok"),
+                    ("driver-pickup-arrived", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-accepted-details", "driver-pickup-arrived"})
+    row = [p for p in res["points"] if p["point"] == "driver-pickup-arrived"][0]
+    assert "premise" not in row["detail"], row
+    assert "png=diff" in row["detail"], row
+    assert "35-driver-accepted-details" in row["detail"], row
+
+
+@case
+def test_duplicate_reason_says_png_same_when_pixels_repeat():
+    import report
+
+    caps = [
+        {"name": "37-driver-running-stop1", "point": "driver-running-stop1",
+         "marker": "+Arrêt 1", "dump_sha256": "same", "png_sha256": "png-a"},
+        {"name": "38-driver-stop1-done", "point": "driver-stop1-done",
+         "marker": "+1/2 arrêt terminé", "dump_sha256": "same", "png_sha256": "png-a"},
+    ]
+    out = make_out([("driver-running-stop1", "PASS", "ok"),
+                    ("driver-stop1-done", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-running-stop1", "driver-stop1-done"})
+    row = [p for p in res["points"] if p["point"] == "driver-stop1-done"][0]
+    assert row["result"] == "FAIL", row
+    assert "png=same" in row["detail"], row
+
+
+@case
 def test_label_signature_duplicate_detected():
     """B5 secondary signal: same app + same visible labels + same node count is a
     duplicate even when the dump bytes drifted (timestamps, ids)."""
@@ -217,6 +264,63 @@ def test_label_signature_duplicate_detected():
     rows = {p["point"]: p for p in res["points"]}
     assert rows["rider-stop1-active"]["result"] == "FAIL", rows["rider-stop1-active"]
     assert "duplicate-state" in rows["rider-stop1-active"]["detail"]
+
+
+@case
+def test_duplicate_blames_the_later_capture_in_time_not_the_later_name():
+    """Measure run 44441344957: `driver-running-stop1` (P0) fell in duplicate-state
+    against `35b-driver-inride` — a capture taken TWO SECONDS LATER, whose name simply
+    sorts first ("35b" < "37"). The "previous capture" is the earlier one in time.
+
+    Same dump + same pixels => the two captures show the same screen: the point that
+    came second added nothing, so it is the one whose distinctness is unproven.
+    """
+    import report
+
+    caps = [
+        {"name": "35b-driver-inride", "point": "driver-inride-stops",
+         "marker": "+Arrêt 1|+Terminer la course", "dump_sha256": "same",
+         "png_sha256": "png-same", "ts": "2026-11-19T02:20:02Z"},
+        {"name": "37-driver-running-stop1", "point": "driver-running-stop1",
+         "marker": "+Arrêt 1|+Terminer la course", "dump_sha256": "same",
+         "png_sha256": "png-same", "ts": "2026-11-19T02:20:00Z"},
+    ]
+    out = make_out([("driver-inride-stops", "PASS", "ok"),
+                    ("driver-running-stop1", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-inride-stops", "driver-running-stop1"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["driver-running-stop1"]["result"] == "PASS", rows["driver-running-stop1"]
+    assert rows["driver-inride-stops"]["result"] == "FAIL", rows["driver-inride-stops"]
+    assert res["duplicates"][0]["name"] == "35b-driver-inride", res["duplicates"]
+
+
+@case
+def test_label_signature_keeps_progress_counters_distinct():
+    """Measure run 44441344957: `driver-stop1-done` (0/2 -> 1/2 stops done) was flagged
+    as the same screen as `35b-driver-inride` (png=diff: the counter is rendered).
+
+    Masking EVERY digit to catch a ticking timer also masks real progress: "0/2 arrêt
+    terminé" and "1/2 arrêt terminé" are two different states. Only time-like tokens
+    (durations, clocks) may be masked.
+    """
+    import report
+
+    caps = [
+        {"name": "35b-driver-inride", "point": "driver-inride-stops",
+         "marker": "+0/2 arrêt terminé", "dump_sha256": "dump-a", "png_sha256": "png-a",
+         "labels": ["Terminer la course", "0/2 arrêt terminé", "5 Min"],
+         "node_count": 42, "ts": "2026-11-19T02:20:02Z"},
+        {"name": "38-driver-stop1-done", "point": "driver-stop1-done",
+         "marker": "+1/2 arrêt terminé", "dump_sha256": "dump-b", "png_sha256": "png-b",
+         "labels": ["Terminer la course", "1/2 arrêt terminé", "5 Min"],
+         "node_count": 42, "ts": "2026-11-19T02:21:30Z"},
+    ]
+    out = make_out([("driver-inride-stops", "PASS", "ok"),
+                    ("driver-stop1-done", "PASS", "ok")], caps)
+    res = report.build(out, p0={"driver-inride-stops", "driver-stop1-done"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["driver-stop1-done"]["result"] == "PASS", rows["driver-stop1-done"]
+    assert not res["duplicates"], res["duplicates"]
 
 
 # ------------------------------------------------- B4 capture integrity
@@ -271,6 +375,54 @@ def test_capture_with_wrong_foreground_is_invalid():
     assert row["result"] == "FAIL", row
     assert "capture invalid" in row["detail"], row
     assert "foreground" in row["detail"], row
+
+
+# --------------------------------- B4b the reason must name what actually failed
+@case
+def test_timeout_capture_reports_the_marker_not_capture_invalid():
+    """A capture that timed out is already a failure; calling it "capture invalid:
+    foreground …" (run 44354825315) masked the marker/step that really failed."""
+    import report
+
+    out = make_out([("driver-cash-request", "FAIL", "marker absent")],
+                   [{"name": "41-driver-cash-request", "point": "driver-cash-request",
+                     "status": "TIMEOUT", "marker": "+Confirmer le paiement",
+                     "failed_spec": "+Confirmer le paiement",
+                     "fg_pkg": "com.google.android.apps.nexuslauncher"}])
+    res = report.build(out, p0={"driver-cash-request"})
+    row = [p for p in res["points"] if p["point"] == "driver-cash-request"][0]
+    assert row["result"] == "FAIL", row
+    assert "capture invalid" not in row["detail"], row
+    assert "TIMEOUT" in row["detail"], row
+    assert "Confirmer le paiement" in row["detail"], row
+
+
+@case
+def test_non_match_capture_is_never_promoted_to_evidence():
+    """Same run, the other direction: a TIMEOUT capture must not close a P0 point."""
+    import report
+
+    out = make_out([("rider-home-after", "PASS", "row claims pass")],
+                   [{"name": "31-rider-home-after", "point": "rider-home-after",
+                     "status": "TIMEOUT", "marker": "+Confirmer le lieu"}])
+    res = report.build(out, p0={"rider-home-after"})
+    row = [p for p in res["points"] if p["point"] == "rider-home-after"][0]
+    assert row["result"] == "FAIL", row
+    assert "no MATCH capture" in row["detail"], row
+
+
+@case
+def test_match_capture_with_dump_foreground_proof_is_valid():
+    """`fg_source=ui-dump` is the documented arbitration; it must not invalidate."""
+    import report
+
+    out = make_out([("rider-home-loaded", "PASS", "ok")],
+                   [{"name": "14-rider-home", "point": "rider-home-loaded",
+                     "marker": "+Où allez-vous", "fg_pkg": RIDER_PKG,
+                     "fg_source": "ui-dump"}])
+    res = report.build(out, p0={"rider-home-loaded"})
+    row = [p for p in res["points"] if p["point"] == "rider-home-loaded"][0]
+    assert row["result"] == "PASS", row
 
 
 # ------------------------------------------------- S1 zero-P0 guard
@@ -415,6 +567,33 @@ def test_build_cli_exit_code():
                            "--p0", "rider-home-loaded"], capture_output=True, text=True)
     assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
     assert "verdict=FAIL" in proc.stdout, proc.stdout
+
+
+@case
+def test_diag_rider_pusher_is_a_measurement_not_a_gate():
+    """Run 44441344957 : le rider n'a jamais rendu la course (captures 26/27/29/30 =
+    écran de composition) et le tail CI est borné à 80 lignes. `diag-rider-pusher` est émis
+    comme résultat pour survivre au tail ; il ne doit être ni P0 ni un point UI, et
+    report.py doit l'afficher sans le compter comme warn/skip."""
+    import report
+
+    assert "diag-rider-pusher" not in report.P0_DEFAULT, report.P0_DEFAULT
+    assert "diag-rider-pusher" not in report.UI_POINTS, report.UI_POINTS
+    row = "diag-rider-pusher|PASS|n=2 pusher=5 fg=sn.galass.galassrider"
+    rows = report.parse_rows(row)
+    assert rows == [{"point": "diag-rider-pusher", "result": "PASS",
+                     "detail": "n=2 pusher=5 fg=sn.galass.galassrider"}], rows
+    fail_row = "diag-rider-pusher|FAIL|n=0 pusher=0 fg=com.android.launcher"
+    fail_rows = report.parse_rows(fail_row)
+    assert fail_rows[0]["result"] == "FAIL" and "n=0" in fail_rows[0]["detail"], fail_rows
+    out = make_out([("diag-rider-pusher", "PASS", "n=2 pusher=5 fg=sn.galass.galassrider")])
+    res = report.build(out, p0={"rider-home-loaded"})
+    diag = [p for p in res["points"] if p["point"] == "diag-rider-pusher"]
+    assert diag and diag[0]["result"] == "PASS", res["points"]
+    assert diag[0]["detail"] == "n=2 pusher=5 fg=sn.galass.galassrider", diag
+    assert res["warn_count"] == 0 and res["skip_count"] == 0, res
+    summary = open(os.path.join(out, "summary.md"), encoding="utf-8").read()
+    assert "diag-rider-pusher" in summary, summary
 
 
 # ------------------------------------------------------------------- main

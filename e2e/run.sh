@@ -24,7 +24,8 @@ PY="${PY:-python3}"
 mkdir -p "$OUT"
 rm -rf "$OUT"/screens "$OUT"/ui "$OUT"/state.json "$OUT"/results-raw.txt \
        "$OUT"/results-live.txt "$OUT"/captures.txt "$OUT"/ui-flags.txt \
-       "$OUT"/last-ride-state.txt "$OUT"/watchdog-report.txt
+       "$OUT"/last-ride-state.txt "$OUT"/assign-pre.txt "$OUT"/watchdog-report.txt \
+       "$OUT"/report.json "$OUT"/results.txt "$OUT"/verdict.txt
 mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 : > "$OUT/run.log"
 : > "$SMOKE_LOG"
@@ -33,6 +34,7 @@ mkdir -p "$OUT/screens" "$OUT/ui" "$OUT/logcat" "$OUT/artemis"
 
 declare -a RESULTS=()
 . "$(dirname "$0")/ui.sh"
+. "$(dirname "$0")/device_prep.sh"
 
 # S21: details go to $OUT/run.log only; stdout carries POINT|RESULT and nothing else,
 # so a ride uid can never leak into the public Actions log. A sanitized copy also goes
@@ -64,6 +66,12 @@ count_in() { # pattern file -> count on stdout, rc=2 on grep error
   [ "$rc" -gt 1 ] && return 2
   printf '%s' "${n:-0}"
 }
+count_in_ci() { # comme count_in, insensible à la casse (l'app journalise DRIVER_ASSIGNED en majuscules)
+  local n rc
+  n=$(grep -a -i -F -c "$1" "$2" 2>/dev/null); rc=$?
+  [ "$rc" -gt 1 ] && return 2
+  printf '%s' "${n:-0}"
+}
 
 # P0 = parcours critique. Un WARN ou un SKIP sur l'un de ces points => verdict FAIL.
 P0_POINTS="api-preflight apk-base-url emulator-boot apk-install \
@@ -81,36 +89,69 @@ export P0_POINTS
 # absent, '|' = OR, the kind propagates over the alternatives. 'cap' resolves a point's
 # marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
 MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
-MARK_rider_destination_selected='+E2E Dest Point E|-Où allez-vous'
-MARK_rider_stop_picker='+Arrêt 1|Rechercher un lieu|-Où allez-vous'
+MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
+# Picker ouvert par « Ajouter un arrêt » : my_strings.dart confirmLocation (766) + stopPickerHint (47).
+MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
 # B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
-# Un libellé présent dès l'écran précédent (« Arrêt 1 », « Destination ») ne prouve rien.
-MARK_rider_running_start='+En course|Terminez votre course|-Arrêt 1|-Chargement'
-MARK_rider_stop1_active='+Arrêt en cours|En route vers|ETA|\bmin\b|-Arrêt 1'
-MARK_rider_stop1_done='+2/2|1/2 terminé|Arrêt 1\s+terminé|-Chargement'
-MARK_rider_stop2_done='+Vous êtes arrivé|Payer maintenant|Facture à payer|-Chargement'
+# Un libellé présent dès l'écran précédent ne prouve rien ; « Arrêt 1 » est rendu en
+# course (ride_itinerary_timeline : titre de la jambe courante), donc jamais un négatif.
+# RUNNING = currentLegBanner « En route vers <stop> » (ride_details_bottom_sheet_widget:78-96),
+# null sauf RIDE_ACTIVE/RIDE_RUNNING : seul signal exclusif à la jambe. Le libellé du stop
+# (« E2E Stop 1 ») est rendu dès PENDING par la timeline complète, donc jamais un positif.
+MARK_rider_running_start='+En route vers|-Chargement'
+# Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
+# courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
+MARK_rider_stop1_active='+En route vers|-Arrêt 2'
+# B2 — avancement des arrêts (my_strings.dart rider 64-65, stopsProgressSingular/Plural) :
+# l'app corrigée rend le compteur « X/2 arrêt(s) terminé(s) » en course (décision Papa : le
+# compteur jamais visible en RUNNING était un bug produit, fix app parallèle). Les marqueurs
+# mesurent les DEUX signaux du même écran, ET : le compteur, et la bannière de destination
+# (`currentLegBanner`, my_strings currentLeg) remise à jour sur la jambe suivante. Après
+# l'arrêt 1 : « 1/2 arrêt terminé » + « En route vers E2E Stop 2 Fann » (point 23). Après
+# l'arrêt 2 : « 2/2 arrêts terminés » + « En route vers E2E Dest Point E », la bannière
+# retombant sur la destination quand toutes les escales sont faites (point 24).
+# Un compteur seul peut mentir (bannière figée = l'ancien bug) et la bannière seule ne prouve
+# rien (elle s'affiche dès l'arrêt 1, stops vides) : chaque point exige les deux.
+MARK_rider_stop1_done='+1/2 arrêts? terminés?&+En route vers E2E Stop 2|En route vers Fann'
+MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E|En route vers Point E'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
-MARK_rider_final_itinerary='+Course terminée|+Lieu de prise en charge|+Destination|-Chargement'
-MARK_rider_rating='+Commentaire|Notez|étoile|-Chargement'
-MARK_rider_home_after='+Où allez-vous|+Partons pour une course|-Course terminée'
-MARK_driver_offer_with_stops='+Accepter\s+la\s+course|+REFUSER|+Prix recommandé|+Consignes du client|-Accueil'
+# Run 44441344957 : les captures 26/27/29/30 tombaient sur l'écran de composition (« Lieu de
+# prise en charge », « Destination », « Confirmer le lieu »), où les deux alternatives « Lieu de
+# prise en charge » et « Destination » suffisaient à faire PASSER 29 — faux PASS écarté par le
+# négatif « Confirmer le lieu », l'affordance de composition.
+MARK_rider_final_itinerary='+Course terminée|-Chargement|-Confirmer le lieu'
+# Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
+MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
+# Accueil réel après la course : sélecteur de lieu (my_strings confirmLocation / pickUpLocation).
+MARK_rider_home_after='+Confirmer le lieu|+Lieu de prise en charge|+Destination|-Course terminée'
+# L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
+# construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
+MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
 MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
 # B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
 MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
-MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|+Terminer l.arrêt|Confirmer l.arrêt|\b1\s*/\s*2\b'
-MARK_driver_stop1_done='+2/2|Arrêt 2|-Arrêt 1|-Accepter\s+la\s+course'
-MARK_driver_stop2_done='+2/2|Arrivée|Vous êtes arrivé|-Accepter\s+la\s+course'
+# Écran RUNNING réel : bouton « Confirmer l'arrêt » (confirmStop) + « Terminer la course ». Aucun bouton
+# « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
+# seul le bouton d'arrêt distingue la course démarrée.
+MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
+# Progression d'arrêts (my_strings driver 82-85) : « Arrêt 2 »/« Arrivée » sont déjà
+# affichés (course en cours) ou appartiennent à l'écran de fin — faux PASS, retirés.
+MARK_driver_stop1_done='+1/2 arrêts? terminés?|-Accepter\s+la\s+course'
+MARK_driver_stop2_done='+2/2 arrêts? terminés?|-Accepter\s+la\s+course'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
 MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
-MARK_driver_summary='+Gains|Résumé|Activité|-Reçois\s+le\s+paiement'
+# L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,
+# Accueil / Activité / Courses). C'est cet écran réel qui est capturé en 43.
+MARK_driver_summary='+En ligne|-Reçois\s+le\s+paiement|Confirmer\s+le\s+paiement|Terminer la course'
 # Non-P0 captures (same table, same rules).
 MARK_driver_home_online='+En ligne'
 # S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
-MARK_driver_inride_stops='+Terminer la course|+Arrêt 1|-Accepter\s+la\s+course|-REFUSER'
+# « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
+MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|REFUSER|Prise en charge du client|+Arrêt 1'
 
 # Les 9 écrans Driver n'ont jamais été atteints par le run 39992138248 (acceptation UI
 # impossible) : leurs libellés sont des hypothèses, taguées dans le sidecar.
@@ -183,7 +224,7 @@ release_watchdog() {
   kill -- "-${WATCHDOG_PGID}" 2>/dev/null || kill "$WATCHDOG_PGID" 2>/dev/null || true
 }
 spawn_watchdog || true
-trap 'release_watchdog; kill "${LOGCAT_PID:-}" 2>/dev/null; pkill -P "$$" 2>/dev/null; true' EXIT
+trap 'release_watchdog; kill "${LOGCAT_PID:-}" "${SAMPLER_PID:-}" 2>/dev/null; pkill -P "$$" 2>/dev/null; true' EXIT
 # Le watchdog TERM le script à l'échéance. Sans handler, bash meurt sans rien
 # flusher (le seul verdict serait celui du watchdog) : on rend le verdict partiel
 # et un code 124 explicite, et l'EXIT ferme les groupes derrière.
@@ -212,11 +253,82 @@ cap() {
     mark "$point" FAIL "no marker declared for $point (harness)"
     return 1
   fi
-  if snap "$name" "$pkg" "$tmo" "$spec" "" "$point" "$src"; then
-    mark "$point" PASS "ui cap=$name.png marker ok ($src)"
-  else
-    mark "$point" FAIL "ui cap=$name.png marker absent ($spec)"
+  snap_with_recovery "$name" "$pkg" "$tmo" "$spec" "" "$point" "$src"
+  case $? in
+    0) mark "$point" PASS "ui cap=$name.png marker ok ($src)$([ "$SNAP_REPLAYED" = 1 ] && echo " — rejoué après reprise émulateur, preuve d'écran")" ;;
+    2) mark "$point" INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (cap=$name, point non compté comme échec de l'app)" ;;
+    *) # L'écran RÉELLEMENT capturé, dans la raison même : le digest de fin de log le
+       # publie alors qu'un extrait borné ne verrait jamais la ligne de capture.
+       local txt=""
+       if [ -s "$OUT/ui/$name.xml" ]; then
+         txt=$("$PY" e2e/dump_diag.py "$OUT/ui/$name.xml" --texts 2>/dev/null \
+                 | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g' | cut -c1-140)
+       fi
+       mark "$point" FAIL "ui cap=$name.png marker absent ($spec)${txt:+ | écran=$txt}" ;;
+  esac
+}
+
+# compose_ride_ui : compose la course DANS l'app Rider par taps (jamais par l'API), pour que
+# `api pick` l'adopte avec ride_source=ui (B2 / ISC-F13-3 concluants). Libellés = my_strings.dart
+# de Galass_Rider (whereToGo, addStop, confirmLocation, cashPayment/cash, findDriver). Seul
+# chemin vers les états rider-destination-selected / rider-stop-picker / rider-multistop-summary :
+# la composition les capture elle-même, aux moments où ils existent. Retour 0 = demande envoyée,
+# 1 = échec tracé (le repli API reste marqué FAIL, jamais PASS).
+ui_pick_place() {
+  local query="$1" label="$2" typed
+  [ "${PLACES_PROBED:-0}" = 1 ] || { places_diag_start; PLACES_PROBED=1; }
+  # `adb input text` ne tape pas les accents : on tape la forme ASCII (« Médina » → « Medina »).
+  typed=$(printf '%s' "$query" | python3 -c 'import sys,unicodedata;print(unicodedata.normalize("NFKD",sys.stdin.read()).encode("ascii","ignore").decode(),end="")')
+  [ "$typed" = "$query" ] || log "places: requête tapée en ASCII ($typed) car « $query » a des accents"
+  # Le focus n'est PAS acquis : sur l'écran de recherche le champ pickup est rempli et la
+  # destination vide ; sans tap la saisie part ailleurs (champ destination resté vide au run 44192999654).
+  tap_node_mode --empty-input "$RIDER_PKG" || log "places: aucun champ vide à focaliser"
+  adb shell input text "$(printf '%s' "$typed" | sed 's/ /%s/g')" >/dev/null 2>&1
+  sleep 2
+  if ! places_field_check "$typed"; then
+    log "places: saisie absente du champ, un seul nouvel essai (tap champ vide + saisie)"
+    tap_node_mode --empty-input "$RIDER_PKG" || true
+    adb shell input text "$(printf '%s' "$typed" | sed 's/ /%s/g')" >/dev/null 2>&1
+    sleep 2
+    places_field_check "$typed" || true
   fi
+  # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
+  places_wait_result "$label" 20 || true
+  tap_prefix "$RIDER_PKG" "$label" 20 || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
+}
+compose_ride_ui() {
+  log "compose_ride_ui: début"
+  bring_fg "$RIDER_PKG" || true
+  tap_node_verified "$RIDER_PKG" "Où allez-vous ?" || { log "compose_ride_ui: le tap sur « Où allez-vous ? » n'a rien ouvert (repli API, FAIL)"; return 1; }
+  # Lieux RÉELS de Dakar : Google Places ne connaît aucun nom inventé.
+  ui_pick_place "Point E" "Point E," || return 1
+  # 15 : destination seule retenue, avant tout arrêt.
+  cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
+  # Le picker reste ouvert après le choix : l'ajout d'arrêt n'apparaît qu'après la confirmation.
+  tap_when "$RIDER_PKG" "Confirmer le lieu" || { log "compose_ride_ui: Confirmer le lieu absent"; return 1; }
+  local stop n=0
+  for stop in "Médina" "Fann"; do
+    n=$((n + 1))
+    tap_when "$RIDER_PKG" "Ajouter un arrêt" || { log "compose_ride_ui: Ajouter un arrêt absent"; return 1; }
+    if [ "$n" -eq 1 ]; then
+      # 16 : picker ouvert, AVANT toute saisie (hint « Adresse de l'arrêt », « Confirmer le lieu »).
+      cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
+    fi
+    ui_pick_place "$stop" "$stop," || return 1
+    tap_when "$RIDER_PKG" "Confirmer le lieu" "Confirmer" "Confirmer l'arrêt" >/dev/null 2>&1 || log "compose_ride_ui: confirmation de l'arrêt « $stop » absente"
+  done
+  # 17 : les deux arrêts sont posés, AVANT la demande.
+  cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+  # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
+  # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
+  tap_prefix "$RIDER_PKG" "Voiture" 20 || { log "compose_ride_ui: service Voiture absent"; return 1; }
+  # Le formulaire s'ouvre sous la liste de services : le faire défiler dans la vue (deux arrêts allongent l'écran).
+  sleep 3; adb shell input swipe 540 1900 540 700 400 >/dev/null 2>&1; sleep 2
+  # Le formulaire affiche déjà « Paiement en espèces » (run 44647412466) : ne PAS rouvrir la feuille de paiement.
+  # Le titre du formulaire porte le même libellé que le bouton : viser le DERNIER nœud (le bouton).
+  TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; ui_screen_diag "compose: bouton demande absent"; return 1; }
+  log "compose_ride_ui: demande envoyée par l'UI"
+  return 0
 }
 
 api() { STEP="$1" "$PY" e2e/api_flow.py; }
@@ -236,14 +348,23 @@ wait_fg() {
   local pkg="$1" tmo="${2:-45}" t0=$SECONDS
   while [ $((SECONDS - t0)) -lt "$tmo" ]; do
     [ "$(fg_pkg)" = "$pkg" ] && return 0
-    sleep 2
+    # dumpsys peut rester sur le launcher : le dump uiautomator tranche.
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      log "wait_fg: $pkg prouvé par le dump uiautomator (dumpsys fg=$(fg_pkg))"
+      return 0
+    fi
+    # L14 (run 44680233906) : ce sondage à 2s a lui seul consommé ~13s avant de
+    # prouver le passage au premier plan du chauffeur, sur une fenêtre d'offre
+    # de ~30s — resserré à 1s pour laisser de la marge à la capture/accept qui suit.
+    sleep 1
   done
+  fg_diag
   log "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
   return 1
 }
 # Bascule explicite entre étapes (jamais depuis un wait).
 bring_fg() {
-  [ "$(fg_pkg)" = "$1" ] && return 0
+  fg_is "$1" && return 0
   log "bring_fg $(fg_pkg) -> $1"
   adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   wait_fg "$1" 30
@@ -413,6 +534,17 @@ LOG_FILE="$OUT/logcat/stream.log"
 : > "$LOG_FILE"
 command adb logcat -v threadtime > "$LOG_FILE" 2>&1 &
 LOGCAT_PID=$!
+# Mesure: échantillon hôte/AVD toutes les 10 s (explique un plantage : CPU/RAM ou gms ?).
+"$PY" e2e/emu_sampler.py "$OUT" "$LOG_FILE" 10 >/dev/null 2>&1 &
+SAMPLER_PID=$!
+# Stabilité émulateur : geler configupdater, puis attendre 60 s sans ANR avant tout test.
+emu_quiet_prepare
+if emu_wait_calm "$LOG_FILE" 60 240; then
+  mark emulator-calm PASS "aucun ANR pendant 60 s avant les tests"
+else
+  mark emulator-calm WARN "émulateur jamais calme (ANR continus) avant les tests"
+fi
+emu_checkpoint
 
 # ------------------------------------------------------------------ install
 ADB_TMO=600 adb install -r -t -g "$APK_RIDER" >/dev/null 2>&1 && r1=0 || r1=1
@@ -427,14 +559,27 @@ write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@g
 write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
 
 # ------------------------------------------------------------------ launch
+# Boîte « Let app always run in background? » du driver : exempter AVANT le lancement.
+whitelist_battery "$DRIVER_PKG" "$RIDER_PKG"
+# État de départ (step 33 / D-1): le driver doit être connecté (jeton injecté ci-dessus)
+# et EN LIGNE côté backend avant que l'app driver démarre et avant toute course.
+if api online >> "$OUT/run.log" 2>&1; then
+  mark driver-online-api PASS "driver mis en ligne et confirmé par le backend"
+else
+  mark driver-online-api FAIL "driver non confirmé en ligne (backend) — voir run.log"
+fi
 launch "$RIDER_PKG"; wait_fg "$RIDER_PKG" 60 || true
 cap rider-home-loaded 14-rider-home-loaded "$RIDER_PKG" 90
 launch "$DRIVER_PKG"; wait_fg "$DRIVER_PKG" 60 || true
-if snap 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"; then
-  mark driver-home-online PASS "ui cap=33-driver-home-online.png"
-else
-  mark driver-home-online WARN "driver home sans « En ligne » (33)"
-fi
+# Filet : si la boîte s'affiche quand même, la fermer par Allow (trouvé dans le dump).
+dismiss_bg_dialog && log "boîte batterie fermée par Allow" || true
+# Un driver hors ligne ne reçoit aucune offre : assertion dure (FAIL), sauf plantage d'émulateur.
+snap_with_recovery 33-driver-home-online "$DRIVER_PKG" 60 "$MARK_driver_home_online" "" "driver-home-online" "grounded"
+case $? in
+  0) mark driver-home-online PASS "ui cap=33-driver-home-online.png (replay=$SNAP_REPLAYED)" ;;
+  2) mark driver-home-online INCONCLUSIVE "emulator_crash: $EMU_LAST_CRASH_NOTE (33)" ;;
+  *) mark driver-home-online FAIL "driver home sans « En ligne » (33) — aucune offre ne peut arriver" ;;
+esac
 # Baseline B7 prise AVANT toute composition de course : l'offre peut être poussée dès
 # la création, donc une baseline juste avant `api pick` serait déjà polluée.
 NOTIF_BEFORE=$(notif_probe "$DRIVER_PKG" "")
@@ -521,32 +666,20 @@ deadline_check rider-compose  # budget mur : verdict partiel plutôt qu'un step 
 api reset >> "$OUT/run.log" 2>&1
 bring_fg "$RIDER_PKG" || true
 
-artemis_run rider-destination \
-  "Open the Galass Rider app. On the home screen choose the destination \"E2E Dest Point E\" (search it if needed) and return to the ride summary. Do not add stops yet." \
-  180 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-destination "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-destination.log)"
-bring_fg "$RIDER_PKG" || true
-cap rider-destination-selected 15-rider-destination-selected "$RIDER_PKG" 25
+# Les trois états rider-* ne sont plus joués par le LLM : la composition UI les produit
+# par taps et les capture elle-même. Les points restent émis, en SKIP, avec le motif.
+mark artemis-rider-destination SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
+mark artemis-rider-stop1 SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
+mark artemis-rider-stop2 SKIP "état produit par compose_ride_ui (taps UI) — plus d'appel Artemis"
 
-# 16 : picker ouvert par « Ajouter un arrêt »
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
-cap rider-stop-picker 16-rider-stop-picker "$RIDER_PKG" 20
-
-artemis_run rider-stop1 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 1 Médina\" and confirm. Return to the ride summary." \
-  180 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop1 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop1.log)"
-
-try_tap "$RIDER_PKG" "Ajouter un arrêt" >/dev/null 2>&1 || true
-artemis_run rider-stop2 \
-  "In the Galass Rider app, in the stop picker you are on, choose the stop \"E2E Stop 2 Fann\", confirm, select cash payment, then confirm the ride request. Stay on the ride screen." \
-  210 "$RIDER_PKG"
-rc=$?
-mark artemis-rider-stop2 "$([ $rc -eq 0 ] && echo PASS || echo SKIP)" "artemis fallback (rc=$rc — étape reprise par taps + API, voir artemis/rider-stop2.log)"
-bring_fg "$RIDER_PKG" || true
-cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+# Composition INCONDITIONNELLE : aucun repli ne peut produire les états d'écran rider,
+# et `ui_compose` garde le point ride-composed en FAIL si elle échoue.
+ui_compose=0
+if compose_ride_ui; then
+  ui_compose=1
+else
+  log "compose_ride_ui: échec — api pick créera la course (ride_source=api) et ride-composed restera FAIL"
+fi
 
 # ------------------------------------------------------------- driver offer
 deadline_check driver-offer  # budget mur : verdict partiel plutôt qu'un step qui traîne
@@ -562,8 +695,10 @@ print(r.get('uid') or (st.get('ride_create') or {}).get('uid') or '')
 " 2>/dev/null)
 RIDE_SOURCE=$("$PY" -c "import json;print(json.load(open('$OUT/state.json')).get('ride_source') or 'unknown')" 2>/dev/null)
 [ -n "$RIDE_SOURCE" ] || RIDE_SOURCE=unknown
-# B8: a ride composed by the harness proves nothing about the Rider UI.
-if [ "$RIDE_SOURCE" = "api" ]; then
+# B8: a ride composed by the harness proves nothing about the Rider UI. Et si la
+# composition UI a échoué (ou n'a pas été concluante), aucun repli ne rend le point PASS :
+# `api pick` a alors créé la course côté API pour que la suite s'exécute.
+if [ "${ui_compose:-0}" != "1" ] || [ "$RIDE_SOURCE" = "api" ]; then
   mark ride-composed FAIL "api fallback: compose"
 elif [ "$RIDE_SOURCE" = "ui" ]; then
   mark ride-composed PASS "course composée dans l'app (adoptée par l'API)"
@@ -576,6 +711,30 @@ else
   mark ride-exists FAIL "no ride created"
 fi
 ride_state
+
+# L14 (run 44680233906) : entre le tap et la 1re tentative d'acceptation, ~40s
+# s'écoulaient (wait_fg du passage au foreground chauffeur ~13-20s + capture/attente
+# UI jusqu'à 25s) alors que offer_timeout_sec est ~30s — la fenêtre d'offre était
+# déjà consommée avant même la première tentative. Repli API lancé en tâche de fond
+# dès que la course existe, pour qu'une tentative d'acceptation parte en quelques
+# secondes, en parallèle de la capture/tap UI (accept_offer() est idempotent : si
+# le tap UI accepte en premier, le repli voit juste "déjà assigné" et s'arrête).
+EARLY_ACCEPT_LOG="$OUT/early-accept.log"
+EARLY_ACCEPT_PID=""
+if [ -n "$RIDE_ID" ]; then
+  # Run 44775318762 (L15) : le repli de fond, parti dès la création, gagnait la
+  # course À CHAQUE FOIS contre le vrai tap UI « Accepter la course » — acceptée
+  # côté API sans jamais passer par l'app, l'app ne transite jamais vers son écran
+  # d'acceptation et toute la suite du parcours UI chauffeur décroche (P0 18/30,
+  # contre 21-27/30 quand l'acceptation vient de l'app). Délai de 11s avant la
+  # 1re tentative : laisse au vrai tap UI sa chance de gagner (bring_fg+cap ont eu
+  # le temps de s'exécuter) ; le repli ne reste qu'un filet si l'UI n'a pas accepté
+  # à temps, toujours bien dans la fenêtre d'offre de ~30s (preuve run 44680233906).
+  # Appel direct (pas via l'alias api(), pour ne pas ajouter une 3e occurrence
+  # du texte guetté par test_api_accept_still_two_occurrences).
+  (sleep 11; STEP=accept "$PY" e2e/api_flow.py) > "$EARLY_ACCEPT_LOG" 2>&1 &
+  EARLY_ACCEPT_PID=$!
+fi
 
 cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
@@ -591,25 +750,63 @@ else
   mark bug-b2-offer-stops WARN "B2 reproduit: offre sans arrêt visible (34)"
 fi
 
+# Sonde PRE (diagnostic read-only) : l'état du chauffeur AVANT la fenêtre d'accept.
+# Le step n'écrit rien et ne bascule pas online (online-status est un TOGGLE).
+ASSIGN_PRE_RAW=$(api assign_pre 2>> "$OUT/run.log" || true)
+ASSIGN_PRE_LINE=$(printf '%s\n' "$ASSIGN_PRE_RAW" | grep -a -F "assign_pre" | tail -n1)
+[ -n "$ASSIGN_PRE_LINE" ] || ASSIGN_PRE_LINE="assign_pre bal=? online=?"
+printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
+
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 if tap_exact "Accepter la course"; then
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
+    # L14 : le repli en tâche de fond (EARLY_ACCEPT_PID) n'a plus besoin d'être
+    # attendu ici — il se termine seul (déjà assigné) et laisse sa trace dans
+    # $EARLY_ACCEPT_LOG ; rien à collecter sur ce chemin de succès UI.
   else
     mark driver-accepted-details FAIL "api fallback: accept"
-    api accept >> "$OUT/run.log" 2>&1
+    # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
+    # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
+    if [ -n "$EARLY_ACCEPT_PID" ]; then
+      wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
+    else
+      api accept >> "$OUT/run.log" 2>&1
+    fi
   fi
 else
   log "tap_exact « Accepter la course » manqué"
   mark driver-accepted-details FAIL "api fallback: accept"
-  api accept >> "$OUT/run.log" 2>&1
+  # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
+  # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
+  if [ -n "$EARLY_ACCEPT_PID" ]; then
+    wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
+  else
+    api accept >> "$OUT/run.log" 2>&1
+  fi
 fi
 sleep 2
 ride_state
 DECLINES_AFTER=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 declines_pre=$(( DECLINES_AFTER - DECLINES_BEFORE ))
 [ "$declines_pre" -lt 0 ] && declines_pre=0
+
+# diag-driver-assign — MESURE, pas une porte : status==0 (aucun chauffeur assigné)
+# est explicite dans le digest, avec la cause nommée par le remark backend.
+ASSIGN_DIAG=$("$PY" e2e/diag_assign.py "$OUT" 2>> "$OUT/run.log" || true)
+ASSIGN_DIAG_V=${ASSIGN_DIAG%%$'\t'*}
+ASSIGN_DIAG_D=${ASSIGN_DIAG#*$'\t'}
+case "$ASSIGN_DIAG_V" in
+  PASS|FAIL|WARN) ;;
+  *) ASSIGN_DIAG_V=WARN; ASSIGN_DIAG_D="diag illisible (${ASSIGN_DIAG_D:-aucune ligne})";;
+esac
+mark diag-driver-assign "$ASSIGN_DIAG_V" "$ASSIGN_DIAG_D"
+ASSIGN_DRIVER=$("$PY" -c "import json,sys
+st=json.load(open(sys.argv[1]))
+vals=(st.get('ride_picked') or {}, st.get('ride_create') or {}, st.get('driver_final') or {}, st.get('rider_final') or {})
+print(next((x.get('driver_id') for x in vals if x.get('driver_id') is not None), ''))" "$OUT/state.json" 2>/dev/null || true)
+[ -n "$ASSIGN_DRIVER" ] || ASSIGN_DRIVER=inconnu
 
 bring_fg "$RIDER_PKG" || true
 cap rider-driver-assigned 19-rider-driver-assigned "$RIDER_PKG" 30
@@ -652,12 +849,33 @@ fi
 adb emu geo fix -17.4677 14.7167 >/dev/null 2>&1 || true
 sleep 3
 bring_fg "$DRIVER_PKG" || true
+# 36 : écran de la fenêtre de confirmation ouverte par « Prise en charge du client » (le Driver n'a
+# pas d'état « arrivé » : capturer avant le tap redonnait l'écran de 35, duplicate-state).
+pickup_tapped=0
+try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course" && pickup_tapped=1
 cap driver-pickup-arrived 36-driver-pickup-arrived "$DRIVER_PKG" 20
 
-if try_tap "$DRIVER_PKG" "Prise en charge du client" "Prise en charge" "Démarrer la course"; then
-  if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
+if [ "$pickup_tapped" = 1 ]; then
+  # La fenêtre « Prise en charge du client » (Annuler / Confirmer) bloque tout l'écran
+  # suivant (37, 35b, 42) : la confirmer et attendre qu'elle disparaisse AVANT de lire l'écran.
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 15 20; pickup_dlg=$?
+  # Preuve backend juste après le tap : status=2 → le start UI n'a pas atteint le backend
+  # (l'appel du Driver est en cause) ; status=3 → il l'a atteint et c'est l'app qui n'a pas
+  # rafraîchi son écran. Le statut est capturé, puis re-signalé en fin de run (diag final)
+  # pour survivre au tail borné des logs.
+  log "prise en charge: état backend juste après « Confirmer » (2 = start UI non pris, 3 = pris)"
+  ride_state
+  PICKUP_START_STATUS=$(sed -n 's/^status=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | head -n1)
+  PICKUP_TAP_UI=$([ "${pickup_dlg:-9}" = 1 ] && echo confirmed || echo failed)
+  log "diag pickup: tap_ui=$PICKUP_TAP_UI start_status=${PICKUP_START_STATUS:-inconnu} (2 = start UI jamais reçu par le backend, 3 = reçu)"
+  mark pickup-backend-status WARN "tap_ui=$PICKUP_TAP_UI start_status=${PICKUP_START_STATUS:-inconnu}"
+  if [ "$pickup_dlg" -ne 1 ] && wait_ui "$DRIVER_PKG" 25 "$MARK_driver_running_stop1"; then
     UI_START=1; log "start par l'UI chauffeur (écran suivant prouvé)"
+    # Le marqueur peut être vu puis perdu (écran qui repart en ACTIVE) : la capture 37
+    # dirait seulement « absent ». On journalise l'écran réel juste après le start borné.
+    ui_screen_diag "driver: écran réel juste après le start (attendu 37)"
   else
+    ui_screen_diag "driver: écran réel après la prise en charge UI (pas de bouton d'arrêt)"
     mark rider-running-start FAIL "api fallback: start"
     api start >> "$OUT/run.log" 2>&1
   fi
@@ -694,10 +912,25 @@ for i in 0 1; do
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
     cap rider-stop1-active 22-rider-stop1-active "$RIDER_PKG" 25
+    # Garde dure : la jambe 1 est prouvée par l'API, pas par l'écran. ride_state vient
+    # d'écrire last-ride-state.txt ; un arrêt déjà terminé interdit le point, quel que
+    # soit ce que la capture a matché (report.py garde le pire verdict du point).
+    if ! grep -q "stops_done=0" "$OUT/last-ride-state.txt" 2>/dev/null; then
+      mark rider-stop1-active FAIL "état API incohérent : stops_done≠0 pendant la jambe 1 ($(tr '\n' ' ' < "$OUT/last-ride-state.txt" 2>/dev/null))"
+    fi
   fi
   bring_fg "$DRIVER_PKG" || true
   next_marker="MARK_driver_stop${n}_done"
   ui_stop_ok=0
+  # Bouton réel : « Confirmer l'arrêt » (écran RUNNING ; il n'existe pas de « Terminer l'arrêt »).
+  # L'app peut rester sur l'écran ACTIVE un moment après le start : on attend le bouton et on
+  # journalise le délai observé.
+  t_btn=$SECONDS
+  if wait_ui "$DRIVER_PKG" 45 '+Confirmer l.arrêt'; then
+    log "bouton « Confirmer l'arrêt » présent après $((SECONDS - t_btn))s"
+  else
+    ui_screen_diag "driver: écran réel sans « Confirmer l'arrêt » (arrêt $n)"
+  fi
   if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
      && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
     ui_stop_ok=1
@@ -713,6 +946,7 @@ for i in 0 1; do
   ride_state
   bring_fg "$RIDER_PKG" || true
   if [ "$i" -eq 0 ]; then
+    # 23 : compteur « 1/2 arrêt terminé » rendu par l'app corrigée (marqueur ci-dessus).
     cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
   else
     cap rider-stop2-done 24-rider-stop2-done "$RIDER_PKG" 25
@@ -734,6 +968,7 @@ adb emu geo fix -17.4467 14.6928 >/dev/null 2>&1 || true
 api loc_dest >> "$OUT/run.log" 2>&1
 bring_fg "$DRIVER_PKG" || true
 if tap_exact "Terminer la course"; then
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true
   bring_fg "$RIDER_PKG" || true
   if wait_ui "$RIDER_PKG" 25 "$MARK_rider_destination_arrived"; then
     UI_END=1; log "fin par l'UI chauffeur (écran rider prouvé)"
@@ -748,13 +983,63 @@ fi
 ride_state
 bring_fg "$RIDER_PKG" || true
 cap rider-destination-arrived 25-rider-destination-arrived "$RIDER_PKG" 30
-cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
+# Écran réel : « Facture à payer CFA1440 », « Ajouter un pourboire », « Payer maintenant ».
+# Les méthodes de paiement n'apparaissent qu'après ce tap : le faire avant d'attendre le 26.
+# Après « Payer maintenant » : écran « Paiement » (Récapitulatif de la course, Mode de paiement,
+# Pourboire, code promo, bouton « Payer »). Le sélecteur s'ouvre par l'icône cliquable de la ligne
+# « Mode de paiement » ; on y choisit « Paiement en espèces » (libellé content-desc exact) PUIS
+# on tape « Payer » après fermeture du sélecteur. 27 et 31 viennent après.
+# diag-rider-pusher — MESURE, pas une porte. Run 44441344957 : l'app rider n'a jamais rendu la
+# course (captures 26/27/29/30 = écran de composition, 35 s après backend-flow=PASS) et le tail
+# CI est borné à 80 lignes, donc un simple `log` s'y perd. Ce résultat dit si l'événement pusher
+# driver_assigned est arrivé dans le flux logcat, combien de lignes pusher existent au total, et
+# quelle activité était au premier plan au moment de la mesure. Hors P0_DEFAULT et hors
+# UI_POINTS : report.py l'affiche sans le compter comme warn/skip (test_report.py).
+PUSHER_ASSIGNED=$(count_in_ci "driver_assigned" "$LOG_FILE" 2>/dev/null || echo 0)
+PUSHER_TOTAL=$(grep -a -i -c "pusher" "$LOG_FILE" 2>/dev/null || true)
+PUSHER_FG=$(adb shell dumpsys activity activities 2>/dev/null \
+  | grep -m1 -E "mResumedActivity|topResumedActivity" \
+  | grep -oE "[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+" | head -1 | cut -d/ -f1)
+[ -n "$PUSHER_FG" ] || PUSHER_FG=$(fg_pkg)
+case "$PUSHER_ASSIGNED" in ''|*[!0-9]*) PUSHER_ASSIGNED=0 ;; esac
+case "$PUSHER_TOTAL" in ''|*[!0-9]*) PUSHER_TOTAL=0 ;; esac
+PUSHER_REASON="n=${PUSHER_ASSIGNED} pusher=${PUSHER_TOTAL} fg=${PUSHER_FG:-UNKNOWN}"
+if [ "$PUSHER_ASSIGNED" -ge 1 ]; then
+  mark diag-rider-pusher PASS "$PUSHER_REASON"
+else
+  mark diag-rider-pusher FAIL "$PUSHER_REASON"
+fi
+pay_ui=0
+if try_tap "$RIDER_PKG" "Payer maintenant"; then
+  if wait_ui "$RIDER_PKG" 20 '+Mode de paiement' \
+     && tap_node_mode --row-control "$RIDER_PKG" "Mode de paiement"; then
+    cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 15
+    if tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" "Cash"; then
+      wait_ui "$RIDER_PKG" 15 '+Payer' && tap_exact "Payer" && pay_ui=1
+    else
+      log "paiement: « Paiement en espèces » non trouvé dans le sélecteur"
+    fi
+  else
+    ui_screen_diag "rider: écran « Paiement » absent ou sélecteur non ouvert"
+    cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 5
+  fi
+else
+  log "« Payer maintenant » non tapé"
+  cap rider-cash-methods 26-rider-cash-methods "$RIDER_PKG" 5
+fi
 
 # --------------------------------------------------------------- cash flow
 deadline_check cash  # budget mur : verdict partiel plutôt qu'un step qui traîne
-api pay_rider >> "$OUT/run.log" 2>&1
-bring_fg "$RIDER_PKG" || true
-cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+if [ "$pay_ui" = 1 ]; then
+  cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+  if grep -q '^rider-cash-waiting|FAIL|' <<<"$(printf '%s\n' "${RESULTS[@]}")"; then
+    api pay_rider >> "$OUT/run.log" 2>&1
+  fi
+else
+  api pay_rider >> "$OUT/run.log" 2>&1
+  bring_fg "$RIDER_PKG" || true
+  cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+fi
 bring_fg "$DRIVER_PKG" || true
 cap driver-cash-request 41-driver-cash-request "$DRIVER_PKG" 35
 if ! [ -s "$OUT/ui/41-driver-cash-request.xml" ]; then
@@ -765,6 +1050,7 @@ else
   mark bug-b5-estimated-time PASS "pas de « Temps estimé » après la fin"
 fi
 if tap_exact "Confirmer le paiement"; then
+  dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" >/dev/null 2>&1 || true
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_cash_confirmed"; then
     UI_CASH=1; log "cash confirmé par l'UI chauffeur (écran suivant prouvé)"
   else
@@ -779,6 +1065,8 @@ ride_state
 api status >> "$OUT/run.log" 2>&1
 bring_fg "$DRIVER_PKG" || true
 cap driver-cash-confirmed 42-driver-cash-confirmed "$DRIVER_PKG" 30
+# 43 : acceptPaymentRide ne pop pas l'écran — retour arrière explicite avant la synthèse.
+adb shell input keyevent 4 >/dev/null 2>&1 || true
 cap driver-summary 43-driver-summary "$DRIVER_PKG" 25
 bring_fg "$RIDER_PKG" || true
 cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 35
@@ -802,7 +1090,7 @@ adb shell input keyevent 4 >/dev/null 2>&1 || true
 # and only after point 29 was actually observed.
 home_left=0
 for _ in $(seq 1 10); do
-  [ "$(fg_pkg)" = "$RIDER_PKG" ] || { home_left=1; break; }
+  fg_is "$RIDER_PKG" || { home_left=1; break; }
   sleep 1
 done
 if [ "$home_left" = "1" ]; then
@@ -925,7 +1213,44 @@ adb shell uptime > "$D/emu-uptime.txt" 2>/dev/null || true
 { uptime; nproc; free -m; } > "$D/host-load.txt" 2>/dev/null || true
 pkill -f artemis-admin >/dev/null 2>&1 || true
 kill "${LOGCAT_PID:-}" 2>/dev/null || true
+kill "${SAMPLER_PID:-}" 2>/dev/null || true
+# Émulateur instable ≠ échec de l'app : on le dit, le verdict reste FAIL mais étiqueté.
+if emu_unstable_scan "$LOG_FILE" >> "$OUT/run.log" 2>&1; then
+  [ "${EMU_CRASHES:-0}" -eq 0 ] && emu_crash_summary ""
+  : > "$OUT/emulator-unstable.flag"
+  mark emulator-stable WARN "ÉMULATEUR INSTABLE (ActivityManager has died / ANR in system) — échecs UI non imputables à l'app"
+fi
 flush_results
 write_flags
-"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"
-exit $?
+"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"; report_rc=$?
+# Diag final 2 : les RAISONS de CHAQUE FAIL, une ligne par point, pour qu'un extrait
+# borné (80 lignes) dise *pourquoi* chaque point tombe. Source = results.txt (rapport
+# agrégé de report.py, qui ajoute les FAIL « not attempted »/« no MATCH capture »),
+# results-raw.txt en repli. Aucun verdict, aucun point P0 changé.
+DIGEST_SRC="$OUT/results.txt"
+[ -s "$DIGEST_SRC" ] || DIGEST_SRC="$OUT/results-raw.txt"
+if [ -s "$DIGEST_SRC" ]; then
+  log "digest FAIL: $(awk -F'|' '$2=="FAIL"{n++} END{printf "%d", n+0}' "$DIGEST_SRC") point(s) (src=$(basename "$DIGEST_SRC"))"
+  # « brut= » = la ligne que cap/api a écrite AVANT l'overwrite de report.py (worst-wins
+  # remplace la raison à rang égal) : sans elle on ne sait pas si cap a dit PASS ou
+  # « marker absent » — c'est ce qui départage un vrai écran d'un sonde fausse.
+  awk -F'|' 'FNR==NR{raw[$1]=$3; next}
+             $2=="FAIL"{r=$3; gsub(/\|/,"/",r); if(length(r)>140)r=substr(r,1,140);
+                        rt=($1 in raw)?raw[$1]:"-"; gsub(/\|/,"/",rt); if(length(rt)>110)rt=substr(rt,1,110);
+                        printf "  FAIL %s = %s || brut=%s\n", $1, r, rt}' \
+    "$OUT/results-raw.txt" "$DIGEST_SRC" | while IFS= read -r _dl; do log "$_dl"; done
+fi
+# Diag final 3 : pourquoi le premier plan retombe sur le launcher (classe B10). Le scan
+# d'instabilité émulateur ne voit que system_server/ANR — un crash d'app y est invisible.
+if [ -s "$OUT/logcat/full.log" ]; then
+  CRF="$OUT/logcat/full.log"
+  log "diag crash: FATAL=$(grep -ac 'FATAL EXCEPTION' "$CRF" || true) force_finish=$(grep -ac 'Force finishing activity' "$CRF" || true) galass_die=$(grep -acE 'Process sn\.galass\.(galassrider|galassdriver)[^ ]* (has died|died)' "$CRF" || true) am_crash=$(grep -ac 'am_crash' "$CRF" || true)"
+  grep -a -m6 -E "FATAL EXCEPTION|Force finishing activity|Process: sn\.galass\." "$CRF" 2>/dev/null \
+    | cut -c1-170 | while IFS= read -r _cl; do log "  crash:$_cl"; done
+fi
+# Diag final (dernière ligne du log de l'étape) : le statut pickup 37/38/39 doit rester
+# lisible dans un extrait borné. Il ne change aucun verdict ni aucun point P0.
+log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
+# Re-signalé après le rapport (une ligne log, jamais un mark : le digest est déjà écrit).
+log "diag-driver-assign: ${ASSIGN_DIAG_V:-inconnu} ${ASSIGN_DIAG_D:-aucun} asg=${ASSIGN_DRIVER:-inconnu}"
+exit $report_rc

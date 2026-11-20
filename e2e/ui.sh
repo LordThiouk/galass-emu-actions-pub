@@ -40,6 +40,36 @@ fg_pkg() {
   echo "${cur:-UNKNOWN}"
 }
 
+# xml_pkg_of file : paquet de la fenêtre applicative d'après un dump uiautomator donné
+# (attribut package du premier noeud hors com.android.systemui). Vide si illisible.
+xml_pkg_of() {
+  [ -n "${1:-}" ] && [ -s "$1" ] || { echo ""; return 0; }
+  grep -oE 'package="[^"]+"' "$1" 2>/dev/null \
+    | cut -d'"' -f2 | grep -v '^com.android.systemui$' | head -1
+}
+
+# xml_pkg : paquet de la fenêtre applicative d'après le DERNIER dump uiautomator valide.
+# Vide si pas de dump valide. Sert de preuve de premier plan quand dumpsys renvoie le
+# launcher alors que l'UI de l'app est bien affichée (steps 14/33 : « marqueur absent »
+# sur 29 points alors que le XML montrait l'app).
+xml_pkg() {
+  [ "${UI_DUMP_VALID:-0}" = "1" ] || { echo ""; return 0; }
+  xml_pkg_of "$UI_XML_PATH"
+}
+
+# fg_is pkg : vrai si dumpsys OU un dump uiautomator frais place pkg au premier plan.
+fg_is() {
+  [ "$(fg_pkg)" = "$1" ] && return 0
+  ui_xml && [ "$(xml_pkg)" = "$1" ]
+}
+
+# fg_diag : trace brute des signaux de premier plan (sans secret) pour comprendre un écart.
+fg_diag() {
+  _ulog "fg_diag window: $(adb shell dumpsys window 2>/dev/null | grep -m2 -E 'mCurrentFocus|mFocusedApp' | tr -s ' ' | tr '\n' '|')"
+  _ulog "fg_diag activity: $(adb shell dumpsys activity activities 2>/dev/null | grep -m2 -E 'topResumedActivity|mResumedActivity' | tr -s ' ' | tr '\n' '|')"
+  _ulog "fg_diag xml_pkg=$(xml_pkg)"
+}
+
 # ensure_fg : relance UNIQUEMENT si un AUTRE paquet connu est au premier plan.
 # UNKNOWN (dump illisible, écran de transition) ne justifie jamais une relance.
 ensure_fg() {
@@ -96,9 +126,12 @@ ui_xml() {
   done
   if [ "$rc" -ne 0 ]; then
     rm -f "$UI_XML_PATH"
-    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais"
+    EMU_DUMP_FAILS=$(( ${EMU_DUMP_FAILS:-0} + 1 ))
+    [ "$EMU_DUMP_FAILS" -gt "${EMU_DUMP_FAILS_MAX:-0}" ] && EMU_DUMP_FAILS_MAX=$EMU_DUMP_FAILS
+    _ulog "ui_xml: DUMP_UNAVAILABLE après 3 essais (d'affilée: $EMU_DUMP_FAILS)"
     return 4
   fi
+  EMU_DUMP_FAILS=0
   UI_DUMP_BYTES=$(wc -c < "$UI_XML_PATH" 2>/dev/null || echo 0)
   UI_DUMP_HASH=$(sha256sum "$UI_XML_PATH" 2>/dev/null | cut -d' ' -f1)
   UI_DUMP_VALID=1
@@ -113,7 +146,9 @@ clear_sys() {
   _ulog "dialogue système fermé"; sleep 2; ui_xml
 }
 
-# _spec_ok : chaque argument est une spec `+A|B|-C` (le type se propage sur les |).
+# _spec_ok : chaque argument est une spec `+A|B&-C` (le type se propage sur les | et les &).
+# `|` = OU à l'intérieur d'un groupe, `&` = ET (nouveau groupe, même type hérité) : deux
+# signaux distincts du même écran (compteur ET bannière) s'écrivent `+compteur&+bannière`.
 # Négatif : seuls les noeuds visibles et non vides comptent (Flutter garde les routes
 # précédentes en mémoire, visible-to-user="false"). Écrit la spec fautive dans ui/.last-spec-fail.
 _spec_ok() {
@@ -145,9 +180,19 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
 
 
 def groups(spec):
-    """`+A|B|-C` -> [('+', ['A','B']), ('-', ['C'])] (le type se propage sur les |)."""
-    out, kind = [], None
-    for raw in spec.split("|"):
+    """`+A|B&-C` -> [('+', ['A','B']), ('-', ['C'])] (OU dans un groupe, ET entre groupes).
+
+    `|` ajoute une alternative au groupe courant ; `&` ouvre un nouveau groupe (le type
+    se propage) : deux signaux distincts s'écrivent `+compteur&+bannière`.
+    """
+    out, kind, new_group = [], None, True
+    for raw in re.split(r"([|&])", spec):
+        if raw == "|":
+            new_group = False
+            continue
+        if raw == "&":
+            new_group = True
+            continue
         raw = raw.strip()
         if not raw:
             continue
@@ -155,10 +200,11 @@ def groups(spec):
             kind, raw = raw[0], raw[1:]
         if not kind or not raw:
             continue
-        if out and out[-1][0] == kind:
-            out[-1][1].append(raw)
-        else:
+        if new_group or not out or out[-1][0] != kind:
             out.append((kind, [raw]))
+        else:
+            out[-1][1].append(raw)
+        new_group = False
     return out
 
 
@@ -215,8 +261,15 @@ wait_ui() {
     clear_sys
     cur=$(fg_pkg)
     if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ] && [ "$cur" != "$pkg" ]; then
-      _ulog "wait_ui: premier plan $cur != $pkg"
-      return 3
+      # Le dump uiautomator fait foi : si l'app attendue y est, dumpsys se trompe.
+      if [ "$(xml_pkg)" = "$pkg" ]; then
+        _ulog "wait_ui: dumpsys=$cur mais le dump uiautomator montre $pkg (dumpsys ignoré)"
+        fg_diag
+      else
+        _ulog "wait_ui: premier plan $cur != $pkg (xml=$(xml_pkg))"
+        fg_diag
+        return 3
+      fi
     fi
     if _spec_ok "$@"; then
       return 0
@@ -236,7 +289,7 @@ tap_exact() {
     return 4
   fi
   res=$(python3 - "$UI_XML_PATH" "$label" <<'PY'
-import html, re, sys
+import html, os, re, sys
 
 path, label = sys.argv[1], sys.argv[2]
 norm = lambda s: re.sub(r"\s+", " ", html.unescape(s)).strip()
@@ -269,7 +322,9 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
         continue
     if norm_attr(attr("text")) == want or norm_attr(attr("content-desc")) == want:
         best = ((x1 + x2) // 2, (y1 + y2) // 2)
-        break
+        # TAP_PICK=last : le dernier nœud gagne (bouton placé sous un titre au même libellé).
+        if os.environ.get("TAP_PICK") != "last":
+            break
 print("" if best is None else "%d %d" % best)
 PY
 )
@@ -280,6 +335,182 @@ PY
   set -- "$1" $res
   adb shell input tap "$2" "$3" >/dev/null 2>&1
   _ulog "tap_exact $1 @ $2,$3"
+}
+
+# tap_prefix pkg prefix [timeout_s] : tape la première suggestion (nœud visible, hors champ de saisie)
+# dont le texte COMMENCE par prefix, sans accent ni casse. Google Places rend la description
+# complète (« Point E, Dakar, Senegal ») : un libellé exact ne peut pas la viser.
+tap_prefix() {
+  local pkg="$1" pre="$2" limit="${3:-20}" res t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$limit" ]; do
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      res=$(python3 - "$UI_XML_PATH" "$pre" <<'PY'
+import html, re, sys, unicodedata
+
+path, pre = sys.argv[1], sys.argv[2]
+
+
+def norm(s):
+    s = unicodedata.normalize("NFKD", html.unescape(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+want = norm(pre)
+try:
+    xml = open(path, encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+hit = None
+nav_top = None
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+
+    def attr(name):
+        a = re.search(name + r'="([^"]*)"', tag)
+        return a.group(1) if a else ""
+
+    if attr("visible-to-user").lower() == "false":
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+    if not b:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if x2 <= x1 or y2 <= y1:
+        continue
+    txt = attr("text")
+    # La nav porte son libellé en content-desc (text vide) — preuve run 44674958244.
+    if txt in ("Accueil", "Activité", "Menu") or attr("content-desc") in ("Accueil", "Activité", "Menu"):
+        nav_top = y1 if nav_top is None else min(nav_top, y1)
+    if hit is None and "EditText" not in attr("class"):
+        for t in (txt, attr("content-desc")):
+            n = norm(t)
+            if n.startswith(want) and len(n) > len(want):
+                hit = ((x1 + x2) // 2, (y1 + y2) // 2)
+                break
+if hit is not None:
+    print(hit[0], hit[1], nav_top if nav_top is not None else "")
+PY
+)
+      if [ -n "$res" ]; then
+        set -- $res
+        # Preuve run 44663541595 : la nav flottante (« Accueil/Activité/Menu ») se superpose à une
+        # carte de service en bas de liste et intercepte le tap avant qu'il n'atteigne la carte.
+        if [ -n "${3:-}" ] && [ "$2" -ge "$3" ]; then
+          _ulog "tap_prefix $pre @ $1,$2 masqué par la nav (nav_top=$3) : défilement"
+          adb shell input swipe 540 1900 540 700 300 >/dev/null 2>&1
+          sleep 1
+        else
+          adb shell input tap "$1" "$2" >/dev/null 2>&1
+          _ulog "tap_prefix $pre @ $1,$2"
+          sleep 2
+          return 0
+        fi
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "tap_prefix miss: $pre"
+  return 1
+}
+
+# ui_screen_diag label : journalise les textes visibles (sans secret) de l'écran courant, pour
+# expliquer un TIMEOUT ou un repli API sans déchiffrer les preuves.
+ui_screen_diag() {
+  local lab="$1" d
+  ui_xml || { _ulog "$lab: écran illisible (dump indisponible)"; return 0; }
+  d=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g')
+  _ulog "$lab: ${d:-textes indisponibles}"
+}
+
+# tap_node_mode mode pkg [label] : tape le nœud trouvé par tap_node.py (--empty-input |
+# --row-control label). rc 0 si un nœud a été tapé.
+tap_node_mode() {
+  local mode="$1" pkg="$2" lab="${3:-}" res x y kind t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt 15 ]; do
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      if [ -n "$lab" ]; then res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$mode" "$UI_XML_PATH" "$lab")
+      else res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$mode" "$UI_XML_PATH"); fi
+      if [ -n "$res" ]; then
+        read -r x y kind <<<"$res"
+        adb shell input tap "$x" "$y" >/dev/null 2>&1
+        _ulog "tap_node_mode $mode ${lab:+« $lab » }@ $x,$y ($kind)"
+        sleep 2
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "tap_node_mode $mode ${lab:+« $lab » }: aucun nœud en 15s"
+  return 1
+}
+
+# dialog_confirm pkg confirm cancel [appear_s] [gone_s] : fenêtre à deux boutons (ex. « Prise en
+# charge du client » : Annuler / Confirmer). Détecte la fenêtre, tape le bouton de confirmation
+# (parent cliquable du nœud), puis ATTEND qu'elle ait disparu. 0 = confirmée et fermée,
+# 2 = aucune fenêtre apparue, 1 = tapée mais toujours là (retap unique à mi-délai).
+dialog_confirm() {
+  local pkg="$1" ok="$2" no="$3" appear="${4:-15}" gone="${5:-20}" t0=$SECONDS seen=0 res x y kind retapped=0 tool
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  while [ $((SECONDS - t0)) -lt "$appear" ]; do
+    if ui_xml && [ -n "$(python3 "$tool" "$UI_XML_PATH" "$ok")" ] && [ -n "$(python3 "$tool" "$UI_XML_PATH" "$no")" ]; then
+      seen=1; break
+    fi
+    sleep 2
+  done
+  [ "$seen" = 1 ] || { _ulog "dialog_confirm: aucune fenêtre $no/$ok en ${appear}s"; return 2; }
+  _ulog "dialog_confirm: fenêtre $no/$ok détectée"
+  t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$gone" ]; do
+    res=$(python3 "$tool" "$UI_XML_PATH" "$ok")
+    if [ -n "$res" ] && { [ "$retapped" = 0 ] || [ $((SECONDS - t0)) -ge $((gone / 2)) ]; }; then
+      read -r x y kind <<<"$res"
+      adb shell input tap "$x" "$y" >/dev/null 2>&1
+      _ulog "dialog_confirm: « $ok » tapé @ $x,$y ($kind)"
+      retapped=1
+    fi
+    sleep 2
+    if ui_xml; then
+      if [ -z "$(python3 "$tool" "$UI_XML_PATH" "$no")" ] || [ -z "$(python3 "$tool" "$UI_XML_PATH" "$ok")" ]; then
+        _ulog "dialog_confirm: fenêtre fermée après $((SECONDS - t0))s"
+        return 0
+      fi
+    fi
+  done
+  _ulog "dialog_confirm: fenêtre toujours présente après ${gone}s"
+  return 1
+}
+
+# tap_node_verified pkg label : tape le centre du nœud (ou de son parent cliquable) trouvé par
+# texte/content-desc dans le dump, puis PROUVE que l'écran a changé : le libellé a disparu ou
+# un champ de saisie est apparu. Jusqu'à 2 retaps. 0 = écran changé, 1 = rien ne s'est passé.
+tap_node_verified() {
+  local pkg="$1" label="$2" try res x y kind
+  for try in 1 2 3; do
+    wait_ui "$pkg" 15 "+$(printf '%s' "$label" | python3 -c 'import re,sys;print(r"\s+".join(re.escape(w) for w in sys.stdin.read().split()))')" || true
+    ui_xml || { _ulog "tap_node_verified: dump indisponible ($label, essai $try)"; continue; }
+    res=$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$UI_XML_PATH" "$label")
+    if [ -z "$res" ]; then
+      _ulog "tap_node_verified: nœud « $label » absent (essai $try)"
+      sleep 2
+      continue
+    fi
+    read -r x y kind <<<"$res"
+    adb shell input tap "$x" "$y" >/dev/null 2>&1
+    _ulog "tap_node_verified: « $label » @ $x,$y ($kind, essai $try)"
+    sleep 3
+    if ! ui_xml; then continue; fi
+    if python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" --has-input "$UI_XML_PATH"; then
+      _ulog "tap_node_verified: champ de saisie visible — écran changé"
+      return 0
+    fi
+    if [ -z "$(python3 "$(dirname "${BASH_SOURCE[0]}")/tap_node.py" "$UI_XML_PATH" "$label")" ]; then
+      _ulog "tap_node_verified: « $label » a disparu — écran changé"
+      return 0
+    fi
+    _ulog "tap_node_verified: écran inchangé après le tap (essai $try)"
+  done
+  return 1
 }
 
 # ui_action pkg label : attend un libellé tolérant aux espaces, tape, EXIGE le dialogue.
@@ -319,13 +550,17 @@ tap_when() {
 }
 
 _write_sidecar() {
-  # name pkg spec status waited action action_ok point marker_source failed_spec
+  # name pkg spec status waited action action_ok point marker_source failed_spec [fg] [fg_source]
+  # $11 = premier plan arbitré par snap (dumpsys, corrigé par un dump uiautomator) : c'est la
+  # preuve que report.py doit lire. Sans $11 (appelant historique) on retombe sur le dumpsys brut.
+  # $12 = provenance de cette valeur : "dumpsys" ou "ui-dump" (le dump fait foi).
   python3 - "$OUT/screens/$1.json" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" \
-            "$OUT/screens/$1.png" "$OUT/ui/$1.xml" "$(fg_pkg 2>/dev/null || echo UNKNOWN)" <<'PY'
+            "$OUT/screens/$1.png" "$OUT/ui/$1.xml" \
+            "${11:-$(fg_pkg 2>/dev/null || echo UNKNOWN)}" "${12:-dumpsys}" <<'PY'
 import hashlib, json, os, re, sys, time
 
 (path, name, pkg, spec, status, waited, action, action_ok,
- point, source, failed, png, xml, fg) = sys.argv[1:15]
+ point, source, failed, png, xml, fg, fg_source) = sys.argv[1:16]
 
 
 def sha(path):
@@ -359,7 +594,7 @@ labels = labels[:40]
 
 json.dump({
     "name": name, "point": point, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "pkg": pkg, "fg_pkg": fg, "marker": spec, "marker_source": source,
+    "pkg": pkg, "fg_pkg": fg, "fg_source": fg_source, "marker": spec, "marker_source": source,
     "status": status, "waited_s": int(waited or 0),
     "action": action, "action_ok": action_ok == "1",
     "dump_sha256": sha(xml), "dump_bytes": count, "png_sha256": sha(png),
@@ -389,6 +624,14 @@ snap() {
     *) st=TIMEOUT ;;
   esac
   first_hash="$UI_DUMP_HASH"
+  # Le dump qui vient de servir (marqueur trouvé, ou dernier dump du wait) est figé AVANT
+  # le second dump : un re-dump raté effaçait cet écran et le sidecar sortait sans
+  # libellés, sur 0 octet de XML.
+  local matched_dump="$OUT/ui/.marker-$name.xml" matched_pkg=""
+  rm -f "$matched_dump"
+  if [ -n "$first_hash" ] && [ -s "$UI_XML_PATH" ]; then
+    cp "$UI_XML_PATH" "$matched_dump" 2>/dev/null && matched_pkg=$(xml_pkg_of "$matched_dump")
+  fi
   # The screencap is taken immediately after the dump that satisfied the marker.
   adb exec-out screencap -p > "$OUT/screens/$name.png" 2>/dev/null
   png_bytes=$(wc -c < "$OUT/screens/$name.png" 2>/dev/null || echo 0)
@@ -405,6 +648,7 @@ snap() {
   if [ "$st" = MATCH ] && [ -n "$first_hash" ]; then
     if ui_xml; then
       cur=$(fg_pkg)
+      [ "$cur" != "$pkg" ] && [ "$(xml_pkg)" = "$pkg" ] && cur="$pkg"
       if [ -n "$pkg" ] && [ "$cur" != "UNKNOWN" ] && [ "$cur" != "$pkg" ]; then
         st=ACTION_MISS
         _ulog "snap $name: premier plan $cur != $pkg après capture"
@@ -421,19 +665,44 @@ snap() {
   fi
   if [ -n "$UI_DUMP_VALID" ] && [ "$UI_DUMP_VALID" = "1" ]; then
     cp "$UI_XML_PATH" "$OUT/ui/$name.xml" 2>/dev/null || true
+  elif [ -s "$matched_dump" ]; then
+    # Re-dump indisponible : on garde l'écran qui vient d'être capturé. Un fichier vide
+    # n'est pas une preuve, c'est une perte de preuve.
+    cp "$matched_dump" "$OUT/ui/$name.xml" 2>/dev/null || : > "$OUT/ui/$name.xml"
+    _ulog "snap $name: re-dump indisponible, dump capturé conservé"
   else
     : > "$OUT/ui/$name.xml"
   fi
+  # Premier plan AU MOMENT DES PIXELS (donc avant le tap, qui déplacerait l'écran) : c'est la
+  # preuve que report.py doit lire dans le sidecar. dumpsys window renvoie régulièrement le
+  # launcher alors que le dump uiautomator porte l'app — cas déjà arbitré par S8 ci-dessus et
+  # documenté dans xml_pkg (ui.sh:43-47, « marqueur absent sur 29 points alors que le XML
+  # montrait l'app »). Ordre de preuve : dumpsys, puis le dump post-capture, puis — seulement
+  # s'il n'y a pas de dump frais — le dump qui a servi à la capture. Le dump d'après-capture
+  # fait foi sur l'écran d'après-capture : il ne peut pas être remplacé par celui d'avant.
+  local cap_fg_raw cap_fg cap_fg_src
+  cap_fg_raw=$(fg_pkg 2>/dev/null || echo UNKNOWN)
+  cap_fg="$cap_fg_raw"
+  cap_fg_src="dumpsys"
+  if [ -n "$pkg" ] && [ "$cap_fg" != "$pkg" ]; then
+    if [ "$(xml_pkg)" = "$pkg" ]; then
+      cap_fg="$pkg"; cap_fg_src="ui-dump"
+    elif [ "${UI_DUMP_VALID:-0}" != "1" ] && [ -n "$matched_pkg" ] && [ "$matched_pkg" = "$pkg" ]; then
+      cap_fg="$pkg"; cap_fg_src="ui-dump"
+    fi
+  fi
+  rm -f "$matched_dump"
   local action_ok=0 failed=""
   [ -f "$OUT/ui/.last-spec-fail" ] && failed=$(cat "$OUT/ui/.last-spec-fail")
   if [ -n "$action" ] && [ "$st" = MATCH ]; then
     if tap_exact "$action"; then action_ok=1; sleep 2; else st=ACTION_MISS; fi
   fi
   _write_sidecar "$name" "$pkg" "$spec" "$st" "$((SECONDS - t0))" "$action" "$action_ok" \
-                 "$point" "$source" "$failed"
-  echo "$name|$st|fg=$(fg_pkg)|point=$point|marker=$spec|wait=$((SECONDS - t0))s" \
+                 "$point" "$source" "$failed" "$cap_fg" "$cap_fg_src"
+  echo "$name|$st|fg=$cap_fg|point=$point|marker=$spec|wait=$((SECONDS - t0))s$([ "$cap_fg" != "$cap_fg_raw" ] && echo " (dumpsys=$cap_fg_raw, corrigé par $cap_fg_src)")" \
     >> "$OUT/captures.txt"
   _ulog "snap $name $st ($((SECONDS - t0))s)"
+  [ "$st" = TIMEOUT ] && ui_screen_diag "snap $name TIMEOUT : écran réel"
   case "$st" in
     MATCH) return 0 ;;
     DUMP_UNAVAILABLE) return 4 ;;

@@ -120,6 +120,13 @@ jobs:
           }
           GRADLE
           echo "init script: $(wc -l < ~/.gradle/init.d/zz-debug-signing.gradle) lignes"
+      - name: Tests unitaires Flutter (preuve ISC — avant rm -rf src)
+        run: |
+          set -e
+          for a in rider driver; do
+            echo "== flutter test ($a) =="
+            (cd src/$a && flutter pub get >/dev/null && flutter test)
+          done
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
@@ -198,11 +205,23 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          ram-size: 4096
-          cores: 2
+          ram-size: 6144
+          cores: 3
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           script: bash e2e/ci-opencode-run.sh run
+
+      - name: Publier le diagnostic texte (non chiffré, sans captures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-e2e-diag-text
+          path: |
+            e2e-out/summary.md
+            e2e-out/report.json
+            e2e-out/ui/*.xml
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Chiffrer les preuves
         if: always()
