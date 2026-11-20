@@ -321,7 +321,7 @@ compose_ride_ui() {
   cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
   # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
   # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
-  tap_prefix "$RIDER_PKG" "Economie" 20 || { log "compose_ride_ui: service Economie absent"; return 1; }
+  tap_prefix "$RIDER_PKG" "Voiture" 20 || { log "compose_ride_ui: service Voiture absent"; return 1; }
   # Le formulaire s'ouvre sous la liste de services : le faire défiler dans la vue (deux arrêts allongent l'écran).
   sleep 3; adb shell input swipe 540 1900 540 700 400 >/dev/null 2>&1; sleep 2
   # Le formulaire affiche déjà « Paiement en espèces » (run 44647412466) : ne PAS rouvrir la feuille de paiement.

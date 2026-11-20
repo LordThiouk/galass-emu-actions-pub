@@ -122,7 +122,7 @@ def test_compose_selects_service_then_taps_button_last_without_opening_payment()
     # feuille (Espèces / Wave / Orange Money) qui recouvre le bouton de demande.
     body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
     tail = body[body.index("17-rider-multistop-summary"):]
-    svc = tail.index('tap_prefix "$RIDER_PKG" "Economie"')
+    svc = tail.index('tap_prefix "$RIDER_PKG" "Voiture"')
     btn = tail.index("TAP_PICK=last tap_when")
     assert svc < btn, tail
     assert 'tap_when "$RIDER_PKG" "Paiement en espèces"' not in tail and '"Mode de paiement"' not in tail, tail
@@ -130,9 +130,16 @@ def test_compose_selects_service_then_taps_button_last_without_opening_payment()
 
 def test_compose_scrolls_form_into_view_and_logs_screen_on_miss():
     body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
-    tail = body[body.index('tap_prefix "$RIDER_PKG" "Economie"'):]
+    tail = body[body.index('tap_prefix "$RIDER_PKG" "Voiture"'):]
     assert "input swipe" in tail[: tail.index("TAP_PICK=last")], tail
     assert "ui_screen_diag" in tail, tail
+
+
+def test_compose_picks_the_service_the_test_driver_serves():
+    # Run 44656569644 : course composée avec « Economie » -> driver/rides/details 403 not_found, aucune offre.
+    # Le chauffeur de test sert le service 3 (api_flow.py) = 250 FCFA/km = « Voiture » (2710 pour 10,84 km).
+    body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
+    assert 'tap_prefix "$RIDER_PKG" "Voiture"' in body and '"Economie"' not in body, body
 
 
 if __name__ == "__main__":
