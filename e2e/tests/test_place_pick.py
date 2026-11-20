@@ -142,6 +142,54 @@ def test_compose_picks_the_service_the_test_driver_serves():
     assert 'tap_prefix "$RIDER_PKG" "Voiture"' in body and '"Economie"' not in body, body
 
 
+NAV_ROW = [
+    node("Accueil", "[81,2182][378,2277]"),
+    node("Activité", "[392,2182][689,2277]"),
+    node("Menu", "[703,2182][1000,2277]"),
+]
+
+
+def tap_prefix_stateful(xmls, prefix, timeout=20):
+    # ui_xml() sert xmls[0], puis xmls[1], ... (un défilement avance la liste) ; répète le dernier.
+    d = tempfile.mkdtemp()
+    paths = []
+    for i, nodes in enumerate(xmls):
+        xp = os.path.join(d, f"w{i}.xml")
+        open(xp, "w", encoding="utf-8").write("<hierarchy>" + "".join(nodes) + "</hierarchy>")
+        paths.append(xp)
+    state = os.path.join(d, "state")
+    open(state, "w").write("0")
+    script = (
+        f'. "{UI}"\n'
+        f'PATHS=({" ".join(repr(p)[1:-1] and p for p in paths)})\n'
+        f'STATE="{state}"\n'
+        'ui_xml() { i=$(cat "$STATE"); n=${#PATHS[@]}; [ "$i" -ge "$n" ] && i=$((n-1)); '
+        'UI_XML_PATH="${PATHS[$i]}"; UI_DUMP_VALID=1; return 0; }\n'
+        'xml_pkg() { echo sn.galass.galassrider; }\n'
+        '_ulog() { :; }\n'
+        'adb() { echo "adb $*" >> "$TAPLOG"; '
+        'if [ "$1" = shell ] && [ "$2" = input ] && [ "$3" = swipe ]; then i=$(cat "$STATE"); echo $((i+1)) > "$STATE"; fi; }\n'
+        'sleep() { :; }\n'
+        f'tap_prefix sn.galass.galassrider "{prefix}" {timeout}; echo "rc=$?"'
+    )
+    env = dict(os.environ, TAPLOG=os.path.join(d, "taps.txt"))
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env).stdout
+    taps = open(env["TAPLOG"]).read() if os.path.exists(env["TAPLOG"]) else ""
+    return out.strip(), taps
+
+
+def test_tap_prefix_skips_node_hidden_under_floating_bottom_nav():
+    # Run 44663541595 : « Voiture » [84,2181][996,2337] partage son centre (540,2259) avec le bouton
+    # « Activité » [392,2182][689,2277] de la nav flottante, qui intercepte le tap (preuve dump réel).
+    blocked = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,2181][996,2337]")] + NAV_ROW
+    clear = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,900][996,1056]")] + NAV_ROW
+    out, taps = tap_prefix_stateful([blocked, clear], "Voiture")
+    assert "rc=0" in out, out
+    assert "input swipe" in taps, taps
+    assert "input tap 540 978" in taps, taps
+    assert "input tap 540 2259" not in taps, taps
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):

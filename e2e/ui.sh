@@ -361,6 +361,8 @@ try:
     xml = open(path, encoding="utf-8", errors="replace").read()
 except OSError:
     xml = ""
+hit = None
+nav_top = None
 for m in re.finditer(r"<node\b[^>]*>", xml):
     tag = m.group(0)
 
@@ -368,7 +370,7 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
         a = re.search(name + r'="([^"]*)"', tag)
         return a.group(1) if a else ""
 
-    if attr("visible-to-user").lower() == "false" or "EditText" in attr("class"):
+    if attr("visible-to-user").lower() == "false":
         continue
     b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
     if not b:
@@ -376,19 +378,33 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     x1, y1, x2, y2 = map(int, b.groups())
     if x2 <= x1 or y2 <= y1:
         continue
-    for t in (attr("text"), attr("content-desc")):
-        n = norm(t)
-        if n.startswith(want) and len(n) > len(want):
-            print((x1 + x2) // 2, (y1 + y2) // 2)
-            sys.exit(0)
+    txt = attr("text")
+    if txt in ("Accueil", "Activité", "Menu"):
+        nav_top = y1 if nav_top is None else min(nav_top, y1)
+    if hit is None and "EditText" not in attr("class"):
+        for t in (txt, attr("content-desc")):
+            n = norm(t)
+            if n.startswith(want) and len(n) > len(want):
+                hit = ((x1 + x2) // 2, (y1 + y2) // 2)
+                break
+if hit is not None:
+    print(hit[0], hit[1], nav_top if nav_top is not None else "")
 PY
 )
       if [ -n "$res" ]; then
         set -- $res
-        adb shell input tap "$1" "$2" >/dev/null 2>&1
-        _ulog "tap_prefix $pre @ $1,$2"
-        sleep 2
-        return 0
+        # Preuve run 44663541595 : la nav flottante (« Accueil/Activité/Menu ») se superpose à une
+        # carte de service en bas de liste et intercepte le tap avant qu'il n'atteigne la carte.
+        if [ -n "${3:-}" ] && [ "$2" -ge "$3" ]; then
+          _ulog "tap_prefix $pre @ $1,$2 masqué par la nav (nav_top=$3) : défilement"
+          adb shell input swipe 540 1900 540 700 300 >/dev/null 2>&1
+          sleep 1
+        else
+          adb shell input tap "$1" "$2" >/dev/null 2>&1
+          _ulog "tap_prefix $pre @ $1,$2"
+          sleep 2
+          return 0
+        fi
       fi
     fi
     sleep 2
