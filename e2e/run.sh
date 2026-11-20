@@ -353,7 +353,10 @@ wait_fg() {
       log "wait_fg: $pkg prouvé par le dump uiautomator (dumpsys fg=$(fg_pkg))"
       return 0
     fi
-    sleep 2
+    # L14 (run 44680233906) : ce sondage à 2s a lui seul consommé ~13s avant de
+    # prouver le passage au premier plan du chauffeur, sur une fenêtre d'offre
+    # de ~30s — resserré à 1s pour laisser de la marge à la capture/accept qui suit.
+    sleep 1
   done
   fg_diag
   log "wait_fg: $pkg jamais au premier plan (${tmo}s, fg=$(fg_pkg))"
@@ -709,6 +712,20 @@ else
 fi
 ride_state
 
+# L14 (run 44680233906) : entre le tap et la 1re tentative d'acceptation, ~40s
+# s'écoulaient (wait_fg du passage au foreground chauffeur ~13-20s + capture/attente
+# UI jusqu'à 25s) alors que offer_timeout_sec est ~30s — la fenêtre d'offre était
+# déjà consommée avant même la première tentative. Repli API lancé en tâche de fond
+# dès que la course existe, pour qu'une tentative d'acceptation parte en quelques
+# secondes, en parallèle de la capture/tap UI (accept_offer() est idempotent : si
+# le tap UI accepte en premier, le repli voit juste "déjà assigné" et s'arrête).
+EARLY_ACCEPT_LOG="$OUT/early-accept.log"
+EARLY_ACCEPT_PID=""
+if [ -n "$RIDE_ID" ]; then
+  api accept > "$EARLY_ACCEPT_LOG" 2>&1 &
+  EARLY_ACCEPT_PID=$!
+fi
+
 cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
 if [ "$RIDE_SOURCE" != "ui" ]; then
@@ -730,19 +747,31 @@ ASSIGN_PRE_LINE=$(printf '%s\n' "$ASSIGN_PRE_RAW" | grep -a -F "assign_pre" | ta
 [ -n "$ASSIGN_PRE_LINE" ] || ASSIGN_PRE_LINE="assign_pre bal=? online=?"
 printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
 
+# L14 : récupère le résultat du repli lancé en tâche de fond (déjà en cours depuis
+# la détection de la course) au lieu d'en relancer un second, bien trop tard.
+wait_early_accept() {
+  if [ -n "$EARLY_ACCEPT_PID" ]; then
+    wait "$EARLY_ACCEPT_PID" 2>/dev/null
+    cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
+  else
+    api accept >> "$OUT/run.log" 2>&1
+  fi
+}
+
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 if tap_exact "Accepter la course"; then
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
+    wait_early_accept
   else
     mark driver-accepted-details FAIL "api fallback: accept"
-    api accept >> "$OUT/run.log" 2>&1
+    wait_early_accept
   fi
 else
   log "tap_exact « Accepter la course » manqué"
   mark driver-accepted-details FAIL "api fallback: accept"
-  api accept >> "$OUT/run.log" 2>&1
+  wait_early_accept
 fi
 sleep 2
 ride_state
