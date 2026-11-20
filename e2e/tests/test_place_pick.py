@@ -117,22 +117,21 @@ def test_tap_exact_last_hits_button_not_title():
     assert "input tap 540 2050" in last, last
 
 
-def test_compose_selects_service_then_payment_then_taps_button_last():
+def test_compose_selects_service_then_taps_button_last_without_opening_payment():
+    # Run 44647412466 : le formulaire affiche DÉJÀ « Paiement en espèces » ; taper ce libellé ouvre la
+    # feuille (Espèces / Wave / Orange Money) qui recouvre le bouton de demande.
     body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
     tail = body[body.index("17-rider-multistop-summary"):]
     svc = tail.index('tap_prefix "$RIDER_PKG" "Economie"')
-    pay = tail.index('"Mode de paiement"')
-    cash = tail.index("Paiement en espèces")
     btn = tail.index("TAP_PICK=last tap_when")
-    assert svc < pay < cash < btn, tail
+    assert svc < btn, tail
+    assert 'tap_when "$RIDER_PKG" "Paiement en espèces"' not in tail and '"Mode de paiement"' not in tail, tail
 
 
 def test_compose_scrolls_form_into_view_and_logs_screen_on_miss():
-    # Run 44640425157 : après « Economie » le sélecteur de paiement est introuvable (probablement sous le
-    # pli : deux arrêts allongent l'écran) ; sans preuve écran on ne peut pas trancher.
     body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
     tail = body[body.index('tap_prefix "$RIDER_PKG" "Economie"'):]
-    assert "input swipe" in tail[: tail.index('"Mode de paiement"')], tail
+    assert "input swipe" in tail[: tail.index("TAP_PICK=last")], tail
     assert "ui_screen_diag" in tail, tail
 
 
