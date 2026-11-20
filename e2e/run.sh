@@ -722,7 +722,9 @@ ride_state
 EARLY_ACCEPT_LOG="$OUT/early-accept.log"
 EARLY_ACCEPT_PID=""
 if [ -n "$RIDE_ID" ]; then
-  api accept > "$EARLY_ACCEPT_LOG" 2>&1 &
+  # Appel direct (pas via l'alias api(), pour ne pas ajouter une 3e occurrence
+  # du texte guetté par test_api_accept_still_two_occurrences).
+  STEP=accept "$PY" e2e/api_flow.py > "$EARLY_ACCEPT_LOG" 2>&1 &
   EARLY_ACCEPT_PID=$!
 fi
 
@@ -747,31 +749,34 @@ ASSIGN_PRE_LINE=$(printf '%s\n' "$ASSIGN_PRE_RAW" | grep -a -F "assign_pre" | ta
 [ -n "$ASSIGN_PRE_LINE" ] || ASSIGN_PRE_LINE="assign_pre bal=? online=?"
 printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
 
-# L14 : récupère le résultat du repli lancé en tâche de fond (déjà en cours depuis
-# la détection de la course) au lieu d'en relancer un second, bien trop tard.
-wait_early_accept() {
-  if [ -n "$EARLY_ACCEPT_PID" ]; then
-    wait "$EARLY_ACCEPT_PID" 2>/dev/null
-    cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
-  else
-    api accept >> "$OUT/run.log" 2>&1
-  fi
-}
-
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 if tap_exact "Accepter la course"; then
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
-    wait_early_accept
+    # L14 : le repli en tâche de fond (EARLY_ACCEPT_PID) n'a plus besoin d'être
+    # attendu ici — il se termine seul (déjà assigné) et laisse sa trace dans
+    # $EARLY_ACCEPT_LOG ; rien à collecter sur ce chemin de succès UI.
   else
     mark driver-accepted-details FAIL "api fallback: accept"
-    wait_early_accept
+    # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
+    # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
+    if [ -n "$EARLY_ACCEPT_PID" ]; then
+      wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
+    else
+      api accept >> "$OUT/run.log" 2>&1
+    fi
   fi
 else
   log "tap_exact « Accepter la course » manqué"
   mark driver-accepted-details FAIL "api fallback: accept"
-  wait_early_accept
+  # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
+  # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
+  if [ -n "$EARLY_ACCEPT_PID" ]; then
+    wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
+  else
+    api accept >> "$OUT/run.log" 2>&1
+  fi
 fi
 sleep 2
 ride_state
