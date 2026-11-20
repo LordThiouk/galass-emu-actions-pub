@@ -178,11 +178,23 @@ def tap_prefix_stateful(xmls, prefix, timeout=20):
     return out.strip(), taps
 
 
+def node_cd(label, bounds):
+    return f'<node class="android.view.View" text="" content-desc="{label}" visible-to-user="true" bounds="{bounds}"/>'
+
+
+NAV_ROW_CD = [
+    node_cd("Accueil", "[81,2182][378,2277]"),
+    node_cd("Activité", "[392,2182][689,2277]"),
+    node_cd("Menu", "[703,2182][1000,2277]"),
+]
+
+
 def test_tap_prefix_skips_node_hidden_under_floating_bottom_nav():
     # Run 44663541595 : « Voiture » [84,2181][996,2337] partage son centre (540,2259) avec le bouton
     # « Activité » [392,2182][689,2277] de la nav flottante, qui intercepte le tap (preuve dump réel).
-    blocked = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,2181][996,2337]")] + NAV_ROW
-    clear = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,900][996,1056]")] + NAV_ROW
+    # Run 44674958244 : rejoué (preuve dump réel, la nav porte son libellé en content-desc, pas en text).
+    blocked = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,2181][996,2337]")] + NAV_ROW_CD
+    clear = [node("Voiture\nCourse\nCFA2710\n10.84 kilomètres", "[84,900][996,1056]")] + NAV_ROW_CD
     out, taps = tap_prefix_stateful([blocked, clear], "Voiture")
     assert "rc=0" in out, out
     assert "input swipe" in taps, taps

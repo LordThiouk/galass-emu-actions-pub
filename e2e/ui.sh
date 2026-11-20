@@ -379,7 +379,8 @@ for m in re.finditer(r"<node\b[^>]*>", xml):
     if x2 <= x1 or y2 <= y1:
         continue
     txt = attr("text")
-    if txt in ("Accueil", "Activité", "Menu"):
+    # La nav porte son libellé en content-desc (text vide) — preuve run 44674958244.
+    if txt in ("Accueil", "Activité", "Menu") or attr("content-desc") in ("Accueil", "Activité", "Menu"):
         nav_top = y1 if nav_top is None else min(nav_top, y1)
     if hit is None and "EditText" not in attr("class"):
         for t in (txt, attr("content-desc")):
