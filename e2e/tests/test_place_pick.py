@@ -127,6 +127,15 @@ def test_compose_selects_service_then_payment_then_taps_button_last():
     assert svc < pay < cash < btn, tail
 
 
+def test_compose_scrolls_form_into_view_and_logs_screen_on_miss():
+    # Run 44640425157 : après « Economie » le sélecteur de paiement est introuvable (probablement sous le
+    # pli : deux arrêts allongent l'écran) ; sans preuve écran on ne peut pas trancher.
+    body = re.search(r"^compose_ride_ui\(\) \{.*?^\}", RUN, re.S | re.M).group(0)
+    tail = body[body.index('tap_prefix "$RIDER_PKG" "Economie"'):]
+    assert "input swipe" in tail[: tail.index('"Mode de paiement"')], tail
+    assert "ui_screen_diag" in tail, tail
+
+
 if __name__ == "__main__":
     n = 0
     for k, v in sorted(globals().items()):

@@ -322,10 +322,13 @@ compose_ride_ui() {
   # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
   # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
   tap_prefix "$RIDER_PKG" "Economie" 20 || { log "compose_ride_ui: service Economie absent"; return 1; }
-  tap_when "$RIDER_PKG" "Mode de paiement" >/dev/null 2>&1 || log "compose_ride_ui: sélecteur de paiement non trouvé"
+  # Le formulaire s'ouvre sous la liste de services : le faire défiler dans la vue (deux arrêts allongent l'écran).
+  sleep 3; adb shell input swipe 540 1900 540 700 400 >/dev/null 2>&1; sleep 2
+  tap_when "$RIDER_PKG" "Mode de paiement" >/dev/null 2>&1 || { log "compose_ride_ui: sélecteur de paiement non trouvé"; ui_screen_diag "compose: après service, sélecteur de paiement"; }
   tap_when "$RIDER_PKG" "Paiement en espèces" "Espèces" >/dev/null 2>&1 || log "compose_ride_ui: choix espèces non trouvé"
+  adb shell input swipe 540 1900 540 700 400 >/dev/null 2>&1; sleep 2
   # Le titre du formulaire porte le même libellé que le bouton : viser le DERNIER nœud (le bouton).
-  TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; return 1; }
+  TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; ui_screen_diag "compose: bouton demande absent"; return 1; }
   log "compose_ride_ui: demande envoyée par l'UI"
   return 0
 }
