@@ -853,6 +853,19 @@ else
   mark backend-flow FAIL "see $OUT/state.json (status/stops/payment)"
 fi
 
+# --------------------------------------------- B3 ordre des arrêts (composé vs relu)
+# B3 : l'ordre composé dans l'app doit être l'ordre des ride_stops relu par GET detail.
+# Seul lecteur possible en CI : l'archive de preuves est chiffrée (GPG), ni state.json
+# ni captures ne sont consultables. FAIL (désaccord d'ordre) bascule le verdict ;
+# WARN (course composée par l'API, ou preuve illisible) ne mesure pas l'app.
+deadline_check b3-order
+B3_OUT=$("$PY" e2e/b3_order.py "$OUT" 2>/dev/null || true)
+B3_V=${B3_OUT%%|*}
+case "$B3_V" in
+  PASS|WARN|FAIL) mark bug-b3-stops-order "$B3_V" "${B3_OUT#*|}" ;;
+  *) mark bug-b3-stops-order WARN "no evidence: analyse d'ordre indisponible" ;;
+esac
+
 # ------------------------------------------------------------------ logcat
 kill "${LOGCAT_PID:-}" 2>/dev/null || true
 adb logcat -d -v threadtime >> "$LOG_FILE" 2>/dev/null || true
