@@ -943,6 +943,21 @@ for i in 0 1; do
      && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
     ui_stop_ok=1
   fi
+  # Run 44892375725 : les 2 arrêts ont dû passer par le repli API (ui-stops 0/2) — la
+  # confirmation UI n'a pas tenu sur la première fenêtre (bouton/dialogue/marker). Le retry
+  # sur fenêtres fraîches est la voie normale pour atteindre 2/2 taps UI confirmés ; le repli
+  # API reste le dernier ressort, jamais silencieux (mark FAIL adjacent + api stop_one).
+  stop_try=0
+  while [ "$stop_try" -lt 2 ] && [ "$ui_stop_ok" != 1 ]; do
+    if [ "$ui_stop_ok" != 1 ]; then
+      if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
+         && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
+        ui_stop_ok=1
+      fi
+      stop_try=$((stop_try + 1))
+      sleep 2
+    fi
+  done
   if [ "$ui_stop_ok" = "1" ]; then
     if [ "$i" -eq 0 ]; then UI_STOP0=1; else UI_STOP1=1; fi
     ui_stops=$((ui_stops + 1))
