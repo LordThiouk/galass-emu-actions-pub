@@ -5,7 +5,8 @@ Usage : python3 e2e/b3_order.py <out-dir>      (the dir holding state.json)
 Output: exactly one line `<VERDICT>|<detail>`, VERDICT in {PASS, WARN, FAIL}.
 
 Claim measured ("Bridge-B3"): the order of `stops[]` composed in the Rider app is
-the order of the `ride_stops` read back by `GET ride/details`.
+the order of the `ride_stops` read back by `GET ride/details`; `compose_ui` (écran 17,
+dump uiautomator) is the app-side order, independent of the backend.
 
 A FAIL (stop order disagrees) flips the run verdict: report.py fails the whole run
 on any FAIL row, P0 or not, so `bug-b3-stops-order` does NOT belong in P0_POINTS.
@@ -25,6 +26,7 @@ src = str(st.get("ride_source") or "unknown")
 picked = (st.get("ride_picked") or {}).get("stops") or []
 created = (st.get("ride_create") or {}).get("stops") or []
 final = st.get("stops") or []
+compose_ui = st.get("compose_ui") or []
 
 
 def labels(seq):
@@ -53,8 +55,8 @@ def judge(labs):
     return p1[0] < p2[0]
 
 
-p_labs, c_labs, f_labs = labels(picked), labels(created), labels(final)
-shown = "composé=%s create=%s detail=%s" % (p_labs or "?", c_labs or "?", f_labs or "?")
+p_labs, c_labs, f_labs, u_labs = labels(picked), labels(created), labels(final), labels(compose_ui)
+shown = "affiché=%s composé=%s create=%s detail=%s" % (u_labs or "?", p_labs or "?", c_labs or "?", f_labs or "?")
 
 if src != "ui":
     print("WARN|non concluant: course composée par l'API (ride_source=%s), "
@@ -62,7 +64,7 @@ if src != "ui":
     raise SystemExit(0)
 
 seen = {}
-for name, labs in (("compose", p_labs), ("create", c_labs), ("detail", f_labs)):
+for name, labs in (("affiche", u_labs), ("compose", p_labs), ("create", c_labs), ("detail", f_labs)):
     j = judge(labs)
     if j is not None:
         seen[name] = j

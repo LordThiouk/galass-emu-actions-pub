@@ -319,6 +319,12 @@ compose_ride_ui() {
   done
   # 17 : les deux arrêts sont posés, AVANT la demande.
   cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+  # Bridge-B3 : ordre des arrêts TEL QU'AFFICHÉ par l'app (écran de composition), source
+  # indépendante du backend — ride/list ne porte pas les stops et une course composée par
+  # l'UI n'a pas de ride_create. Sans cette source, le gate ne mesure que la relecture.
+  COMPOSE_ORDER=$("$PY" e2e/compose_order.py "$OUT/ui/17-rider-multistop-summary.xml" \
+                    --state "$OUT/state.json" 2>/dev/null || true)
+  log "compose order (17): ${COMPOSE_ORDER:-WARN|indisponible}"
   # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
   # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
   tap_prefix "$RIDER_PKG" "Voiture" 20 || { log "compose_ride_ui: service Voiture absent"; return 1; }
