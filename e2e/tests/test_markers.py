@@ -204,6 +204,22 @@ def test_five_api_fallbacks_are_adjacent_to_a_fail_mark():
 
 
 @case
+def test_driver_stop_retry_precedes_the_api_fallback():
+    """Run 44892375725 : les 2 arrêts ont dû passer par le repli API (ui-stops 0/2). Le retry
+    sur fenêtres fraîches doit précéder le repli : la voie UI (taps) est explorée avant que
+    le filet API ne devienne le dernier ressort, pour que ui-stops atteigne 2/2 taps confirmés.
+    Le repli API demeure le dernier ressort (mark FAIL adjacent + api stop_one)."""
+    t = run_text()
+    start = t.index('next_marker="MARK_driver_stop${n}_done"')
+    end = t.index('mark "driver-stop${n}-done" FAIL', start)
+    window = t[start:end]
+    assert "while" in window, window
+    assert "stop_try" in window, window
+    # la décision UI (ui_stop_ok) précède le repli : le while boucle avant le if/else fallback
+    assert window.index('if [ "$ui_stop_ok" = "1" ]; then') > window.index("while"), window
+
+
+@case
 def test_spec_ok_honours_or_and_whitespace():
     assert spec_ok(r"+Accepter\s+la\s+course|-Accueil") == 0
     assert spec_ok("+Nope|+Où allez-vous") == 0
