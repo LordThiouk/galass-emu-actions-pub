@@ -294,7 +294,21 @@ ui_pick_place() {
   fi
   # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
   places_wait_result "$label" 20 || true
-  tap_prefix "$RIDER_PKG" "$label" 20 || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
+  # Run 44882204874 : le 2e arrêt (Fann) n'a pas trouvé la 1re suggestion dans la fenêtre
+  # d'attente ; le tap est rejoué sur des fenêtres fraîches avant de déclarer le résultat introuvable.
+  local pick_rc=1
+  for _ in 1 2 3; do
+    if tap_prefix "$RIDER_PKG" "$label" 12; then
+      pick_rc=0
+      break
+    fi
+    sleep 2
+  done
+  if [ "$pick_rc" != 0 ]; then
+    log "compose_ride_ui: résultat « $label » introuvable"
+    ui_screen_diag "places: écran sans résultat"
+    return 1
+  fi
 }
 compose_ride_ui() {
   log "compose_ride_ui: début"
