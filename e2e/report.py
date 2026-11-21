@@ -40,6 +40,9 @@ REVISITED = {
     # carte/PNG les porte, preuve pixel archivée GPG) et les marqueurs textuels sont
     # identiques ; l'état XML peut donc être le même sans invalider la capture 22.
     ("rider-running-start", "rider-stop1-active"),
+    # 35b (in-ride, post-accept) et 37 (running stop 1, post-start) sont le même
+    # écran Driver : B2 compare offre vs in-ride, pas deux captures in-ride.
+    ("driver-inride-stops", "driver-running-stop1"),
 }
 B2_POINTS = ("driver-offer-with-stops", "driver-inride-stops")
 
@@ -284,9 +287,15 @@ def check_b2(caps):
         elif cap.get("status") != "MATCH":
             problems.append(f"{point} {cap.get('status')}")
     if offer and ride:
-        if offer.get("dump_sha256") and offer.get("dump_sha256") == ride.get("dump_sha256"):
+        same_dump = (offer.get("dump_sha256")
+                     and offer.get("dump_sha256") == ride.get("dump_sha256"))
+        same_png = ((offer.get("png_sha256") or "")
+                    and offer.get("png_sha256") == ride.get("png_sha256"))
+        # 35b/37 peuvent être le même écran Driver ; le signal B2 est offre vs course,
+        # pas l'identité des pixels in-ride. On tolère la paire revisited explicite.
+        if same_dump and not _revisited(B2_POINTS[0], B2_POINTS[1]):
             problems.append("same dump")
-        if (offer.get("png_sha256") or "") and offer.get("png_sha256") == ride.get("png_sha256"):
+        if same_png and not _revisited(B2_POINTS[0], B2_POINTS[1]):
             problems.append("same png")
     if ride and "-refuser" not in str(ride.get("marker", "")).lower():
         problems.append("in-ride marker lacks -REFUSER")

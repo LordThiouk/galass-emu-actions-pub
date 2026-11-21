@@ -151,7 +151,7 @@ MARK_driver_summary='+En ligne|-Reçois\s+le\s+paiement|Confirmer\s+le\s+paiemen
 MARK_driver_home_online='+En ligne'
 # S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
 # « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
-MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|REFUSER|Prise en charge du client|+Arrêt 1'
+MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|-REFUSER|-Prise en charge du client|+Arrêt 1'
 
 # Les 9 écrans Driver n'ont jamais été atteints par le run 39992138248 (acceptation UI
 # impossible) : leurs libellés sont des hypothèses, taguées dans le sidecar.
