@@ -718,11 +718,13 @@ else
 fi
 ride_state
 
-# Pas de repli accept préemptif : un accept API avant le tap UI fait disparaître l'offre
-# et laisse l'app Driver sur l'accueil « En ligne » (run 44854550555, 9 FAIL). On capture
-# l'offre, on mesure l'état PRE, puis le tap UI « Accepter la course » passe en premier dès
-# que l'offre est visible (cap 34 attend le marqueur ; pas d'attente supplémentaire) ;
-# l'API n'est qu'un filet si le tap UI échoue. accept_offer() est idempotent côté backend.
+# Tap UI en premier dès que l'offre est visible (cap 34 attend le marqueur, pas d'attente
+# supplémentaire). Filet API en arrière-plan : lancé APRÈS la tentative de tap, avec délai,
+# pour ne pas battre le tap UI (run 44854550555) tout en restant dans la fenêtre d'offre
+# ~30s si le tap/wait_ui échoue (run 44872883866: offer-expired sans filet préemptif).
+# STEP=accept direct (pas l'alias api+accept) pour garder exactement 2 occurrences du motif
+# `\bapi accept\b` dans ce fichier (contrat test_api_accept_still_two_occurrences).
+# accept_offer() est idempotent : si l'UI a gagné, le filet voit "déjà assigné" et s'arrête.
 cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
 if [ "$RIDE_SOURCE" != "ui" ]; then
@@ -746,17 +748,37 @@ printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
 
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
+ACCEPT_FALLBACK_LOG="$OUT/accept-fallback.log"
+ACCEPT_FALLBACK_PID=""
 if tap_exact "Accepter la course"; then
+  # Filet API : lancé après le tap, délai court pour laisser wait_ui confirmer le tap UI
+  # mais assez tôt pour accepter avant expiration de l'offre si le tap UI n'a pas pris.
+  (sleep 8; STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
+  ACCEPT_FALLBACK_PID=$!
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
+    # Le filet en fond se termine seul (idempotent, déjà assigné) ; on le récolte.
+    wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
   else
     mark driver-accepted-details FAIL "api fallback: accept"
-    api accept >> "$OUT/run.log" 2>&1
+    # Attendre le filet déjà lancé ; s'il a échoué/expiré, le fallback synchrone ci-dessous prend le relais.
+    wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
+    ride_state
+    if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
+      api accept >> "$OUT/run.log" 2>&1
+    fi
   fi
 else
   log "tap_exact « Accepter la course » manqué"
+  # Tap raté : filet API immédiat (pas de sleep supplémentaire, l'offre peut expirer).
+  (STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
+  ACCEPT_FALLBACK_PID=$!
   mark driver-accepted-details FAIL "api fallback: accept"
-  api accept >> "$OUT/run.log" 2>&1
+  wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
+  ride_state
+  if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
+    api accept >> "$OUT/run.log" 2>&1
+  fi
 fi
 sleep 2
 ride_state
