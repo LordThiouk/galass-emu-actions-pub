@@ -718,30 +718,11 @@ else
 fi
 ride_state
 
-# L14 (run 44680233906) : entre le tap et la 1re tentative d'acceptation, ~40s
-# s'écoulaient (wait_fg du passage au foreground chauffeur ~13-20s + capture/attente
-# UI jusqu'à 25s) alors que offer_timeout_sec est ~30s — la fenêtre d'offre était
-# déjà consommée avant même la première tentative. Repli API lancé en tâche de fond
-# dès que la course existe, pour qu'une tentative d'acceptation parte en quelques
-# secondes, en parallèle de la capture/tap UI (accept_offer() est idempotent : si
-# le tap UI accepte en premier, le repli voit juste "déjà assigné" et s'arrête).
-EARLY_ACCEPT_LOG="$OUT/early-accept.log"
-EARLY_ACCEPT_PID=""
-if [ -n "$RIDE_ID" ]; then
-  # Run 44775318762 (L15) : le repli de fond, parti dès la création, gagnait la
-  # course À CHAQUE FOIS contre le vrai tap UI « Accepter la course » — acceptée
-  # côté API sans jamais passer par l'app, l'app ne transite jamais vers son écran
-  # d'acceptation et toute la suite du parcours UI chauffeur décroche (P0 18/30,
-  # contre 21-27/30 quand l'acceptation vient de l'app). Délai de 11s avant la
-  # 1re tentative : laisse au vrai tap UI sa chance de gagner (bring_fg+cap ont eu
-  # le temps de s'exécuter) ; le repli ne reste qu'un filet si l'UI n'a pas accepté
-  # à temps, toujours bien dans la fenêtre d'offre de ~30s (preuve run 44680233906).
-  # Appel direct (pas via l'alias api(), pour ne pas ajouter une 3e occurrence
-  # du texte guetté par test_api_accept_still_two_occurrences).
-  (sleep 11; STEP=accept "$PY" e2e/api_flow.py) > "$EARLY_ACCEPT_LOG" 2>&1 &
-  EARLY_ACCEPT_PID=$!
-fi
-
+# Pas de repli accept préemptif : un accept API avant le tap UI fait disparaître l'offre
+# et laisse l'app Driver sur l'accueil « En ligne » (run 44854550555, 9 FAIL). On capture
+# l'offre, on mesure l'état PRE, puis le tap UI « Accepter la course » passe en premier dès
+# que l'offre est visible (cap 34 attend le marqueur ; pas d'attente supplémentaire) ;
+# l'API n'est qu'un filet si le tap UI échoue. accept_offer() est idempotent côté backend.
 cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
 if [ "$RIDE_SOURCE" != "ui" ]; then
@@ -768,29 +749,14 @@ DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
 if tap_exact "Accepter la course"; then
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
-    # L14 : le repli en tâche de fond (EARLY_ACCEPT_PID) n'a plus besoin d'être
-    # attendu ici — il se termine seul (déjà assigné) et laisse sa trace dans
-    # $EARLY_ACCEPT_LOG ; rien à collecter sur ce chemin de succès UI.
   else
     mark driver-accepted-details FAIL "api fallback: accept"
-    # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
-    # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
-    if [ -n "$EARLY_ACCEPT_PID" ]; then
-      wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
-    else
-      api accept >> "$OUT/run.log" 2>&1
-    fi
+    api accept >> "$OUT/run.log" 2>&1
   fi
 else
   log "tap_exact « Accepter la course » manqué"
   mark driver-accepted-details FAIL "api fallback: accept"
-  # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
-  # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
-  if [ -n "$EARLY_ACCEPT_PID" ]; then
-    wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
-  else
-    api accept >> "$OUT/run.log" 2>&1
-  fi
+  api accept >> "$OUT/run.log" 2>&1
 fi
 sleep 2
 ride_state

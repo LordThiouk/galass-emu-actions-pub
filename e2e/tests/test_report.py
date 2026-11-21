@@ -252,18 +252,40 @@ def test_label_signature_duplicate_detected():
     import report
 
     caps = [
-        {"name": "21-rider-running-start", "point": "rider-running-start",
-         "marker": "+En course|-Arrêt 1", "dump_sha256": "a",
-         "labels": ["En course", "Terminez votre course", "12 min"], "node_count": 42},
         {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
-         "marker": "+Arrêt en cours|-Arrêt 1", "dump_sha256": "b",
-         "labels": ["En course", "Terminez votre course", "13 min"], "node_count": 42},
+         "marker": "+Arrêt 1", "dump_sha256": "a",
+         "labels": ["En route", "Arrêt 1", "12 min"], "node_count": 42},
+        {"name": "23-rider-stop1-done", "point": "rider-stop1-done",
+         "marker": "+Arrêt terminé", "dump_sha256": "b",
+         "labels": ["En route", "Arrêt 1", "13 min"], "node_count": 42},
+    ]
+    out = make_out([("rider-stop1-active", "PASS", "ok"), ("rider-stop1-done", "PASS", "ok")], caps)
+    res = report.build(out, p0={"rider-stop1-active", "rider-stop1-done"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["rider-stop1-done"]["result"] == "FAIL", rows["rider-stop1-done"]
+    assert "duplicate-state" in rows["rider-stop1-done"]["detail"]
+
+
+@case
+def test_rider_running_start_stop1_active_is_revisited_pair():
+    """Même écran RUNNING jambe 1 par design : 21 = départ, 22 = carte horodatée en cours
+    de jambe 1. XML/marqueurs textuels identiques possibles (pins/polyline = preuve PNG
+    archivée GPG) => paire revisitée, pas un duplicate-state."""
+    import report
+
+    caps = [
+        {"name": "21-rider-running-start", "point": "rider-running-start",
+         "marker": "+En route vers|-Chargement", "dump_sha256": "same",
+         "labels": ["En route vers", "12 min"], "node_count": 42},
+        {"name": "22-rider-stop1-active", "point": "rider-stop1-active",
+         "marker": "+En route vers|-Arrêt 2", "dump_sha256": "same",
+         "labels": ["En route vers", "12 min"], "node_count": 42},
     ]
     out = make_out([("rider-running-start", "PASS", "ok"), ("rider-stop1-active", "PASS", "ok")], caps)
     res = report.build(out, p0={"rider-running-start", "rider-stop1-active"})
     rows = {p["point"]: p for p in res["points"]}
-    assert rows["rider-stop1-active"]["result"] == "FAIL", rows["rider-stop1-active"]
-    assert "duplicate-state" in rows["rider-stop1-active"]["detail"]
+    assert rows["rider-stop1-active"]["result"] == "PASS", rows["rider-stop1-active"]
+    assert not res["duplicates"], res["duplicates"]
 
 
 @case

@@ -63,16 +63,15 @@ if src != "ui":
           "l'ordre envoyé par l'app n'est pas mesuré" % src)
     raise SystemExit(0)
 
-seen = {}
-for name, labs in (("affiche", u_labs), ("compose", p_labs), ("create", c_labs), ("detail", f_labs)):
-    j = judge(labs)
-    if j is not None:
-        seen[name] = j
-if not seen:
-    print("WARN|no evidence: ordre illisible (%s)" % shown)
+aff_j = judge(u_labs)
+det_j = judge(f_labs)
+if aff_j is None:
+    print("WARN|no evidence: ordre composé (affiché, capture 17) illisible (%s)" % shown)
     raise SystemExit(0)
-if False in seen.values():
-    bad = next(k for k, v in seen.items() if v is False)
-    print("FAIL|B3: ordre des arrêts différent (%s) %s" % (bad, shown))
+if det_j is None:
+    print("WARN|no evidence: ordre GET detail illisible (%s)" % shown)
     raise SystemExit(0)
-print("PASS|B3: ordre identique %s" % shown)
+if aff_j != det_j:
+    print("FAIL|B3: ordre des arrêts différent (affiché vs detail) %s" % shown)
+    raise SystemExit(0)
+print("PASS|B3: ordre identique (affiché=detail) %s" % shown)

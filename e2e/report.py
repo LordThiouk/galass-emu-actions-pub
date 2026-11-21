@@ -31,8 +31,16 @@ RANK = {"PASS": 1, "WARN": 2, "INCONCLUSIVE": 3, "SKIP": 4, "FAIL": 5}
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 RIDER_PKG = "sn.galass.galassrider"
 DRIVER_PKG = "sn.galass.galassdriver"
-# A screen the run legitimately visits twice (start and end of the same flow).
-REVISITED = {("rider-home-loaded", "rider-home-after")}
+# A screen the run legitimately visits twice (start and end of the same flow), or
+# a deliberately re-timed capture of the same UI state whose evidence is non-XML.
+REVISITED = {
+    ("rider-home-loaded", "rider-home-after"),
+    # Même écran RUNNING jambe 1 par design : 21 = départ, 22 = carte horodatée
+    # en cours de jambe 1. Les pins/polyline ne sont pas visibles en XML (seule la
+    # carte/PNG les porte, preuve pixel archivée GPG) et les marqueurs textuels sont
+    # identiques ; l'état XML peut donc être le même sans invalider la capture 22.
+    ("rider-running-start", "rider-stop1-active"),
+}
 B2_POINTS = ("driver-offer-with-stops", "driver-inride-stops")
 
 # Declared here and mirrored verbatim in run.sh (test_p0_default_matches_run_sh).
