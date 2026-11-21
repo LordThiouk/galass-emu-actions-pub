@@ -742,13 +742,20 @@ ride_state
 # Close-7 timing: Driver foreground + « En ligne » confirmé AVANT « Trouver un chauffeur »
 # (fait dans compose_ride_ui). Ici: UNE seule boucle de poll qui dump+tap « Accepter la course »,
 # capture 34 = XML au moment exact du tap ; log t_offer_to_tap ; WARN si > 25 s.
-# Si offer_expired → re-request (1 fois), pas de martèlement API. Exactement 2 `\bapi accept\b`.
+# Exactement 2 `\bapi accept\b`.
+# Run 44912533775 (close-7) : l'offre n'a jamais été rendue, pour deux raisons de harnais
+# nommées — (a) la boucle rappelait `bring_fg` (monkey relaunch) à CHAQUE tour, ce qui relance
+# l'app Driver et fait perdre l'overlay d'offre ; (b) elle lisait `status=0` comme « offre
+# expirée » alors que `status=0` est l'état NORMAL d'une course fraîche sans chauffeur, et sa
+# re-demande (« Trouver un chauffeur ») invalidait l'offre en cours (remark backend
+# `offer_expired`, 40 tentatives d'acceptation API toutes mortes). Donc : UN bring_fg avant la
+# boucle, aucun relaunch pendant le poll, aucune re-demande pilotée par `status=0`.
 offer_t0=$SECONDS
 offer_seen=0
-offer_expired_retried=0
 t_offer_to_tap=""
+offer_poll_screen=""
+bring_fg "$DRIVER_PKG" || true
 while [ $((SECONDS - offer_t0)) -lt 75 ]; do
-  bring_fg "$DRIVER_PKG" || true
   if ! ui_xml; then sleep 2; continue; fi
   clear_sys
   if _spec_ok "$MARK_driver_offer_with_stops"; then
@@ -768,19 +775,16 @@ while [ $((SECONDS - offer_t0)) -lt 75 ]; do
     offer_seen=1
     break
   fi
-  # offer_expired / ride indisponible: re-request une fois, sans martèlement API.
-  ride_state
-  if [ "$offer_expired_retried" = "0" ] && grep -qiE "offer_expired|expired|unavailable|status=0" "$OUT/last-ride-state.txt" 2>/dev/null; then
-    log "offer_expired détecté: re-request UI (1 fois, pas de martèlement API)"
-    offer_expired_retried=1
-    bring_fg "$RIDER_PKG" || true
-    TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" >/dev/null 2>&1 || true
-    bring_fg "$DRIVER_PKG" || true
+  # Premier écran Driver vu pendant le poll : sert au diagnostic borné du timeout.
+  if [ -z "$offer_poll_screen" ]; then
+    offer_poll_screen=$(python3 e2e/dump_diag.py "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-160)
   fi
   sleep 2
 done
 if [ "$offer_seen" != "1" ]; then
   log "t_offer_to_tap=TIMEOUT (offre non vue en $((SECONDS-offer_t0))s)"
+  [ -n "$offer_poll_screen" ] && log "offre: premier écran driver pendant le poll: $offer_poll_screen"
+  ui_screen_diag "offre: écran driver au timeout"
   cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 5
 fi
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
@@ -1349,4 +1353,5 @@ fi
 log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
 # Re-signalé après le rapport (une ligne log, jamais un mark : le digest est déjà écrit).
 log "diag-driver-assign: ${ASSIGN_DIAG_V:-inconnu} ${ASSIGN_DIAG_D:-aucun} asg=${ASSIGN_DRIVER:-inconnu}"
+log "diag offer: seen=${offer_seen:-0} t_offer_to_tap=${t_offer_to_tap:-TIMEOUT} src=${RIDE_SOURCE:-unknown}"
 exit $report_rc

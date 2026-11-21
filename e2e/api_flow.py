@@ -224,6 +224,11 @@ def accept_offer(retries=20, delay=3):
             save()
             return True
         remark = j.get("remark")
+        if remark == "offer_expired":
+            # Terminus : l'offre est morte côté backend, retenter ne peut que la marteler.
+            st["offer_accept"] = j
+            save()
+            return False
         if remark == "not_authorized" or remark == "ride_unavailable":
             time.sleep(delay)
             continue
