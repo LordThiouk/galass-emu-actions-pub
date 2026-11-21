@@ -25,7 +25,9 @@ import re
 import sys
 import time
 
-RANK = {"PASS": 1, "WARN": 2, "SKIP": 3, "FAIL": 4}
+# INCONCLUSIVE = l'émulateur a planté pendant le point (jamais un FAIL de l'app). Pour un
+# point P0 c'est un non-PASS : il fait échouer le verdict comme un FAIL, sans être imputé à l'app.
+RANK = {"PASS": 1, "WARN": 2, "INCONCLUSIVE": 3, "SKIP": 4, "FAIL": 5}
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 RIDER_PKG = "sn.galass.galassrider"
 DRIVER_PKG = "sn.galass.galassdriver"
@@ -114,9 +116,38 @@ def expected_pkg(point):
     return ""
 
 
+# Une capture ne peut être "invalidée" que si elle prétend être une preuve. Une capture
+# TIMEOUT/ACTION_MISS n'est déjà pas une preuve : sa raison doit dire ce qui a échoué
+# (le marqueur, le tap), pas "foreground … != package" — c'était le faux positif du run
+# 44354825315, où six points P0 semblaient casser le harnais alors que l'app était à l'écran.
+EVIDENCE_STATUS = "MATCH"
+
+
+def capture_reason(cap):
+    """Short, true reason for a capture that is not evidence."""
+    status = str(cap.get("status") or "UNKNOWN")
+    parts = [status]
+    if status == "ACTION_MISS" and cap.get("action") and not cap.get("action_ok"):
+        parts.append(f"tap « {cap.get('action')} » manqué")
+    failed = str(cap.get("failed_spec") or "").strip()
+    if failed:
+        parts.append(f"marqueur absent: {failed}")
+    fg = str(cap.get("fg_pkg") or "").strip()
+    if fg and fg not in ("", "UNKNOWN"):
+        parts.append(f"fg={fg} ({cap.get('fg_source') or 'dumpsys'})")
+    return f"{cap.get('name')} ({' ; '.join(parts)})"
+
+
 def validate_captures(out_dir, caps):
-    """B4: a sidecar is only evidence when the pixels exist and the app is the right one."""
+    """B4: a sidecar is only evidence when the pixels exist and the app is the right one.
+
+    Applied to evidence-grade captures (MATCH). A capture that never claimed the screen
+    keeps its own status and is reported through `capture_reason`, so a FAIL always names
+    the step that failed.
+    """
     for cap in caps:
+        if cap.get("status") != EVIDENCE_STATUS:
+            continue
         reasons = []
         png = os.path.join(out_dir, "screens", f"{cap.get('name')}.png")
         try:
@@ -139,13 +170,58 @@ def validate_captures(out_dir, caps):
     return caps
 
 
+# Unité de temps : le seul jeton dont les chiffres tichent tout seuls.
+_TIME_UNIT = (r"(?:min|mins|minute|minutes|s|sec|secs|seconde|secondes"
+              r"|h|heure|heures|j|jour|jours)")
+
+
 def _norm_label(label):
-    """Normalise a visible label, masking digits so a ticking timer cannot hide a copy."""
-    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", str(label))).strip().lower()
+    """Normalise un libellé pour comparer deux écrans.
+
+    Seuls les jetons qui tichent sont masqués (durée, horloge) : un minuteur qui avance ne
+    doit pas masquer une copie d'écran. Un compteur de progression reste entier.
+
+    Mesure run 44441344957 : masquer *tous* les chiffres faisait passer « 1/2 arrêt
+    terminé » pour une copie de « 0/2 arrêt terminé » alors que les pixels diffèrent
+    (driver-stop1-done en duplicate-state, png=diff). Un compteur qui change est un état
+    qui change.
+    """
+    text = re.sub(r"\s+", " ", str(label)).strip().lower()
+    text = re.sub(r"\b\d+(?=\s*" + _TIME_UNIT + r"\b)", "#", text)
+    text = re.sub(r"\b\d{1,2}:\d{2}\b", "#:#", text)
+    return text
 
 
 def _revisited(prev_point, point):
     return (prev_point or "", point or "") in REVISITED
+
+
+def _png_verdict(prev_png, cap):
+    """Les pixels tranchent : même dump + pixels différents = dump périmé, pas même écran.
+
+    Mesure run 44412970992 : quatre points tombaient en « duplicate-state » sans qu'on
+    puisse distinguer un écran réellement identique d'un dump qui n'a pas suivi l'écran.
+    La raison du FAIL nomme donc la preuve (`png=same` / `png=diff`) au lieu de la seule
+    égalité du dump — aucun seuil, aucun point P0, aucune porte ne change.
+    """
+    cur_png = cap.get("png_sha256") or ""
+    prev_png = prev_png or ""
+    if not prev_png or not cur_png:
+        return {"png": "unknown"}
+    return {"png": "same" if prev_png == cur_png else "diff"}
+
+
+def _time_order(sidecars):
+    """Les captures dans l'ordre du TEMPS : « la capture précédente » est celle qui a été
+    prise avant, jamais celle dont le nom de fichier se trie avant.
+
+    Mesure run 44441344957 : 35b-driver-inride, prise 2 s APRÈS 37-driver-running-stop1,
+    la faisait tomber en duplicate-state alors que les deux captures montrent le même
+    écran (png=same) — c'est la seconde qui n'ajoute rien, pas la première.
+    """
+    if not any(cap.get("ts") for cap in sidecars):
+        return list(sidecars)
+    return sorted(sidecars, key=lambda c: (c.get("ts") or "", c.get("name") or ""))
 
 
 def check_distinct(sidecars):
@@ -155,30 +231,32 @@ def check_distinct(sidecars):
     the same pixels; only the explicit revisited-screen pair is exempt.
     """
     duplicates, seen, sig_seen = [], {}, {}
-    for cap in sidecars:
+    for cap in _time_order(sidecars):
         if cap.get("status") != "MATCH":
             continue
         point = cap.get("point") or ""
         digest = cap.get("dump_sha256") or ""
         if digest and digest in seen:
-            prev_name, prev_point = seen[digest]
+            prev_name, prev_point, prev_png = seen[digest]
             if not _revisited(prev_point, point):
                 duplicates.append({"name": cap["name"], "point": point,
-                                   "duplicate_of": prev_name, "signal": "dump"})
+                                   "duplicate_of": prev_name, "signal": "dump",
+                                   **_png_verdict(prev_png, cap)})
         if digest:
-            seen.setdefault(digest, (cap["name"], point))
+            seen.setdefault(digest, (cap["name"], point, cap.get("png_sha256") or ""))
         labels = [l for l in (cap.get("labels") or []) if str(l).strip()]
         if labels:
             sig = (cap.get("fg_pkg") or "",
                    tuple(sorted({_norm_label(l) for l in labels})),
                    int(cap.get("node_count") or 0))
             if sig in sig_seen:
-                prev_name, prev_point = sig_seen[sig]
+                prev_name, prev_point, prev_png = sig_seen[sig]
                 if (not _revisited(prev_point, point)
                         and not any(d["name"] == cap["name"] for d in duplicates)):
                     duplicates.append({"name": cap["name"], "point": point,
-                                       "duplicate_of": prev_name, "signal": "labels"})
-            sig_seen.setdefault(sig, (cap["name"], point))
+                                       "duplicate_of": prev_name, "signal": "labels",
+                                       **_png_verdict(prev_png, cap)})
+            sig_seen.setdefault(sig, (cap["name"], point, cap.get("png_sha256") or ""))
     return duplicates
 
 
@@ -237,9 +315,13 @@ def build(out_dir, p0=None):
         if point not in seen:
             _upsert(points, point, "FAIL", "not attempted (harness)")
 
+    # Points marqués INCONCLUSIVE emulator_crash par le harnais : le plantage de l'émulateur
+    # est la raison, les contrôles « pas de capture MATCH » ne doivent pas les réécrire en FAIL.
+    crashed = {r["point"] for r in points
+               if r["result"] == "INCONCLUSIVE" and "emulator_crash" in r["detail"]}
     sidecars = validate_captures(out_dir, read_sidecars(out_dir))
     for cap in sidecars:
-        if cap.get("status") == "INVALID" and cap.get("point"):
+        if cap.get("status") == "INVALID" and cap.get("point") and cap["point"] not in crashed:
             _upsert(points, cap["point"], "FAIL",
                     f"capture invalid: {cap.get('name')} ({cap.get('invalid_reason')})")
     by_point = {}
@@ -248,7 +330,7 @@ def build(out_dir, p0=None):
 
     # a P0 UI claim needs a MATCH capture, whatever the row says
     for point in p0:
-        if point not in UI_POINTS:
+        if point not in UI_POINTS or point in crashed:
             continue
         caps = by_point.get(point, [])
         if not caps:
@@ -263,15 +345,16 @@ def build(out_dir, p0=None):
                         + "; ".join(f"{c['name']} ({c.get('invalid_reason')})"
                                     for c in invalid))
             else:
-                names = ",".join(f"{c['name']}({c.get('status')})" for c in caps)
-                _upsert(points, point, "FAIL", f"no MATCH capture: {names}")
+                _upsert(points, point, "FAIL",
+                        "no MATCH capture: "
+                        + " ; ".join(capture_reason(c) for c in caps))
 
     duplicates = check_distinct(sidecars)
     for dup in duplicates:
         if dup["point"]:
             _upsert(points, dup["point"], "FAIL",
                     f"duplicate-state: {dup.get('signal', 'dump')} identical to "
-                    f"{dup['duplicate_of']}")
+                    f"{dup['duplicate_of']} (png={dup.get('png', 'unknown')})")
 
     b2 = check_b2(sidecars)
     if b2 is not None:
@@ -284,10 +367,11 @@ def build(out_dir, p0=None):
     fails = [p for p in points if p["result"] == "FAIL"]
     warns = [p for p in points if p["result"] == "WARN"]
     skips = [p for p in points if p["result"] == "SKIP"]
+    inconclusive = [p for p in points if p["result"] == "INCONCLUSIVE"]
     p0_rows = [p for p in points if p["point"] in p0_set]
     p0_nonpass = [p["point"] for p in p0_rows if p["result"] != "PASS"]
     verdict = ("FAIL" if fails or p0_nonpass or len(p0) == 0
-               else ("PASS_WITH_WARNINGS" if warns or skips else "PASS"))
+               else ("PASS_WITH_WARNINGS" if warns or skips or inconclusive else "PASS"))
 
     flags = {}
     flags_path = os.path.join(out_dir, "ui-flags.txt")
@@ -297,21 +381,24 @@ def build(out_dir, p0=None):
                 key, _, value = line.strip().partition("=")
                 flags[key] = value
 
+    unstable = os.path.isfile(os.path.join(out_dir, "emulator-unstable.flag"))
     report = {
         "verdict": verdict,
+        "emulator_unstable": unstable,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "points": points,
         "fail_count": len(fails),
         "warn_count": len(warns),
         "skip_count": len(skips),
+        "inconclusive_count": len(inconclusive),
         "p0_total": len(p0),
         "p0_pass": sum(1 for p in p0_rows if p["result"] == "PASS"),
         "p0_nonpass": p0_nonpass,
         "ui_flags": flags,
         "captures": [{k: c.get(k) for k in
                       ("name", "point", "status", "marker", "marker_source",
-                       "fg_pkg", "dump_sha256", "png_sha256", "failed_spec",
-                       "node_count", "invalid_reason")}
+                       "fg_pkg", "fg_source", "dump_sha256", "png_sha256",
+                       "failed_spec", "node_count", "invalid_reason")}
                      for c in sidecars],
         "duplicates": duplicates,
     }
@@ -328,6 +415,8 @@ def build(out_dir, p0=None):
         "",
         f"Verdict: **{verdict}**",
         "",
+        *(["> ⚠ ÉMULATEUR INSTABLE (ActivityManager has died / ANR in system) : "
+           "les échecs UI de ce run ne sont pas imputables à l'app.", ""] if unstable else []),
         f"P0: {report['p0_pass']}/{report['p0_total']} PASS — "
         f"non-PASS: {', '.join(p0_nonpass) or 'none'}",
         "",
@@ -358,8 +447,10 @@ def main(argv=None):
     report = build(args.out_dir, p0=p0)
     print(f"verdict={report['verdict']} fails={report['fail_count']} "
           f"warns={report['warn_count']} skips={report['skip_count']} "
+          f"inconclusive={report['inconclusive_count']} "
           f"p0={report['p0_pass']}/{report['p0_total']} "
-          f"nonpass={','.join(report['p0_nonpass']) or 'none'}")
+          f"nonpass={','.join(report['p0_nonpass']) or 'none'}"
+          + (" emulator_unstable=1" if report["emulator_unstable"] else ""))
     return 0 if report["verdict"] == "PASS" else 1
 
 

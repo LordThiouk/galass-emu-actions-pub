@@ -101,13 +101,15 @@ def driver_loc(lat, lng):
 
 
 def go_online():
+    """Met le driver En ligne. Retourne True seulement si le backend le confirme."""
     driver_loc(*PICK)
     # online-status est un TOGGLE côté backend: rebasculer si on est passé offline
     for _ in range(2):
         c, j = call("POST", "driver/online-status", DT,
                     {"online_status": 1, "lat": PICK[0], "long": PICK[1]})
         if ((j or {}).get("data") or {}).get("online"):
-            break
+            return True
+    return False
 
 
 def create_ride():
@@ -241,6 +243,9 @@ def start_ride():
     c, j = call("POST", f"driver/rides/start/{d.get('id')}", DT, {"otp": otp})
     st["start"] = j
     save()
+    # Preuve pour le repli : « not_found » = la course n'est plus ACTIVE (le start UI avait
+    # atteint le backend) ; « ride_start » = c'est le repli qui l'a démarrée.
+    print(f"START remark={j.get('remark')} status={j.get('status')}", flush=True)
     return j.get("status") == "success"
 
 
@@ -329,6 +334,37 @@ if step == "ping":
     call("GET", "general-setting", RT)
 elif step == "reset":
     reset_rides()
+elif step == "has_open":
+    # 0 si le rider a déjà une course ouverte (composée dans l'app), 1 sinon. Ne crée rien.
+    sys.exit(0 if open_rides() else 1)
+elif step == "online":
+    # État de départ: driver connecté (jeton injecté dans les prefs) ET en ligne, AVANT
+    # de lancer l'app driver et de composer la course. Ne touche pas au comportement
+    # auto-online de l'app (point D-1, hors périmètre).
+    ok = go_online()
+    st["driver_online"] = bool(ok)
+    save()
+    print("DRIVER_ONLINE", 1 if ok else 0, flush=True)
+    sys.exit(0 if ok else 3)
+elif step == "assign_pre":
+    # Sonde READ-ONLY : l'état du chauffeur AVANT la fenêtre d'accept. Aucune
+    # écriture d'état, aucune bascule online (online-status est un TOGGLE).
+    # dashboard expose online_status (balance masqué) ; driver-info rend balance
+    # visible (makeVisible). Les deux routes sont lues, rien d'autre.
+    c, d = call("GET", "driver/dashboard", DT)
+    drv = (d.get("data") or {}).get("driver") or {}
+    online = drv.get("online_status")
+    if online is None:
+        online = (d.get("data") or {}).get("online")
+    c, i = call("GET", "driver/driver-info", DT)
+    info = (i.get("data") or {}).get("driver") or {}
+    bal = info.get("balance")
+    if bal is None:
+        bal = drv.get("balance")
+    if online is None:
+        online = info.get("online_status")
+    print(f"assign_pre bal={bal if bal is not None else '?'} "
+          f"online={1 if online else 0}", flush=True)
 elif step == "pick":
     pick_ride()
 elif step == "cancel":
