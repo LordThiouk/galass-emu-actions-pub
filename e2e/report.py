@@ -43,6 +43,9 @@ REVISITED = {
     # 35b (in-ride, post-accept) et 37 (running stop 1, post-start) sont le même
     # écran Driver : B2 compare offre vs in-ride, pas deux captures in-ride.
     ("driver-inride-stops", "driver-running-stop1"),
+    # 29 (itinéraire final) capturé sur l'écran 27 (cash-waiting) avant Pusher
+    # CASH_PAYMENT qui navigue le rider vers Avis : même écran, intention différente.
+    ("rider-cash-waiting", "rider-final-itinerary"),
 }
 B2_POINTS = ("driver-offer-with-stops", "driver-inride-stops")
 
