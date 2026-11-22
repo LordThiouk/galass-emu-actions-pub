@@ -504,9 +504,20 @@ app_logcat_since() {
   if [ -n "$pid" ]; then awk -v p="$pid" '$3==p' "$raw" > "$app"; else cp "$raw" "$app"; fi
   n_app=$(wc -l < "$app" 2>/dev/null | tr -d ' ')
   APP_LC_STATS="ts=${ts:-aucun(600 dernières lignes)} pid=${pid:-inconnu} brut=${n_raw:-0} app=${n_app:-0}"
-  grep -aE ' [VDIWEF] flutter *:|complete-stop|rejected|accepted|refused|http=|DioException|Exception|FATAL' "$app" \
-    | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' | tail -60
-  rm -f "$raw" "$app"
+  if [ "${2:-}" = "decisive" ]; then
+    # Run 45058950773 : `tail -60` ne gardait que ~5 s de polling `dashboard` et perdait les lignes
+    # `complete-stop request/response/ignored` du Driver. Lignes décisives d'abord (sans coupe), puis la fin
+    # du reste SANS le bruit de polling ; cadres de log et piles `#n` écartés. Jetons masqués.
+    local key='complete-stop|LastPing|ping_age|location-update|location ping|rejected|accepted|refused|http=|DioException|Exception|FATAL'
+    grep -aE ' [VDIWEF] flutter *:|'"$key" "$app" | grep -avE '│ +#[0-9]|[┌└├]' \
+      | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' > "$app.flt"
+    { grep -aE "$key" "$app.flt" | head -80
+      grep -avE "$key|dashboard|Service already running|loadData|url-{5,}|status-{5,}|params-{5,}|body-{5,}" "$app.flt" | tail -30; }
+  else
+    grep -aE ' [VDIWEF] flutter *:|complete-stop|rejected|accepted|refused|http=|DioException|Exception|FATAL' "$app" \
+      | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' | tail -60
+  fi
+  rm -f "$raw" "$app" "$app.flt"
 }
 
 # fg_component pkg : composant lanceur du paquet (résolu HORS fenêtre d'offre, avant le tap de demande).
@@ -556,10 +567,13 @@ stop_diag() {
     cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true
     texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
   fi
-  app_logcat_since "${STOP_TAP_TS:-}" > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+  app_logcat_since "${STOP_TAP_TS:-}" decisive > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
   lc=$(wc -l < "$OUT/diag/dbg-$tag.logcat" 2>/dev/null | tr -d ' ')
   _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) [${APP_LC_STATS}] | ${texts:-dump indisponible}"
-  [ "${lc:-0}" -gt 0 ] && tail -12 "$OUT/diag/dbg-$tag.logcat" | while IFS= read -r l; do _ulog "stop_diag dbg-$tag app: ${l:0:220}"; done
+  # Lignes décisives (complete-stop request/response/ignored) d'abord : elles disent si la requête part et ce que répond le serveur.
+  [ "${lc:-0}" -gt 0 ] && { grep -aE 'complete-stop|LastPing|ping_age|DioException|Exception|FATAL' "$OUT/diag/dbg-$tag.logcat" | head -12
+      grep -avE 'complete-stop|LastPing|ping_age|DioException|Exception|FATAL' "$OUT/diag/dbg-$tag.logcat" | tail -4; } \
+    | while IFS= read -r l; do _ulog "stop_diag dbg-$tag app: ${l:0:260}"; done
   return 0
 }
 
