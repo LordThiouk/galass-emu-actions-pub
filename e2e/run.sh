@@ -833,6 +833,7 @@ if [ "$offer_seen" = "1" ]; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
     wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
   else
+    accept_fail_diag
     mark driver-accepted-details FAIL "api fallback: accept"
     wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
     ride_state

@@ -508,7 +508,7 @@ app_logcat_since() {
     # Run 45058950773 : `tail -60` ne gardait que ~5 s de polling `dashboard` et perdait les lignes
     # `complete-stop request/response/ignored` du Driver. Lignes décisives d'abord (sans coupe), puis la fin
     # du reste SANS le bruit de polling ; cadres de log et piles `#n` écartés. Jetons masqués.
-    local key='complete-stop|LastPing|ping_age|location-update|location ping|rejected|accepted|refused|http=|DioException|Exception|FATAL'
+    local key='complete-stop|LastPing|ping_age|location-update|location ping|\[dispatch\] (respond|ingress|presentOffer|modal)|APP STATE|remark=|rejected|accepted|refused|http=|DioException|Exception|FATAL'
     grep -aE ' [VDIWEF] flutter *:|'"$key" "$app" | grep -avE '│ +#[0-9]|[┌└├]' \
       | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' > "$app.flt"
     { grep -aE "$key" "$app.flt" | head -80
@@ -546,6 +546,19 @@ offer_timeout_diag() {
   _ulog "offer_timeout_diag: logcat=${n:-0} ligne(s) [${APP_LC_STATS}] depuis ${OFFER_REQ_TS:-?}"
   grep -aE 'APP STATE|\[dispatch\]|loadData|onOffer|offer #' "$f" 2>/dev/null | tail -15 \
     | while IFS= read -r l; do _ulog "offer_timeout_diag app: ${l:0:220}"; done
+  return 0
+}
+
+# accept_fail_diag : tap « Accepter » sans effet (run 45065480752 : offre vue, offer_expired). Logcat Driver depuis
+# la demande (OFFER_REQ_TS), lignes décisives seulement (respond HTTP/remark, presentOffer, APP STATE), dans
+# diag/accept-fail.logcat + log. Jamais bloquant.
+accept_fail_diag() {
+  local f="$OUT/diag/accept-fail.logcat" n
+  mkdir -p "$OUT/diag"
+  app_logcat_since "${OFFER_REQ_TS:-}" decisive > "$f" 2>/dev/null || true
+  n=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+  _ulog "accept_fail_diag: logcat=${n:-0} ligne(s) [${APP_LC_STATS}] depuis ${OFFER_REQ_TS:-?}"
+  head -20 "$f" | while IFS= read -r l; do _ulog "accept_fail_diag app: ${l:0:240}"; done
   return 0
 }
 

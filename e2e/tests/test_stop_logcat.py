@@ -90,6 +90,39 @@ def test_stop_diag_copies_complete_stop_lines_into_run_log():
     assert "complete-stop response: http=403" in f, f[:400]
 
 
+def accept_logcat():
+    rows = [
+        H % (47, 30) + "│ 💡 APP STATE -> AppLifecycleState.resumed",
+        H % (47, 52) + "│ 💡 [dispatch] presentOffer rideId=312 callKit=false modal=true ok=true",
+        H % (47, 58) + "│ 💡 [dispatch] respond accept rideId=312",
+        H % (47, 59) + "│ 💡 [dispatch] respond HTTP=403 status=error remark=not_authorized message=[Offre expirée]",
+    ]
+    for i in range(30):
+        rows += [H % (48, i) + "│ 💡 [dispatch] loadData pending=0 online=true page=1 driverId=23",
+                 H % (48, i) + "│ 💡 Service already running"]
+    return "\n".join(rows) + "\n"
+
+
+@case
+def test_accept_fail_diag_keeps_dispatch_respond_lines():
+    """Fenêtre d'acceptation (run 45065480752 : offre vue, tap « Accepter » sans effet, offer_expired) :
+    la réponse du Driver à l'offre (respond HTTP/remark) doit être écrite, polling écarté."""
+    _, runlog, tmp = harness('OFFER_REQ_TS="11-22 19:40:20.000"; accept_fail_diag', accept_logcat())
+    f = os.path.join(tmp, "diag", "accept-fail.logcat")
+    assert os.path.exists(f), runlog
+    body = open(f, encoding="utf-8").read()
+    assert "respond HTTP=403" in body and "presentOffer rideId=312" in body and "APP STATE" in body, body
+    assert "Service already running" not in body and "loadData" not in body, body
+    assert "accept_fail_diag" in runlog and "respond HTTP=403" in runlog, runlog
+
+
+@case
+def test_run_sh_calls_accept_fail_diag_when_ui_accept_fails():
+    run = open(os.path.join(ROOT, "run.sh"), encoding="utf-8").read()
+    i = run.index('mark driver-accepted-details FAIL "api fallback: accept"')
+    assert "accept_fail_diag" in run[i - 400:i], run[i - 400:i]
+
+
 if __name__ == "__main__":
     failed = 0
     for fn in CASES:
