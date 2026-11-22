@@ -509,6 +509,35 @@ app_logcat_since() {
   rm -f "$raw" "$app"
 }
 
+# fg_component pkg : composant lanceur du paquet (résolu HORS fenêtre d'offre, avant le tap de demande).
+fg_component() {
+  adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$1" 2>/dev/null | tail -1 | tr -d '\r'
+}
+
+# fg_switch_now pkg [composant] : bascule d'avant-plan SANS attente (un seul am start ; repli monkey).
+# Une offre vit 30 s (offer_timeout_sec) : run 45051973500, 21 s perdus entre le tap de demande et le Driver
+# au premier plan (deadline_check, dumpsys, wait_fg, dumps uiautomator) -> offre expirée avant d'être vue.
+fg_switch_now() {
+  local pkg="$1" comp="${2:-}"
+  if [[ "$comp" == */* ]]; then adb shell am start -n "$comp" -f 0x20000 >/dev/null 2>&1 || true
+  else adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true; fi
+  return 0
+}
+
+# offer_timeout_diag : TIMEOUT d'offre -> logcat du Driver depuis la demande (OFFER_REQ_TS) dans
+# diag/offer-timeout.logcat + lignes utiles au log. Distingue « jamais reçue » (aucun loadData/dispatch)
+# de « reçue trop tard » (loadData après l'expiration). Jamais bloquant.
+offer_timeout_diag() {
+  local f="$OUT/diag/offer-timeout.logcat" n
+  mkdir -p "$OUT/diag"
+  app_logcat_since "${OFFER_REQ_TS:-}" > "$f" 2>/dev/null || true
+  n=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+  _ulog "offer_timeout_diag: logcat=${n:-0} ligne(s) [${APP_LC_STATS}] depuis ${OFFER_REQ_TS:-?}"
+  grep -aE 'APP STATE|\[dispatch\]|loadData|onOffer|offer #' "$f" 2>/dev/null | tail -15 \
+    | while IFS= read -r l; do _ulog "offer_timeout_diag app: ${l:0:220}"; done
+  return 0
+}
+
 # ui_texts_log tag : textes visibles de l'écran courant dans le log (un toast de refus dure 5 s).
 ui_texts_log() {
   local tag="$1" texts=""

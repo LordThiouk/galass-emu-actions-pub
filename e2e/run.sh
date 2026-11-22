@@ -354,9 +354,14 @@ compose_ride_ui() {
     ui_screen_diag "compose: driver non En ligne"
   fi
   bring_fg "$RIDER_PKG" || true
+  # Fenêtre d'offre = 30 s : composant Driver résolu et horodatage posés AVANT le tap, bascule Driver
+  # sur la ligne qui suit le tap (run 45051973500 : 21 s perdus avant le premier plan -> offre expirée).
+  DRIVER_COMP=$(fg_component "$DRIVER_PKG")
+  OFFER_REQ_TS="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
   # Le titre du formulaire porte le même libellé que le bouton : viser le DERNIER nœud (le bouton).
   TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; ui_screen_diag "compose: bouton demande absent"; return 1; }
-  log "compose_ride_ui: demande envoyée par l'UI (driver En ligne confirmé avant tap)"
+  fg_switch_now "$DRIVER_PKG" "$DRIVER_COMP"
+  log "compose_ride_ui: demande envoyée par l'UI (driver En ligne confirmé avant tap, Driver ramené au premier plan sans attente)"
   return 0
 }
 
@@ -792,6 +797,7 @@ if [ "$offer_seen" != "1" ]; then
   log "t_offer_to_tap=TIMEOUT (offre non vue en $((SECONDS-offer_t0))s)"
   [ -n "$offer_poll_screen" ] && log "offre: premier écran driver pendant le poll: $offer_poll_screen"
   ui_screen_diag "offre: écran driver au timeout"
+  offer_timeout_diag
   cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 5
 fi
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
