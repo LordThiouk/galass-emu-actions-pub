@@ -484,6 +484,27 @@ dialog_confirm() {
 # last_stops_done : stops_done=N lu dans $OUT/last-ride-state.txt (écrit par ride_state), vide si absent.
 last_stops_done() { sed -n 's/.*stops_done=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | tail -1; }
 
+# app_logcat_since ts : lignes logcat de l'app Driver (processus du paquet) depuis ts « MM-JJ HH:MM:SS.mmm » :
+# appels HTTP (url/status), complete-stop (POST/rejected/accepted/refused), exceptions. Jetons masqués.
+# L'ancien extrait ne gardait que AndroidRuntime/uiautomator : « Shutting down VM » venait d'uiautomator, pas de l'app.
+app_logcat_since() {
+  local ts="${1:-}" pid
+  local -a pidarg=() tsarg=()
+  pid=$(adb shell pidof "$DRIVER_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')
+  [ -n "$pid" ] && pidarg=(--pid="$pid")
+  [ -n "$ts" ] && tsarg=(-T "$ts")
+  adb logcat -d -v threadtime "${tsarg[@]}" "${pidarg[@]}" 2>/dev/null \
+    | grep -aE 'complete-stop|rejected|accepted|refused|http=|url-{5,}|status-{5,}|DioException|Exception|FATAL' \
+    | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' | tail -60
+}
+
+# ui_texts_log tag : textes visibles de l'écran courant dans le log (un toast de refus dure 5 s).
+ui_texts_log() {
+  local tag="$1" texts=""
+  ui_xml && texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
+  _ulog "ecran $tag: ${texts:-dump indisponible}"
+}
+
 # stop_diag tag : preuves d'une tentative d'arrêt (capture, dump, extrait logcat). Texte seul, aucun secret.
 # Écrit TOUJOURS dans le log (« stop_diag dbg-<tag> ») : les fichiers sous diag/ et screens/ ne sont
 # pas lisibles dans le log CI (run 45004400552 : aucune ligne « dbg-stop » alors que les taps avaient eu lieu).
@@ -495,11 +516,10 @@ stop_diag() {
     cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true
     texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
   fi
-  adb logcat -d -t 400 2>/dev/null | grep -E 'AndroidRuntime|FATAL|complete-stop|Exception|died' | tail -40 \
-    | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g' > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+  app_logcat_since "${STOP_TAP_TS:-}" > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
   lc=$(wc -l < "$OUT/diag/dbg-$tag.logcat" 2>/dev/null | tr -d ' ')
   _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) | ${texts:-dump indisponible}"
-  [ "${lc:-0}" -gt 0 ] && tail -5 "$OUT/diag/dbg-$tag.logcat" | while IFS= read -r l; do _ulog "stop_diag dbg-$tag logcat: ${l:0:200}"; done
+  [ "${lc:-0}" -gt 0 ] && tail -12 "$OUT/diag/dbg-$tag.logcat" | while IFS= read -r l; do _ulog "stop_diag dbg-$tag app: ${l:0:220}"; done
   return 0
 }
 
@@ -540,9 +560,23 @@ driver_stop_confirm_ui() {
       return 2
     fi
     read -r x y kind <<<"$res"
+    STOP_TAP_TS="$(adb shell date +'%m-%d %H:%M:%S.000' 2>/dev/null | tr -d '\r')"
     adb shell input tap "$x" "$y" >/dev/null 2>&1
     _ulog "stop $n: « Confirmer l'arrêt » tapé @ $x,$y ($kind, essai $attempt)"
-    dialog_confirm "$pkg" "Confirmer" "Annuler" 8 15 || true
+    # Dialogue d'arrêt réel (app_dialog.dart) : titre « Confirmer l'arrêt » + Annuler/Confirmer, jamais le
+    # dialogue de fin de course (« Veuillez confirmer »). Sans lui, aucun « Confirmer » n'est tapé.
+    if { ui_xml && _spec_ok '+Annuler&+Confirmer&+Confirmer l.arrêt'; } >/dev/null 2>&1; then
+      _ulog "stop $n: dialogue d'arrêt reconnu (titre « Confirmer l'arrêt » + Annuler/Confirmer)"
+    else
+      _ulog "stop $n: WARN titre « Confirmer l'arrêt » absent du dialogue (essai $attempt)"
+    fi
+    if dialog_confirm "$pkg" "Confirmer" "Annuler" 8 15; then
+      sleep 1
+      ui_texts_log "stop${n}-a${attempt}-apres-confirmer"
+    else
+      _ulog "stop $n: dialogue d'arrêt non confirmé (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-nodialog"
+    fi
     sleep 3
     ride_state
     done_now="$(last_stops_done)"; done_now="${done_now:-0}"

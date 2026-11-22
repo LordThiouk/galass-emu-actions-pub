@@ -301,6 +301,78 @@ def test_no_hardcoded_fake_secret_left_in_smoke_log_test():
         assert lit not in body, lit
 
 
+# --------------------------------------------------------------- 8. logcat de l'APP sur la fenêtre du tap
+import secrets  # noqa: E402
+
+TOKEN = secrets.token_hex(12)  # jeton factice généré à l'exécution
+ADB = r'''
+adb() {
+  echo "$@" >> "%(taps)s"
+  case "$*" in
+    *pidof*) echo "4242" ;;
+    *"date +"*) echo "11-22 16:30:00.000" ;;
+    *logcat*) cat <<LOG
+11-22 16:30:01.100  4242  4242 I flutter : url--------------https://x.test/api/driver/rides/complete-stop/42
+11-22 16:30:01.200  4242  4242 I flutter : status-----------422
+11-22 16:30:01.300  4242  4242 I flutter : complete-stop rejected: http=422 remark=stop_too_far message=You are too far
+11-22 16:30:01.350  4242  4242 I flutter : complete-stop POST token=%(token)s
+11-22 16:30:01.400  4242  4242 D AndroidRuntime: Shutting down VM
+11-22 16:30:01.500   542   542 E AppOps  : binder noise
+LOG
+    ;;
+  esac
+}
+'''
+
+
+def adb_fn(tmp):
+    return ADB % dict(taps=os.path.join(tmp, "taps"), token=TOKEN)
+
+
+@case
+def test_app_logcat_since_keeps_app_http_and_hides_noise_and_tokens():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    rc, taps, out = base.harness(tmp, [base.RUNNING], [0], adb_fn(tmp) + 'app_logcat_since "11-22 16:30:00.000"; echo "rc=$?"')
+    assert "complete-stop rejected: http=422 remark=stop_too_far" in out, out
+    assert "status-----------422" in out and "complete-stop/42" in out, out
+    assert "Shutting down VM" not in out and "AppOps" not in out, out  # bruit uiautomator / binder
+    assert TOKEN not in out, "jeton non masqué"
+    assert "logcat -d -v threadtime -T 11-22 16:30:00.000 --pid=4242" in taps, taps
+
+
+@case
+def test_stop_diag_logs_app_lines_and_writes_logcat_file():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    rc, taps, out = base.harness(tmp, [base.RUNNING], [0],
+                                 adb_fn(tmp) + 'STOP_TAP_TS="11-22 16:30:00.000"; stop_diag stop1-a1; echo "rc=$?"')
+    assert "stop_diag dbg-stop1-a1 app: " in out and "remark=stop_too_far" in out, out
+    body = open(os.path.join(tmp, "diag", "dbg-stop1-a1.logcat"), encoding="utf-8").read()
+    assert "complete-stop rejected" in body and TOKEN not in body, body
+
+
+@case
+def test_confirm_marks_tap_time_then_logs_screen_after_confirm():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    toast = screen("Confirmer l'arrêt", "You are too far from the pending stop to confirm it.")
+    dlg = base.dump(base.node(0, "Confirmer l'arrêt", "[100,1300][900,1380]"), base.node(1, "Annuler", "[100,1400][400,1520]", clickable="true"), base.node(2, "Confirmer", "[500,1400][900,1520]", clickable="true"))
+    rc, taps, out = base.harness(tmp, [base.RUNNING, dlg, dlg, toast, base.RUNNING], [0, 0, 0, 0, 0, 0, 0, 0], adb_fn(tmp) + CALL)
+    lines = taps.splitlines()
+    i_date = next(i for i, l in enumerate(lines) if "date +" in l)
+    i_tap = next(i for i, l in enumerate(lines) if "input tap" in l)
+    assert i_date < i_tap, "repère temporel pris AVANT le tap"
+    assert "ecran stop1-a1-apres-confirmer:" in out, out
+    assert "dialogue d'arrêt reconnu" in out, out
+    assert "stop_diag dbg-stop1-a1 app: " in out and "remark=stop_too_far" in out, out
+
+
+@case
+def test_dialog_not_confirmed_writes_nodialog_diag():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    rc, taps, out = base.harness(tmp, [base.RUNNING], [0], adb_fn(tmp) + CALL)
+    assert "stop_diag dbg-stop1-a1-nodialog:" in out, out
+    assert os.path.isfile(os.path.join(tmp, "diag", "dbg-stop1-a1-nodialog.xml"))
+
+
 if __name__ == "__main__":
     failed = 0
     for fn in CASES:
