@@ -591,26 +591,31 @@ stop_diag() {
 }
 
 # stop_prime n : le serveur exige un ping de moins de 15 min et moins de 500 m de l'arrêt
-# (RideStopProgressionService::assertStopProximity). Avant CHAQUE tap : GPS émulateur sur l'arrêt, ping serveur
-# au même point (API), puis attente (bornée) d'un ping du Driver lui-même dans son logcat. Jamais bloquant.
-# Tableaux STOP_LAT / STOP_LNG posés par run.sh ; sans eux ou sans `api`, ne fait rien.
+# (RideStopProgressionService::assertStopProximity) et le Driver émet son PROPRE ping GPS, qui écrase le ping API.
+# Avant CHAQUE tap : lecture de base de la position du driver sur le serveur, GPS émulateur sur l'arrêt (adb emu geo fix
+# longitude latitude), puis attente BORNÉE (STOP_PING_WAIT s, défaut 24) d'un ping Driver frais : location_updated_at
+# changé, moins de 500 m, moins de 15 min (api stop_ping_check). Aucun ping API tant que ce ping n'est pas vu ; au
+# délai, WARN et un ping API en dernier recours. Jamais bloquant. STOP_LAT / STOP_LNG posés par run.sh ; sans eux ou
+# sans `api`, ne fait rien.
 stop_prime() {
-  local n="$1" i=$(( $1 - 1 )) lat lng ts t=0 seen=0
+  local n="$1" i=$(( $1 - 1 )) lat lng t=0 seen=0 prev out wait="${STOP_PING_WAIT:-24}"
   lat="${STOP_LAT[$i]:-}"; lng="${STOP_LNG[$i]:-}"
   [ -n "$lat" ] && [ -n "$lng" ] || return 0
   type api >/dev/null 2>&1 || return 0
+  prev="$(STOP_INDEX=$i api stop_ping_check 2>/dev/null | sed -n 's/.*PING updated_at=\([^ ]*\).*/\1/p' | tail -1)"
+  [ "$prev" = "none" ] && prev=""
   adb emu geo fix "$lng" "$lat" >/dev/null 2>&1 || true
-  ts="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
-  STOP_INDEX=$i api loc_stop >> "$OUT/run.log" 2>&1 || true
-  while [ "$t" -lt 20 ]; do
-    app_logcat_since "$ts" > "$OUT/diag/.prime.txt" 2>/dev/null || true
-    if grep -aqE 'location-update|location ping' "$OUT/diag/.prime.txt"; then seen=1; break; fi
+  while :; do
+    out="$(STOP_INDEX=$i PREV_UPDATED_AT="$prev" api stop_ping_check 2>/dev/null | grep -a 'PING updated_at' | tail -1)"
+    if printf '%s' "$out" | grep -aq 'PING_OK'; then seen=1; break; fi
+    [ "$t" -ge "$wait" ] && break
     sleep 4; t=$((t + 4))
   done
   if [ "$seen" = 1 ]; then
-    _ulog "stop $n: GPS émulateur + ping API posés sur l'arrêt ($lat,$lng) ; ping du Driver vu après ${t}s"
+    _ulog "stop $n: GPS émulateur sur l'arrêt ($lat,$lng) ; ping Driver frais vu sur le serveur après ${t}s : ${out}"
   else
-    _ulog "stop $n: WARN GPS émulateur + ping API posés sur l'arrêt ($lat,$lng) mais aucun ping du Driver vu en 20s [$APP_LC_STATS]"
+    STOP_INDEX=$i api loc_stop >> "$OUT/run.log" 2>&1 || true
+    _ulog "stop $n: WARN GPS émulateur sur l'arrêt ($lat,$lng) mais aucun ping Driver frais vu sur le serveur en ${wait}s (${out:-pas de lecture}) ; ping API posé en dernier recours"
   fi
   return 0
 }

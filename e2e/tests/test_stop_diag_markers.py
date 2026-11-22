@@ -396,18 +396,19 @@ def test_invalid_timestamp_falls_back_to_last_lines_and_stats_are_logged():
 
 
 @case
-def test_stop_prime_sets_gps_pings_server_then_waits_for_driver_ping():
+def test_stop_prime_sets_gps_then_waits_for_fresh_driver_ping_on_server():
     tmp = tempfile.mkdtemp(prefix="e2e-lc-")
     taps_path = os.path.join(tmp, "taps")
     body = (adb_fn(tmp).replace("*pidof*)", "*emu*) ;;\n    *pidof*)")
             + 'STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)\n'
-            + 'api() { echo "api $* idx=$STOP_INDEX" >> "%s"; }\n' % taps_path
+            + 'api() { echo "api $* idx=$STOP_INDEX" >> "%s"; echo "PING updated_at=T$RANDOM dist_m=10 age_s=2 PING_OK"; }\n' % taps_path
             + 'stop_prime 2; echo "rc=$?"')
     body = body.replace("complete-stop POST token", "driver/location-update ping token")
     rc, taps, out = base.harness(tmp, [base.RUNNING], [0], body)
     assert "emu geo fix -17.455 14.702" in taps, taps
-    assert "api loc_stop idx=1" in taps, taps
-    assert "ping du Driver vu" in out, out
+    assert "api stop_ping_check idx=1" in taps, taps
+    assert "api loc_stop" not in taps, taps   # le ping API masquerait le ping du Driver (ordre : test_stop_prime_order.py)
+    assert "ping Driver frais vu" in out, out
     rc, taps, out = base.harness(tempfile.mkdtemp(prefix="e2e-lc-"), [base.RUNNING], [0], 'stop_prime 1; echo "rc=$?"')
     assert rc == 0 and "geo fix" not in taps, (rc, taps)
 
