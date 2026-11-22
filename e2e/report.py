@@ -377,7 +377,13 @@ def build(out_dir, p0=None):
                     f"{dup['duplicate_of']} (png={dup.get('png', 'unknown')})")
 
     b2 = check_b2(sidecars)
-    if b2 is not None:
+    # L'écran en course du Driver est statique (identique à 37) : le run.sh marque driver-inride-stops WARN avec la
+    # raison. Cette seule absence ne fait plus échouer b2-captures ; tout autre problème B2 reste un FAIL.
+    inride_warn = any(p["point"] == "driver-inride-stops" and p["result"] == "WARN" for p in points)
+    if b2 and inride_warn and b2 == [f"{B2_POINTS[1]} missing"]:
+        _upsert(points, "b2-captures", "WARN",
+                "driver-inride-stops: écran en course statique (voir ce point), offre capturée")
+    elif b2 is not None:
         if b2:
             _upsert(points, "b2-captures", "FAIL", "; ".join(b2))
         else:

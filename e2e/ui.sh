@@ -485,17 +485,28 @@ dialog_confirm() {
 last_stops_done() { sed -n 's/.*stops_done=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | tail -1; }
 
 # app_logcat_since ts : lignes logcat de l'app Driver (processus du paquet) depuis ts « MM-JJ HH:MM:SS.mmm » :
-# appels HTTP (url/status), complete-stop (POST/rejected/accepted/refused), exceptions. Jetons masqués.
-# L'ancien extrait ne gardait que AndroidRuntime/uiautomator : « Shutting down VM » venait d'uiautomator, pas de l'app.
+# tout le tag flutter (Logger : url/status des appels HTTP, complete-stop POST/rejected/accepted), exceptions, FATAL.
+# Jetons masqués. Statistiques (brut = lignes de la fenêtre, app = lignes du pid du Driver) dans APP_LC_STATS pour que
+# « 0 ligne » soit explicable. Run 45046315983 : 0 ligne car la commande date non quotée perdait ses
+# quotes côté appareil (ts vide ; commande date passée en 2 arguments) ; sans ts valide on prend désormais les 600 dernières lignes.
+APP_LC_STATS=""
 app_logcat_since() {
-  local ts="${1:-}" pid
-  local -a pidarg=() tsarg=()
+  local ts="${1:-}" pid n_raw=0 n_app=0 raw="$OUT/diag/.applc-raw.txt" app="$OUT/diag/.applc-app.txt"
+  local -a tsarg=(-t 600)
+  mkdir -p "$OUT/diag"
+  case "$ts" in
+    [0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]) tsarg=(-T "$ts") ;;
+    *) ts="" ;;
+  esac
   pid=$(adb shell pidof "$DRIVER_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')
-  [ -n "$pid" ] && pidarg=(--pid="$pid")
-  [ -n "$ts" ] && tsarg=(-T "$ts")
-  adb logcat -d -v threadtime "${tsarg[@]}" "${pidarg[@]}" 2>/dev/null \
-    | grep -aE 'complete-stop|rejected|accepted|refused|http=|url-{5,}|status-{5,}|DioException|Exception|FATAL' \
+  adb logcat -d -v threadtime "${tsarg[@]}" > "$raw" 2>/dev/null || true
+  n_raw=$(wc -l < "$raw" 2>/dev/null | tr -d ' ')
+  if [ -n "$pid" ]; then awk -v p="$pid" '$3==p' "$raw" > "$app"; else cp "$raw" "$app"; fi
+  n_app=$(wc -l < "$app" 2>/dev/null | tr -d ' ')
+  APP_LC_STATS="ts=${ts:-aucun(600 dernières lignes)} pid=${pid:-inconnu} brut=${n_raw:-0} app=${n_app:-0}"
+  grep -aE ' [VDIWEF] flutter *:|complete-stop|rejected|accepted|refused|http=|DioException|Exception|FATAL' "$app" \
     | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' | tail -60
+  rm -f "$raw" "$app"
 }
 
 # ui_texts_log tag : textes visibles de l'écran courant dans le log (un toast de refus dure 5 s).
@@ -518,8 +529,33 @@ stop_diag() {
   fi
   app_logcat_since "${STOP_TAP_TS:-}" > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
   lc=$(wc -l < "$OUT/diag/dbg-$tag.logcat" 2>/dev/null | tr -d ' ')
-  _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) | ${texts:-dump indisponible}"
+  _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) [${APP_LC_STATS}] | ${texts:-dump indisponible}"
   [ "${lc:-0}" -gt 0 ] && tail -12 "$OUT/diag/dbg-$tag.logcat" | while IFS= read -r l; do _ulog "stop_diag dbg-$tag app: ${l:0:220}"; done
+  return 0
+}
+
+# stop_prime n : le serveur exige un ping de moins de 15 min et moins de 500 m de l'arrêt
+# (RideStopProgressionService::assertStopProximity). Avant CHAQUE tap : GPS émulateur sur l'arrêt, ping serveur
+# au même point (API), puis attente (bornée) d'un ping du Driver lui-même dans son logcat. Jamais bloquant.
+# Tableaux STOP_LAT / STOP_LNG posés par run.sh ; sans eux ou sans `api`, ne fait rien.
+stop_prime() {
+  local n="$1" i=$(( $1 - 1 )) lat lng ts t=0 seen=0
+  lat="${STOP_LAT[$i]:-}"; lng="${STOP_LNG[$i]:-}"
+  [ -n "$lat" ] && [ -n "$lng" ] || return 0
+  type api >/dev/null 2>&1 || return 0
+  adb emu geo fix "$lng" "$lat" >/dev/null 2>&1 || true
+  ts="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
+  STOP_INDEX=$i api loc_stop >> "$OUT/run.log" 2>&1 || true
+  while [ "$t" -lt 20 ]; do
+    app_logcat_since "$ts" > "$OUT/diag/.prime.txt" 2>/dev/null || true
+    if grep -aqE 'location-update|location ping' "$OUT/diag/.prime.txt"; then seen=1; break; fi
+    sleep 4; t=$((t + 4))
+  done
+  if [ "$seen" = 1 ]; then
+    _ulog "stop $n: GPS émulateur + ping API posés sur l'arrêt ($lat,$lng) ; ping du Driver vu après ${t}s"
+  else
+    _ulog "stop $n: WARN GPS émulateur + ping API posés sur l'arrêt ($lat,$lng) mais aucun ping du Driver vu en 20s [$APP_LC_STATS]"
+  fi
   return 0
 }
 
@@ -560,7 +596,8 @@ driver_stop_confirm_ui() {
       return 2
     fi
     read -r x y kind <<<"$res"
-    STOP_TAP_TS="$(adb shell date +'%m-%d %H:%M:%S.000' 2>/dev/null | tr -d '\r')"
+    stop_prime "$n"
+    STOP_TAP_TS="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
     adb shell input tap "$x" "$y" >/dev/null 2>&1
     _ulog "stop $n: « Confirmer l'arrêt » tapé @ $x,$y ($kind, essai $attempt)"
     # Dialogue d'arrêt réel (app_dialog.dart) : titre « Confirmer l'arrêt » + Annuler/Confirmer, jamais le

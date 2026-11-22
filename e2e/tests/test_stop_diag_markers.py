@@ -317,6 +317,8 @@ adb() {
 11-22 16:30:01.300  4242  4242 I flutter : complete-stop rejected: http=422 remark=stop_too_far message=You are too far
 11-22 16:30:01.350  4242  4242 I flutter : complete-stop POST token=%(token)s
 11-22 16:30:01.400  4242  4242 D AndroidRuntime: Shutting down VM
+11-22 16:30:01.450  4242  4242 I flutter : ligne-app-connue-sans-motif ride=7
+11-22 16:30:01.460  9999  9999 I flutter : ligne-du-rider-autre-pid complete-stop
 11-22 16:30:01.500   542   542 E AppOps  : binder noise
 LOG
     ;;
@@ -337,7 +339,9 @@ def test_app_logcat_since_keeps_app_http_and_hides_noise_and_tokens():
     assert "status-----------422" in out and "complete-stop/42" in out, out
     assert "Shutting down VM" not in out and "AppOps" not in out, out  # bruit uiautomator / binder
     assert TOKEN not in out, "jeton non masqué"
-    assert "logcat -d -v threadtime -T 11-22 16:30:00.000 --pid=4242" in taps, taps
+    assert "logcat -d -v threadtime -T 11-22 16:30:00.000" in taps, taps
+    assert "ligne-app-connue-sans-motif" in out, out        # ligne connue de l'app Driver (tag flutter), sans motif
+    assert "ligne-du-rider-autre-pid" not in out, out        # autre pid : exclue
 
 
 @case
@@ -371,6 +375,41 @@ def test_dialog_not_confirmed_writes_nodialog_diag():
     rc, taps, out = base.harness(tmp, [base.RUNNING], [0], adb_fn(tmp) + CALL)
     assert "stop_diag dbg-stop1-a1-nodialog:" in out, out
     assert os.path.isfile(os.path.join(tmp, "diag", "dbg-stop1-a1-nodialog.xml"))
+
+
+@case
+def test_tap_timestamp_is_one_quoted_adb_argument():
+    # `adb shell date +'%m-%d …'` éclatait en 2 arguments côté appareil (date « bad date » → ts vide → logcat=0)
+    src = open(os.path.join(base.ROOT, "ui.sh"), encoding="utf-8").read()
+    assert "adb shell \"date +'%m-%d %H:%M:%S.000'\"" in src
+    assert "adb shell date +" not in src
+
+
+@case
+def test_invalid_timestamp_falls_back_to_last_lines_and_stats_are_logged():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    rc, taps, out = base.harness(tmp, [base.RUNNING], [0],
+                                 adb_fn(tmp) + 'STOP_TAP_TS=""; stop_diag stop1-a1; echo "rc=$?"')
+    assert "logcat -d -v threadtime -t 600" in taps, taps
+    assert "pid=4242" in out and "brut=" in out and "app=" in out, out
+    assert "ligne-app-connue-sans-motif" in out, out
+
+
+@case
+def test_stop_prime_sets_gps_pings_server_then_waits_for_driver_ping():
+    tmp = tempfile.mkdtemp(prefix="e2e-lc-")
+    taps_path = os.path.join(tmp, "taps")
+    body = (adb_fn(tmp).replace("*pidof*)", "*emu*) ;;\n    *pidof*)")
+            + 'STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)\n'
+            + 'api() { echo "api $* idx=$STOP_INDEX" >> "%s"; }\n' % taps_path
+            + 'stop_prime 2; echo "rc=$?"')
+    body = body.replace("complete-stop POST token", "driver/location-update ping token")
+    rc, taps, out = base.harness(tmp, [base.RUNNING], [0], body)
+    assert "emu geo fix -17.455 14.702" in taps, taps
+    assert "api loc_stop idx=1" in taps, taps
+    assert "ping du Driver vu" in out, out
+    rc, taps, out = base.harness(tempfile.mkdtemp(prefix="e2e-lc-"), [base.RUNNING], [0], 'stop_prime 1; echo "rc=$?"')
+    assert rc == 0 and "geo fix" not in taps, (rc, taps)
 
 
 if __name__ == "__main__":

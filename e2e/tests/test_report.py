@@ -633,5 +633,23 @@ def main():
     return 1 if failed else 0
 
 
+@case
+def test_b2_missing_inride_with_warn_row_is_warn_not_fail():
+    import report
+
+    # écran en course statique : run.sh marque driver-inride-stops WARN et ne capture pas
+    out = make_out([("driver-offer-with-stops", "PASS", "ok"),
+                    ("driver-inride-stops", "WARN", "écran en course statique")], _b2_caps()[:1])
+    res = report.build(out, p0={"driver-offer-with-stops"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["b2-captures"]["result"] == "WARN", rows["b2-captures"]
+    assert rows["driver-inride-stops"]["result"] == "WARN", rows["driver-inride-stops"]
+    # sans la ligne WARN, l'absence reste un FAIL
+    out = make_out([("driver-offer-with-stops", "PASS", "ok")], _b2_caps()[:1])
+    res = report.build(out, p0={"driver-offer-with-stops"})
+    rows = {p["point"]: p for p in res["points"]}
+    assert rows["b2-captures"]["result"] == "FAIL", rows["b2-captures"]
+
+
 if __name__ == "__main__":
     sys.exit(main())
