@@ -393,7 +393,12 @@ wait_fg() {
 bring_fg() {
   fg_is "$1" && return 0
   log "bring_fg $(fg_pkg) -> $1"
-  adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  # REORDER_TO_FRONT : ramène la tâche existante sans la recréer (monkey LAUNCHER renvoyait le Driver à
+  # l'accueil). Repli monkey si le composant n'est pas résolu.
+  local comp
+  comp=$(adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$1" 2>/dev/null | tail -1 | tr -d '\r')
+  if [[ "$comp" == */* ]] && adb shell am start -n "$comp" -f 0x20000 >/dev/null 2>&1; then :
+  else adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; fi
   wait_fg "$1" 30
 }
 
@@ -983,36 +988,20 @@ for i in 0 1; do
   else
     ui_screen_diag "driver: écran réel sans « Confirmer l'arrêt » (arrêt $n)"
   fi
-  _try_stop_confirm() {
-    # Deux formes de dialogue observées selon la version Driver : ui_action attend
-    # "^Confirmer$" seul ; dialog_confirm attend la paire Confirmer/Annuler.
-    if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
-       && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
-      return 0
-    fi
-    if dialog_confirm "$DRIVER_PKG" "Confirmer" "Annuler" 10 20 \
-       && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
-      return 0
-    fi
-    return 1
-  }
-  if _try_stop_confirm; then
-    ui_stop_ok=1
+  # Preuve = SERVEUR (stops_done>=n) après des taps UI sur le parent cliquable, jamais l'API de
+  # complétion (run 44927908295 : aucun complete-stop reçu des taps, un seul POST = le repli).
+  driver_stop_confirm_ui "$DRIVER_PKG" "$n"; stop_rc=$?
+  if [ "$stop_rc" = "2" ]; then
+    # Le Driver a quitté l'écran de course (accueil « En ligne » observé à l'arrêt 2) : y revenir par
+    # la liste « Courses », puis un seul nouvel essai. Écran d'arrivée journalisé pour le prochain run.
+    ui_screen_diag "driver: hors écran de course avant l'arrêt $n — retour par Courses"
+    tap_when "$DRIVER_PKG" "Courses" >/dev/null 2>&1 || true
+    ui_screen_diag "driver: après tap Courses (arrêt $n)"
+    tap_when "$DRIVER_PKG" "E2E Rider" >/dev/null 2>&1 || true
+    wait_ui "$DRIVER_PKG" 20 "+Confirmer l.arrêt" || true
+    driver_stop_confirm_ui "$DRIVER_PKG" "$n"; stop_rc=$?
   fi
-  # Run 44892375725 : les 2 arrêts ont dû passer par le repli API (ui-stops 0/2) — la
-  # confirmation UI n'a pas tenu sur la première fenêtre (bouton/dialogue/marker). Le retry
-  # sur fenêtres fraîches est la voie normale pour atteindre 2/2 taps UI confirmés ; le repli
-  # API reste le dernier ressort, jamais silencieux (mark FAIL adjacent + api stop_one).
-  stop_try=0
-  while [ "$stop_try" -lt 2 ] && [ "$ui_stop_ok" != 1 ]; do
-    bring_fg "$DRIVER_PKG" || true
-    clear_sys || true
-    if _try_stop_confirm; then
-      ui_stop_ok=1
-    fi
-    stop_try=$((stop_try + 1))
-    sleep 2
-  done
+  [ "$stop_rc" = "0" ] && ui_stop_ok=1
   if [ "$ui_stop_ok" = "1" ]; then
     if [ "$i" -eq 0 ]; then UI_STOP0=1; else UI_STOP1=1; fi
     ui_stops=$((ui_stops + 1))
@@ -1172,21 +1161,16 @@ fi
 # ---------------------------------------------------------------- rating
 try_tap "$RIDER_PKG" "Noter la course" "Notez la course" "Avis" >/dev/null 2>&1 || true
 cap rider-rating 30-rider-rating "$RIDER_PKG" 20
-adb shell input keyevent 4 >/dev/null 2>&1 || true
-# S11: home-after only means something if the app never relaunched on the way there,
-# and only after point 29 was actually observed.
-home_left=0
-for _ in $(seq 1 10); do
-  fg_is "$RIDER_PKG" || { home_left=1; break; }
-  sleep 1
-done
-if [ "$home_left" = "1" ]; then
-  mark rider-home-after FAIL "l'app a quitté le premier plan (relance) après back"
-elif ! printf '%s\n' "${RESULTS[@]}" | grep -q '^rider-final-itinerary|PASS|'; then
+# S11: home-after = l'accueil OBSERVÉ, après le point 29. Plus de Back aveugle : sur l'accueil (racine
+# Flutter) il quittait l'app (run 44927908295, capture 30 = accueil déjà affiché).
+if ! printf '%s\n' "${RESULTS[@]}" | grep -q '^rider-final-itinerary|PASS|'; then
   mark rider-home-after FAIL "point 29 (rider-final-itinerary) non observé"
-else
-  bring_fg "$RIDER_PKG" || true
+elif ! bring_fg "$RIDER_PKG"; then
+  mark rider-home-after FAIL "Rider jamais au premier plan avant la sortie de la notation"
+elif rider_leave_rating "$RIDER_PKG" && fg_is "$RIDER_PKG"; then
   cap rider-home-after 31-rider-home-after "$RIDER_PKG" 25
+else
+  mark rider-home-after FAIL "accueil Rider jamais observé après notation (ou app hors premier plan)"
 fi
 # B1 — le dialogue « Terminez votre course » ne doit pas flotter au-dessus de l'accueil.
 if ! [ -s "$OUT/ui/31-rider-home-after.xml" ]; then

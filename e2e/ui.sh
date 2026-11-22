@@ -481,6 +481,90 @@ dialog_confirm() {
   return 1
 }
 
+# last_stops_done : stops_done=N lu dans $OUT/last-ride-state.txt (écrit par ride_state), vide si absent.
+last_stops_done() { sed -n 's/.*stops_done=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | tail -1; }
+
+# stop_diag tag : preuves d'un tap d'arrêt sans effet (capture, dump, extrait logcat). Texte seul, aucun secret.
+stop_diag() {
+  local tag="$1"
+  mkdir -p "$OUT/diag" "$OUT/screens"
+  adb exec-out screencap -p > "$OUT/screens/dbg-$tag.png" 2>/dev/null || true
+  if ui_xml; then cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true; fi
+  adb logcat -d -t 400 2>/dev/null | grep -E 'AndroidRuntime|FATAL|complete-stop|Exception|died' | tail -40 \
+    > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+}
+
+# driver_stop_confirm_ui pkg n : « Confirmer l'arrêt » n côté Driver par taps UI uniquement.
+# 0 = le SERVEUR a vu l'arrêt n (stops_done>=n) à la suite de ces taps ; 2 = bouton absent ;
+# 3 = état inattendu (arrêt déjà fait avant tout tap) ; 1 = taps sans effet serveur (diagnostic écrit).
+# Les taps visent le parent CLIQUABLE (même méthode que « Prise en charge », prouvée) ; l'ancien
+# tap_exact visait le centre du libellé, et le serveur n'a reçu aucun complete-stop (run 44927908295).
+# Un nouvel essai ne retape jamais si le serveur a déjà vu l'arrêt (sinon il confirmerait l'arrêt suivant).
+# Aucun appel API de complétion ici : le repli API reste à l'appelant, compté en échec.
+driver_stop_confirm_ui() {
+  local pkg="$1" n="$2" attempt tool res x y kind done_now
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  for attempt in 1 2 3; do
+    ride_state
+    done_now="$(last_stops_done)"; done_now="${done_now:-0}"
+    if [ "$done_now" -ge "$n" ]; then
+      if [ "$attempt" -eq 1 ]; then _ulog "stop $n: déjà fait côté serveur avant tout tap"; return 3; fi
+      _ulog "stop $n: vu par le serveur après le tap de l'essai $((attempt - 1))"; return 0
+    fi
+    if ! ui_xml; then _ulog "stop $n: dump indisponible (essai $attempt)"; sleep 2; continue; fi
+    res=$(python3 "$tool" "$UI_XML_PATH" "Confirmer l'arrêt")
+    if [ -z "$res" ]; then
+      _ulog "stop $n: bouton « Confirmer l'arrêt » absent (essai $attempt)"
+      stop_diag "stop${n}-nobutton"
+      return 2
+    fi
+    read -r x y kind <<<"$res"
+    adb shell input tap "$x" "$y" >/dev/null 2>&1
+    _ulog "stop $n: « Confirmer l'arrêt » tapé @ $x,$y ($kind, essai $attempt)"
+    dialog_confirm "$pkg" "Confirmer" "Annuler" 8 15 || true
+    sleep 3
+    ride_state
+    done_now="$(last_stops_done)"; done_now="${done_now:-0}"
+    if [ "$done_now" -ge "$n" ]; then
+      _ulog "stop $n: serveur stops_done=$done_now après les taps UI (essai $attempt)"
+      return 0
+    fi
+    stop_diag "stop${n}-a${attempt}"
+  done
+  return 1
+}
+
+# rider_leave_rating pkg : après la notation, ramène le Rider à l'accueil SANS Back aveugle.
+# Un Back sur l'accueil (racine Flutter) quitte l'app : c'était la fausse panne « rider-home-after »
+# du run 44927908295, où la capture « notation » montrait déjà l'accueil. 0 = accueil (« Où allez-vous ? »)
+# observé ; 1 = accueil jamais atteint. Un Back n'est envoyé que si l'accueil n'est pas déjà là.
+rider_leave_rating() {
+  local pkg="$1" i tool res x y kind lab
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  for i in 1 2 3 4 5 6; do
+    if ! ui_xml; then sleep 2; continue; fi
+    if [ -n "$(python3 "$tool" "$UI_XML_PATH" "Où allez-vous ?")" ]; then
+      _ulog "rider_leave_rating: accueil observé (essai $i), aucun Back envoyé si déjà là"
+      return 0
+    fi
+    res=""
+    for lab in "Plus tard" "Passer" "Ignorer" "Fermer"; do
+      res=$(python3 "$tool" "$UI_XML_PATH" "$lab")
+      [ -n "$res" ] && break
+    done
+    if [ -n "$res" ]; then
+      read -r x y kind <<<"$res"
+      adb shell input tap "$x" "$y" >/dev/null 2>&1
+      _ulog "rider_leave_rating: « $lab » tapé @ $x,$y ($kind)"
+    else
+      adb shell input keyevent 4 >/dev/null 2>&1
+      _ulog "rider_leave_rating: écran non-accueil, Back envoyé (essai $i)"
+    fi
+    sleep 3
+  done
+  return 1
+}
+
 # tap_node_verified pkg label : tape le centre du nœud (ou de son parent cliquable) trouvé par
 # texte/content-desc dans le dump, puis PROUVE que l'écran a changé : le libellé a disparu ou
 # un champ de saisie est apparu. Jusqu'à 2 retaps. 0 = écran changé, 1 = rien ne s'est passé.
