@@ -220,6 +220,8 @@ jobs:
             e2e-out/summary.md
             e2e-out/report.json
             e2e-out/ui/*.xml
+            e2e-out/diag/dbg-*.xml
+            e2e-out/diag/dbg-*.logcat
           retention-days: 7
           if-no-files-found: warn
 

@@ -516,11 +516,14 @@ def test_rider_final_itinerary_rejects_composition_screen():
 
 
 @case
-def test_rider_home_after_marker_is_location_picker():
+def test_rider_home_after_marker_is_the_real_home_screen():
+    # Écran réel (run 45004400552, capture 31) : « Partons pour une course » + « Où allez-vous ? ».
+    # L'ancien marqueur supposait l'écran de composition (« Confirmer le lieu »…) et ne l'a jamais reconnu.
     spec = markers()["rider_home_after"]
-    home = _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")
+    home = _xml("E2E Rider MHV3+674, Rue CO 38, Dakar, Senegal", "Partons pour une course", "Où allez-vous ?")
     assert spec_ok(spec, home) == 0, spec
     assert spec_ok(spec, _xml("Avis", "Course terminée")) != 0, spec
+    assert spec_ok(spec, _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")) != 0, spec
 
 
 @case

@@ -484,19 +484,30 @@ dialog_confirm() {
 # last_stops_done : stops_done=N lu dans $OUT/last-ride-state.txt (écrit par ride_state), vide si absent.
 last_stops_done() { sed -n 's/.*stops_done=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | tail -1; }
 
-# stop_diag tag : preuves d'un tap d'arrêt sans effet (capture, dump, extrait logcat). Texte seul, aucun secret.
+# stop_diag tag : preuves d'une tentative d'arrêt (capture, dump, extrait logcat). Texte seul, aucun secret.
+# Écrit TOUJOURS dans le log (« stop_diag dbg-<tag> ») : les fichiers sous diag/ et screens/ ne sont
+# pas lisibles dans le log CI (run 45004400552 : aucune ligne « dbg-stop » alors que les taps avaient eu lieu).
 stop_diag() {
-  local tag="$1"
+  local tag="$1" texts="" lc
   mkdir -p "$OUT/diag" "$OUT/screens"
   adb exec-out screencap -p > "$OUT/screens/dbg-$tag.png" 2>/dev/null || true
-  if ui_xml; then cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true; fi
+  if ui_xml; then
+    cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true
+    texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
+  fi
   adb logcat -d -t 400 2>/dev/null | grep -E 'AndroidRuntime|FATAL|complete-stop|Exception|died' | tail -40 \
-    > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+    | sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g' > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+  lc=$(wc -l < "$OUT/diag/dbg-$tag.logcat" 2>/dev/null | tr -d ' ')
+  _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) | ${texts:-dump indisponible}"
+  [ "${lc:-0}" -gt 0 ] && tail -5 "$OUT/diag/dbg-$tag.logcat" | while IFS= read -r l; do _ulog "stop_diag dbg-$tag logcat: ${l:0:200}"; done
+  return 0
 }
 
 # driver_stop_confirm_ui pkg n : « Confirmer l'arrêt » n côté Driver par taps UI uniquement.
 # 0 = le SERVEUR a vu l'arrêt n (stops_done>=n) à la suite de ces taps ; 2 = bouton absent ;
 # 3 = état inattendu (arrêt déjà fait avant tout tap) ; 1 = taps sans effet serveur (diagnostic écrit).
+# Diagnostic dbg-stopN-aK : écrit à CHAQUE tentative et sur TOUTES les sorties (échec, état inattendu,
+# dump indisponible, bouton absent, succès), jamais seulement après un échec silencieux.
 # Les taps visent le parent CLIQUABLE (même méthode que « Prise en charge », prouvée) ; l'ancien
 # tap_exact visait le centre du libellé, et le serveur n'a reçu aucun complete-stop (run 44927908295).
 # Un nouvel essai ne retape jamais si le serveur a déjà vu l'arrêt (sinon il confirmerait l'arrêt suivant).
@@ -508,14 +519,24 @@ driver_stop_confirm_ui() {
     ride_state
     done_now="$(last_stops_done)"; done_now="${done_now:-0}"
     if [ "$done_now" -ge "$n" ]; then
-      if [ "$attempt" -eq 1 ]; then _ulog "stop $n: déjà fait côté serveur avant tout tap"; return 3; fi
-      _ulog "stop $n: vu par le serveur après le tap de l'essai $((attempt - 1))"; return 0
+      if [ "$attempt" -eq 1 ]; then
+        _ulog "stop $n: déjà fait côté serveur avant tout tap"
+        stop_diag "stop${n}-a${attempt}-already"
+        return 3
+      fi
+      _ulog "stop $n: vu par le serveur après le tap de l'essai $((attempt - 1))"
+      stop_diag "stop${n}-a${attempt}-seen"
+      return 0
     fi
-    if ! ui_xml; then _ulog "stop $n: dump indisponible (essai $attempt)"; sleep 2; continue; fi
+    if ! ui_xml; then
+      _ulog "stop $n: dump indisponible (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-nodump"
+      sleep 2; continue
+    fi
     res=$(python3 "$tool" "$UI_XML_PATH" "Confirmer l'arrêt")
     if [ -z "$res" ]; then
       _ulog "stop $n: bouton « Confirmer l'arrêt » absent (essai $attempt)"
-      stop_diag "stop${n}-nobutton"
+      stop_diag "stop${n}-a${attempt}-nobutton"
       return 2
     fi
     read -r x y kind <<<"$res"
@@ -527,6 +548,7 @@ driver_stop_confirm_ui() {
     done_now="$(last_stops_done)"; done_now="${done_now:-0}"
     if [ "$done_now" -ge "$n" ]; then
       _ulog "stop $n: serveur stops_done=$done_now après les taps UI (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-ok"
       return 0
     fi
     stop_diag "stop${n}-a${attempt}"
@@ -562,6 +584,73 @@ rider_leave_rating() {
     fi
     sleep 3
   done
+  return 1
+}
+
+# _screen_sig xml : signature des textes visibles d'un dump, jetons de durée/horloge masqués
+# (un minuteur qui avance n'est pas un changement d'écran ; un compteur « 0/2 » → « 1/2 » en est un).
+_screen_sig() {
+  python3 - "$1" <<'PY'
+import html, re, sys
+try:
+    xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+out = []
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+    if re.search(r'visible-to-user="false"', tag):
+        continue
+    for name in ("text", "content-desc"):
+        a = re.search(r'\b' + name + r'="([^"]*)"', tag)
+        t = re.sub(r"\s+", " ", html.unescape(a.group(1))).strip().lower() if a else ""
+        if t:
+            t = re.sub(r"\b\d+(?=\s*(?:mins?|minutes?|h|sec|s)\b)", "#", t)
+            t = re.sub(r"\b\d{1,2}:\d{2}\b", "#:#", t)
+            out.append(t)
+print("\n".join(out))
+PY
+}
+
+# wait_screen_change ref_xml timeout : attend que l'écran courant DIFFÈRE de ref_xml (signature de textes).
+# 0 = changement observé ; 1 = écran toujours identique à la référence après `timeout` s. Une capture
+# prise sans attendre redonnait l'écran précédent (35b = 37 octet pour octet, run 45004400552).
+wait_screen_change() {
+  local ref="$1" tmo="${2:-20}" t0=$SECONDS refsig cur
+  refsig="$(_screen_sig "$ref")"
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    if ui_xml; then
+      cur="$(_screen_sig "$UI_XML_PATH")"
+      if [ -n "$cur" ] && [ "$cur" != "$refsig" ]; then
+        _ulog "wait_screen_change: écran différent de $(basename "$ref") après $((SECONDS - t0))s"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "wait_screen_change: écran toujours identique à $(basename "$ref") après ${tmo}s"
+  return 1
+}
+
+# rider_dismiss_blocking_dialog pkg : ferme le dialogue « Terminez votre course » (my_strings
+# runningRideAlertTitle) qui recouvre l'écran de course côté Rider (run 45004400552, captures 23/24 :
+# seuls « Terminez votre course / Continuer / Dismiss » étaient visibles, donc compteur et bannière
+# introuvables). Back uniquement : jamais « Continuer » (il terminerait la course). 3 = dialogue absent ;
+# 0 = vu puis fermé (la présence est un constat produit à tracer par l'appelant) ; 1 = toujours là.
+rider_dismiss_blocking_dialog() {
+  local pkg="$1" i
+  ui_xml || return 3
+  grep -q 'Terminez votre course' "$UI_XML_PATH" 2>/dev/null || return 3
+  _ulog "rider: dialogue « Terminez votre course » au-dessus de l'écran de course"
+  for i in 1 2; do
+    adb shell input keyevent 4 >/dev/null 2>&1
+    sleep 2
+    if ui_xml && ! grep -q 'Terminez votre course' "$UI_XML_PATH" 2>/dev/null; then
+      _ulog "rider: dialogue fermé par Back (essai $i)"
+      return 0
+    fi
+  done
+  _ulog "rider: dialogue « Terminez votre course » toujours présent après 2 Back"
   return 1
 }
 

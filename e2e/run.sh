@@ -126,8 +126,10 @@ MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintena
 MARK_rider_final_itinerary='+Course terminée|-Chargement|-Confirmer le lieu'
 # Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
 MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
-# Accueil réel après la course : sélecteur de lieu (my_strings confirmLocation / pickUpLocation).
-MARK_rider_home_after='+Confirmer le lieu|+Lieu de prise en charge|+Destination|-Course terminée'
+# Accueil réel après la course (run 45004400552, capture 31) : « Partons pour une course » (letsTakeARide,
+# location_pickup_widget:57) ET « Où allez-vous ? » (whereToGo) ; ni la notation, ni le dialogue de course,
+# ni le sélecteur de composition (« Confirmer le lieu ») ne doivent être au premier plan.
+MARK_rider_home_after='+Partons pour une course&+Où allez-vous&-Course terminée&-Terminez votre course&-Confirmer le lieu'
 # L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
 # construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
 MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
@@ -943,9 +945,15 @@ fi
 ride_state
 bring_fg "$DRIVER_PKG" || true
 cap driver-running-stop1 37-driver-running-stop1 "$DRIVER_PKG" 25
-# B2 (b) — seconde capture Driver distincte, en course, après le start.
+# B2 (b) — seconde capture Driver distincte, en course, après le start. Prise sans attente elle
+# redonnait l'écran de 37 octet pour octet (duplicate-state, run 45004400552) : on attend un écran
+# réellement différent ; faute de quoi le point échoue avec la raison, jamais sur une copie.
 bring_fg "$DRIVER_PKG" || true
-cap driver-inride-stops 35b-driver-inride "$DRIVER_PKG" 25
+if wait_screen_change "$OUT/ui/37-driver-running-stop1.xml" 30; then
+  cap driver-inride-stops 35b-driver-inride "$DRIVER_PKG" 25
+else
+  mark driver-inride-stops FAIL "écran Driver identique à 37-driver-running-stop1 après 30s : aucun état distinct observé, pas de capture dupliquée"
+fi
 if ! grep -qiE "Terminer la course|Arrêt 1" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
   mark bug-b2-inride-stops WARN "B2 non concluant: écran de course non atteint (35b)"
 elif grep -qiE "Arrêt [12]|E2E Stop" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
@@ -1012,6 +1020,9 @@ for i in 0 1; do
   fi
   ride_state
   bring_fg "$RIDER_PKG" || true
+  # Dialogue « Terminez votre course » : constat produit tracé (WARN), puis fermé par Back pour lire l'écran dessous.
+  rider_dismiss_blocking_dialog "$RIDER_PKG"; dlg_rc=$?
+  [ "$dlg_rc" = "3" ] || mark "bug-rider-stop${n}-run-dialog" WARN "dialogue « Terminez votre course » au-dessus de l'écran de course après l'arrêt $n (fermeture rc=$dlg_rc)"
   if [ "$i" -eq 0 ]; then
     # 23 : compteur « 1/2 arrêt terminé » rendu par l'app corrigée (marqueur ci-dessus).
     cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
