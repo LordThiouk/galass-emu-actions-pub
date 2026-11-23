@@ -204,6 +204,23 @@ def test_five_api_fallbacks_are_adjacent_to_a_fail_mark():
 
 
 @case
+def test_driver_stop_retry_precedes_the_api_fallback():
+    """Run 44927908295 : aucun complete-stop reçu des taps UI. La voie UI (driver_stop_confirm_ui,
+    preuve SERVEUR, 3 essais sans re-tap si l'arrêt est déjà vu) précède le repli API, qui reste
+    le dernier ressort (mark FAIL adjacent + api stop_one) et ne compte jamais comme succès."""
+    t = run_text()
+    start = t.index('next_marker="MARK_driver_stop${n}_done"')
+    end = t.index('mark "driver-stop${n}-done" FAIL', start)
+    window = t[start:end]
+    assert 'driver_stop_confirm_ui "$DRIVER_PKG" "$n"' in window, window
+    assert '[ "$stop_rc" = "0" ] && ui_stop_ok=1' in window, window
+    assert window.index('driver_stop_confirm_ui') < window.index('if [ "$ui_stop_ok" = "1" ]; then'), window
+    ui = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui.sh")).read()
+    fn = ui[ui.index("driver_stop_confirm_ui() {"):ui.index("rider_leave_rating() {")]
+    assert "for attempt in 1 2 3" in fn and "stop_one" not in fn, fn
+
+
+@case
 def test_spec_ok_honours_or_and_whitespace():
     assert spec_ok(r"+Accepter\s+la\s+course|-Accueil") == 0
     assert spec_ok("+Nope|+Où allez-vous") == 0
@@ -499,11 +516,14 @@ def test_rider_final_itinerary_rejects_composition_screen():
 
 
 @case
-def test_rider_home_after_marker_is_location_picker():
+def test_rider_home_after_marker_is_the_real_home_screen():
+    # Écran réel (run 45004400552, capture 31) : « Partons pour une course » + « Où allez-vous ? ».
+    # L'ancien marqueur supposait l'écran de composition (« Confirmer le lieu »…) et ne l'a jamais reconnu.
     spec = markers()["rider_home_after"]
-    home = _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")
+    home = _xml("E2E Rider MHV3+674, Rue CO 38, Dakar, Senegal", "Partons pour une course", "Où allez-vous ?")
     assert spec_ok(spec, home) == 0, spec
     assert spec_ok(spec, _xml("Avis", "Course terminée")) != 0, spec
+    assert spec_ok(spec, _xml("Confirmer le lieu", "Lieu de prise en charge", "Destination")) != 0, spec
 
 
 @case
@@ -548,7 +568,9 @@ def test_pickup_diag_captures_backend_status_right_after_the_tap():
 def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
     """Galass_Driver my_strings.confirmStop = « Confirmer l'arrêt » ; aucun « Terminer l'arrêt »."""
     t = run_text()
-    assert 'try_confirm "$DRIVER_PKG" "Confirmer l\'arrêt"' in t
+    ui = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui.sh")).read()
+    assert '"Confirmer l\'arrêt")' in ui[ui.index("driver_stop_confirm_ui() {"):], "tap du bouton réel (parent cliquable)"
+    assert 'driver_stop_confirm_ui "$DRIVER_PKG" "$n"' in t
     assert "Terminer l'arrêt" not in t.replace("Terminer l'arrêt » n'existe", "").replace("« Terminer l'arrêt »", ""), \
         "plus de tap sur un bouton « Terminer l'arrêt » inexistant"
     assert "wait_ui \"$DRIVER_PKG\" 45 '+Confirmer l.arrêt'" in t, "attente du bouton avant le tap"
@@ -958,7 +980,9 @@ def test_b4_decline_count_excludes_retry_window():
 def test_home_after_proves_no_relaunch():
     body = run_text()
     assert "rider-final-itinerary|PASS" in body, body
-    assert "home_left" in body or "home_relaunch" in body, body
+    assert "rider_leave_rating" in body, body
+    seg = body[body.index("cap rider-rating 30-rider-rating"):body.index("rider-home-after FAIL \"accueil Rider jamais observé")]
+    assert "keyevent 4" not in seg, "Back aveugle avant home-after (quitte l'app sur l'accueil)"
 
 
 # ---------------------------------------------------- S2/S14/S15/S18/S21

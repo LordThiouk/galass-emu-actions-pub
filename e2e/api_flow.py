@@ -224,6 +224,11 @@ def accept_offer(retries=20, delay=3):
             save()
             return True
         remark = j.get("remark")
+        if remark == "offer_expired":
+            # Terminus : l'offre est morte côté backend, retenter ne peut que la marteler.
+            st["offer_accept"] = j
+            save()
+            return False
         if remark == "not_authorized" or remark == "ride_unavailable":
             time.sleep(delay)
             continue
@@ -387,6 +392,49 @@ elif step == "stops":
 elif step == "loc_stop":
     i = int(os.environ.get("STOP_INDEX", "0"))
     driver_loc(STOPS[i]["latitude"], STOPS[i]["longitude"])
+elif step == "stop_ping_check":
+    # Position du driver lue SUR LE SERVEUR (ride.driver du détail de course) : distance à l'arrêt visé et âge du ping.
+    # OK = moins de 500 m, moins de 15 min et, si PREV_UPDATED_AT est donné, location_updated_at différent de cette
+    # valeur (un ping reçu depuis la lecture de base, donc celui du Driver et non un reste). Jamais d'écriture.
+    import math
+    from datetime import datetime, timezone
+    i = int(os.environ.get("STOP_INDEX", "0"))
+    prev = os.environ.get("PREV_UPDATED_AT", "")
+    d = driver_details()
+    drv = d.get("driver") or {}
+    stops = d.get("stops") or []
+    try:
+        slat, slng = float(stops[i]["latitude"]), float(stops[i]["longitude"])
+    except Exception:
+        slat, slng = STOPS[i]["latitude"], STOPS[i]["longitude"]
+    upd = drv.get("location_updated_at") or ""
+    try:
+        lat, lng = float(drv.get("current_lat")), float(drv.get("current_lot"))
+        dist = 2 * 6371000 * math.asin(math.sqrt(
+            math.sin(math.radians(slat - lat) / 2) ** 2
+            + math.cos(math.radians(lat)) * math.cos(math.radians(slat)) * math.sin(math.radians(slng - lng) / 2) ** 2))
+    except Exception:
+        dist = -1.0
+    try:
+        t = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - t).total_seconds()
+    except Exception:
+        age = -1.0
+    ok = 0 <= dist < 500 and 0 <= age < 900 and (not prev or upd != prev)
+    print(f"PING updated_at={upd or 'none'} dist_m={dist:.0f} age_s={age:.0f} {'PING_OK' if ok else 'PING_WAIT'}", flush=True)
+elif step == "stop_coords":
+    # Coordonnées RÉELLES de l'arrêt côté serveur (ride.stops[i]) : quand la course est composée
+    # par l'UI (Google Places), elles diffèrent du tableau STOPS codé en dur ci-dessus (run
+    # 45093391102 : 2 à 3 km d'écart -> complete-stop rejeté stop_too_far pour chaque tap réel).
+    i = int(os.environ.get("STOP_INDEX", "0"))
+    d = driver_details()
+    stops = d.get("stops") or []
+    try:
+        print(f"{float(stops[i]['latitude'])} {float(stops[i]['longitude'])}", flush=True)
+    except Exception:
+        print("", flush=True)
 elif step == "loc_dest":
     driver_loc(*DEST)
 elif step == "ride_state":
