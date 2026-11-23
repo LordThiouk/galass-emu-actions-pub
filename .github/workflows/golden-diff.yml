@@ -1,0 +1,142 @@
+name: golden-diff
+
+# Porte CI anti-régression visuelle — compare les écrans d'une branche Rider ou
+# Driver aux goldens officiels de sa branche de base.
+#
+# Déclencheurs :
+#   * `workflow_dispatch`      — run manuel (ref + base_ref explicites) ;
+#   * `repository_dispatch`    — type `golden-diff`, client_payload :
+#         {"app_repo":"LordThiouk/Galass_Rider","ref":"<branche ou sha>",
+#          "base_ref":"main","goldens":"test/goldens/rider",
+#          "accept_new_goldens":false,"reason":""}
+#     C'est le chemin utilisé par `galass-ci` (les dépôts app sont privés et
+#     n'ont pas d'Actions).
+#
+# Acceptation d'une nouvelle référence : JAMAIS implicite. Il faut
+# `accept_new_goldens: true` ET un `reason` non vide ; le run publie alors les
+# captures acceptées en artefact (`accepted-goldens/`) que quelqu'un commite
+# explicitement dans `test/goldens/` après revue de la planche. La porte
+# elle-même est en lecture seule (`contents: read`) : elle ne réécrit jamais la
+# référence.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_repo:
+        description: "Dépôt app (owner/repo)"
+        default: "LordThiouk/Galass_Rider"
+        required: true
+      ref:
+        description: "Branche ou SHA évalué"
+        required: true
+      base_ref:
+        description: "Référence (branche de base portant les goldens officiels)"
+        default: "main"
+        required: true
+      goldens_subdir:
+        description: "Dossier des goldens dans l'app"
+        default: "test/goldens/rider"
+        required: true
+      accept_new_goldens:
+        description: "Accepter explicitement les nouveaux écrans (exige reason)"
+        type: boolean
+        default: false
+      reason:
+        description: "Justification de l'acceptation (obligatoire si acceptation)"
+        default: ""
+  repository_dispatch:
+    types: [golden-diff]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: golden-diff-${{ github.event.inputs.ref || github.event.client_payload.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  golden-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_REPO: ${{ github.event.inputs.app_repo || github.event.client_payload.app_repo || 'LordThiouk/Galass_Rider' }}
+      APP_REF: ${{ github.event.inputs.ref || github.event.client_payload.ref }}
+      BASE_REF: ${{ github.event.inputs.base_ref || github.event.client_payload.base_ref || 'main' }}
+      GOLDENS: ${{ github.event.inputs.goldens_subdir || github.event.client_payload.goldens || 'test/goldens/rider' }}
+      ACCEPT: ${{ github.event.inputs.accept_new_goldens || github.event.client_payload.accept_new_goldens || 'false' }}
+      ACCEPT_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || '' }}
+
+    steps:
+      - name: Garde d'acceptation
+        run: |
+          if [ "$ACCEPT" = "true" ] && [ -z "$ACCEPT_REASON" ]; then
+            echo "::error::accept_new_goldens=true exige un reason non vide — acceptation refusée"
+            exit 1
+          fi
+          echo "app=$APP_REPO ref=$APP_REF base=$BASE_REF goldens=$GOLDENS accept=$ACCEPT"
+
+      - name: Checkout app (GALASS_TOKEN)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.APP_REPO }}
+          ref: ${{ env.APP_REF }}
+          token: ${{ secrets.GALASS_TOKEN }}
+          path: app
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout harnais (porte + planche)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref_name || 'main' }}
+          path: harness
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.8"
+          channel: stable
+          cache: true
+
+      - name: Dépendances
+        working-directory: app
+        run: flutter pub get
+
+      - name: Porte golden-diff
+        id: gate
+        working-directory: ${{ github.workspace }}
+        run: |
+          set +e
+          if [ "$ACCEPT" = "true" ]; then
+            bash harness/goldens/gate.sh app --name "$(basename "$APP_REPO")" \
+              --goldens "$GOLDENS" --base "origin/$BASE_REF" --accept --out board
+          else
+            bash harness/goldens/gate.sh app --name "$(basename "$APP_REPO")" \
+              --goldens "$GOLDENS" --base "origin/$BASE_REF" --out board
+          fi
+          STATUS=$?
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "### golden-diff — $(basename "$APP_REPO") \`$APP_REF\` vs \`$BASE_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          cat board/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          cat board/verdict.txt | sed 's/^/```\n/;s/$/\n```/' >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if [ "$ACCEPT" = "true" ] && [ "$STATUS" -eq 0 ]; then
+            echo "::warning::nouvelles références acceptées — motif : $ACCEPT_REASON"
+          fi
+          exit "$STATUS"
+
+      - name: Planche avant/après
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diff-board
+          path: board/
+          retention-days: 30
+
+      - name: Nouvelles références acceptées
+        if: always() && env.ACCEPT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-accepted
+          path: board/accepted-goldens/
+          if-no-files-found: warn
+          retention-days: 14
