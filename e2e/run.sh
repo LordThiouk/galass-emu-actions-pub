@@ -764,6 +764,7 @@ ride_state
 # boucle, aucun relaunch pendant le poll, aucune re-demande pilotée par `status=0`.
 offer_t0=$SECONDS
 offer_seen=0
+ACCEPT_VIA_API=0
 t_offer_to_tap=""
 offer_poll_screen=""
 bring_fg "$DRIVER_PKG" || true
@@ -835,6 +836,7 @@ if [ "$offer_seen" = "1" ]; then
   else
     accept_fail_diag
     mark driver-accepted-details FAIL "api fallback: accept"
+    ACCEPT_VIA_API=1
     wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
     ride_state
     if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
@@ -846,6 +848,7 @@ else
   (STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
   ACCEPT_FALLBACK_PID=$!
   mark driver-accepted-details FAIL "api fallback: accept"
+  ACCEPT_VIA_API=1
   wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
   ride_state
   if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
@@ -877,6 +880,10 @@ print(next((x.get('driver_id') for x in vals if x.get('driver_id') is not None),
 bring_fg "$RIDER_PKG" || true
 cap rider-driver-assigned 19-rider-driver-assigned "$RIDER_PKG" 30
 bring_fg "$DRIVER_PKG" || true
+# Filet : si l'acceptation est passée par l'API (offre jamais vue, ou tap UI sans effet),
+# l'app n'a jamais ouvert l'écran détail d'elle-même (run 45083876294) ; forcer la navigation
+# via la carte « Course en cours » avant d'attendre tout écran de course plus loin.
+[ "${ACCEPT_VIA_API:-0}" = "1" ] && driver_open_ride_via_card "$DRIVER_PKG"
 cap driver-accepted-details 35-driver-accepted-details "$DRIVER_PKG" 30
 
 # B7 — sonde APRÈS acceptation (S9) : la notification est émise à la création, donc

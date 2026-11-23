@@ -620,6 +620,34 @@ stop_prime() {
   return 0
 }
 
+# driver_open_ride_via_card pkg : filet après un repli API d'acceptation. La navigation vers
+# l'écran détail (RideDetailsController, où vit « Confirmer l'arrêt ») ne se déclenche
+# normalement QUE par le tap UI sur l'offre (CallKit) ; un accept par l'API n'ouvre rien côté
+# app — run 45083876294 : zéro appel driver/rides/details de bout en bout, bouton absent aux
+# deux arrêts. Tape la carte « Course en cours » du tableau de bord pour forcer cette
+# navigation, puis attend (borné, DRIVER_DETAILS_WAIT s, défaut 20) un appel
+# driver/rides/details dans le logcat Driver. Jamais bloquant : 0 = vu, 1 = tapé mais jamais vu
+# (WARN), 2 = carte absente (aucun tap). L'appelant foreground le Driver avant d'appeler ceci.
+driver_open_ride_via_card() {
+  local pkg="$1" ts wait="${DRIVER_DETAILS_WAIT:-20}" t=0 seen=0
+  if ! tap_when "$pkg" "Course en cours"; then
+    _ulog "driver: carte « Course en cours » absente (filet accept API)"
+    return 2
+  fi
+  ts="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
+  while [ "$t" -lt "$wait" ]; do
+    app_logcat_since "$ts" > "$OUT/diag/.cardopen.txt" 2>/dev/null || true
+    grep -aq 'rides/details' "$OUT/diag/.cardopen.txt" 2>/dev/null && { seen=1; break; }
+    sleep 4; t=$((t + 4))
+  done
+  if [ "$seen" = 1 ]; then
+    _ulog "driver: écran détail ouvert via la carte « Course en cours » (driver/rides/details vu après ${t}s)"
+    return 0
+  fi
+  _ulog "driver: WARN carte « Course en cours » tapée mais aucun driver/rides/details vu en ${wait}s (filet accept API)"
+  return 1
+}
+
 # driver_stop_confirm_ui pkg n : « Confirmer l'arrêt » n côté Driver par taps UI uniquement.
 # 0 = le SERVEUR a vu l'arrêt n (stops_done>=n) à la suite de ces taps ; 2 = bouton absent ;
 # 3 = état inattendu (arrêt déjà fait avant tout tap) ; 1 = taps sans effet serveur (diagnostic écrit).
