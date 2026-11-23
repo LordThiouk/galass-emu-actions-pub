@@ -16,7 +16,7 @@ principal_stated_goal_signal: 5
 principal_stated_goal_locked: 2026-11-23T12:00:00Z
 context_sufficient: true
 interview_invoked: false
-isa_stamp: hmac-sha256:f9129b82c254a4f59b608be1d23d3a216eb164a4a4e41d23514a95faba7c7c76
+isa_stamp: hmac-sha256:7d700fc93384cc050bcba4189b8de42f38f35e7446fc8f841e832ff5858a7adb
 ---
 
 ## Problem
