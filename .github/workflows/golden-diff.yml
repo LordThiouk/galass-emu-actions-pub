@@ -18,6 +18,11 @@ name: golden-diff
 # explicitement dans `test/goldens/` après revue de la planche. La porte
 # elle-même est en lecture seule (`contents: read`) : elle ne réécrit jamais la
 # référence.
+#
+# AMORÇAGE : la porte lit la référence dans `origin/<base_ref>`. Tant que
+# `test/goldens/<app>/` n'est pas sur `main` de l'app, `base_ref: main` sort en
+# exit 2 (« aucun golden sur … »), jamais en vert — passer alors la branche qui
+# porte les goldens dans `base_ref` (cf. goldens/README.md § Amorçage).
 
 on:
   workflow_dispatch:
