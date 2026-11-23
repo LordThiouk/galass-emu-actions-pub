@@ -598,10 +598,18 @@ stop_diag() {
 # délai, WARN et un ping API en dernier recours. Jamais bloquant. STOP_LAT / STOP_LNG posés par run.sh ; sans eux ou
 # sans `api`, ne fait rien.
 stop_prime() {
-  local n="$1" i=$(( $1 - 1 )) lat lng t=0 seen=0 prev out wait="${STOP_PING_WAIT:-24}"
-  lat="${STOP_LAT[$i]:-}"; lng="${STOP_LNG[$i]:-}"
-  [ -n "$lat" ] && [ -n "$lng" ] || return 0
+  local n="$1" i=$(( $1 - 1 )) lat lng t=0 seen=0 prev out wait="${STOP_PING_WAIT:-24}" coords
   type api >/dev/null 2>&1 || return 0
+  # Coordonnées RÉELLES de l'arrêt (serveur) en priorité : quand la course est composée par
+  # l'UI (Google Places), elles diffèrent du tableau STOP_LAT/STOP_LNG codé en dur (run
+  # 45093391102 : 2 à 3 km d'écart -> complete-stop rejeté stop_too_far à chaque tap réel).
+  # Repli sur le tableau codé en dur seulement si l'appel API ne rend rien.
+  coords="$(STOP_INDEX=$i api stop_coords 2>/dev/null | tail -1)"
+  lat="${coords%% *}"; lng="${coords#* }"
+  if [ -z "$lat" ] || [ -z "$lng" ] || [ "$lat" = "$coords" ]; then
+    lat="${STOP_LAT[$i]:-}"; lng="${STOP_LNG[$i]:-}"
+  fi
+  [ -n "$lat" ] && [ -n "$lng" ] || return 0
   prev="$(STOP_INDEX=$i api stop_ping_check 2>/dev/null | sed -n 's/.*PING updated_at=\([^ ]*\).*/\1/p' | tail -1)"
   [ "$prev" = "none" ] && prev=""
   adb emu geo fix "$lng" "$lat" >/dev/null 2>&1 || true

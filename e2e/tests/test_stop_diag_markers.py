@@ -401,10 +401,11 @@ def test_stop_prime_sets_gps_then_waits_for_fresh_driver_ping_on_server():
     taps_path = os.path.join(tmp, "taps")
     body = (adb_fn(tmp).replace("*pidof*)", "*emu*) ;;\n    *pidof*)")
             + 'STOP_LAT=(14.71 14.702); STOP_LNG=(-17.462 -17.455)\n'
-            + 'api() { echo "api $* idx=$STOP_INDEX" >> "%s"; echo "PING updated_at=T$RANDOM dist_m=10 age_s=2 PING_OK"; }\n' % taps_path
+            + 'api() { echo "api $* idx=$STOP_INDEX" >> "%s"; [ "$1" = "stop_coords" ] && return 0; echo "PING updated_at=T$RANDOM dist_m=10 age_s=2 PING_OK"; }\n' % taps_path
             + 'stop_prime 2; echo "rc=$?"')
     body = body.replace("complete-stop POST token", "driver/location-update ping token")
     rc, taps, out = base.harness(tmp, [base.RUNNING], [0], body)
+    assert "api stop_coords idx=1" in taps, taps   # coords réelles tentées d'abord (repli ici sur le tableau)
     assert "emu geo fix -17.455 14.702" in taps, taps
     assert "api stop_ping_check idx=1" in taps, taps
     assert "api loc_stop" not in taps, taps   # le ping API masquerait le ping du Driver (ordre : test_stop_prime_order.py)

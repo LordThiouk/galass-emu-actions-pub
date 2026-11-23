@@ -424,6 +424,17 @@ elif step == "stop_ping_check":
         age = -1.0
     ok = 0 <= dist < 500 and 0 <= age < 900 and (not prev or upd != prev)
     print(f"PING updated_at={upd or 'none'} dist_m={dist:.0f} age_s={age:.0f} {'PING_OK' if ok else 'PING_WAIT'}", flush=True)
+elif step == "stop_coords":
+    # Coordonnées RÉELLES de l'arrêt côté serveur (ride.stops[i]) : quand la course est composée
+    # par l'UI (Google Places), elles diffèrent du tableau STOPS codé en dur ci-dessus (run
+    # 45093391102 : 2 à 3 km d'écart -> complete-stop rejeté stop_too_far pour chaque tap réel).
+    i = int(os.environ.get("STOP_INDEX", "0"))
+    d = driver_details()
+    stops = d.get("stops") or []
+    try:
+        print(f"{float(stops[i]['latitude'])} {float(stops[i]['longitude'])}", flush=True)
+    except Exception:
+        print("", flush=True)
 elif step == "loc_dest":
     driver_loc(*DEST)
 elif step == "ride_state":
