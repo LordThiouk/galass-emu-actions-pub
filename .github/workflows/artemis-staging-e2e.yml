@@ -130,7 +130,7 @@ jobs:
       - name: Build APK (staging, debug, même job, pas d'upload)
         run: |
           for a in rider driver; do
-            (cd src/$a && flutter pub get >/dev/null && flutter build apk --debug --dart-define=API_BASE_URL="$BASE" 2>&1 | tail -n 15; test -f build/app/outputs/flutter-apk/app-debug.apk && (unzip -p build/app/outputs/flutter-apk/app-debug.apk "META-INF/*.RSA" 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | openssl x509 -noout -fingerprint -sha1 || true))
+            (cd src/$a && flutter pub get >/dev/null && flutter build apk --debug --dart-define=API_BASE_URL="$BASE" 2>&1 | tee /tmp/flutter-apk-$a.log | tail -n 80; test -f build/app/outputs/flutter-apk/app-debug.apk && (unzip -p build/app/outputs/flutter-apk/app-debug.apk "META-INF/*.RSA" 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | openssl x509 -noout -fingerprint -sha1 || true))
             mkdir -p apk/$a && cp src/$a/build/app/outputs/flutter-apk/app-debug.apk apk/$a/
           done
           rm -rf src
