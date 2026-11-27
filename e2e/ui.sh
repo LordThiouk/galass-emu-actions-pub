@@ -628,6 +628,48 @@ stop_prime() {
   return 0
 }
 
+# rider_open_active_ride pkg : filet après un repli API de composition (run 46060617800).
+# Si compose_ride_ui échoue, le Rider reste sur Places (« Confirmer le lieu ») pendant que
+# l'API crée/assigne la course : GlobalPusher n'affiche jamais le chauffeur (DRIVER_ASSIGNED
+# absent du logcat, n=0) et toute la chaîne rider TIMEOUT. Sortir du picker (BACK), ouvrir
+# Activité, taper la course (destination Point E / En cours). 0 = écran course (Arrêt 1 ou
+# E2E Driver), 1 = navigation tentée sans marqueur, 2 = impossible de quitter Places.
+rider_open_active_ride() {
+  local pkg="$1" i
+  bring_fg "$pkg" || true
+  for i in 1 2 3 4 5; do
+    if ui_xml && [ "$(xml_pkg)" = "$pkg" ]; then
+      if grep -aqE 'Arrêt 1|E2E Driver|E2E-0001' "$UI_XML_PATH" 2>/dev/null \
+         && ! grep -aqE 'Confirmer le lieu' "$UI_XML_PATH" 2>/dev/null; then
+        _ulog "rider: déjà sur écran course (filet compose-API)"
+        return 0
+      fi
+      if grep -aqE 'Où allez-vous|Partons pour une course|Activité' "$UI_XML_PATH" 2>/dev/null \
+         && ! grep -aqE 'Confirmer le lieu' "$UI_XML_PATH" 2>/dev/null; then
+        break
+      fi
+    fi
+    adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
+    sleep 1
+  done
+  if ! tap_when "$pkg" "Activité"; then
+    _ulog "rider: Activité absente (filet compose-API)"
+    return 2
+  fi
+  sleep 2
+  if ! tap_when "$pkg" "Point E" "En cours" "Médina" "Fann" "E2E"; then
+    # Dernier recours : première carte cliquable hors nav.
+    tap_prefix "$pkg" "Point" 8 || tap_prefix "$pkg" "PG" 5 || true
+  fi
+  sleep 2
+  if wait_ui "$pkg" 20 '+Arrêt 1|+E2E Driver|+E2E-0001|-Confirmer le lieu'; then
+    _ulog "rider: course ouverte via Activité (filet compose-API)"
+    return 0
+  fi
+  _ulog "rider: WARN Activité tapée mais écran course absent (filet compose-API)"
+  return 1
+}
+
 # driver_open_ride_via_card pkg : filet après un repli API d'acceptation. La navigation vers
 # l'écran détail (RideDetailsController, où vit « Confirmer l'arrêt ») ne se déclenche
 # normalement QUE par le tap UI sur l'offre (CallKit) ; un accept par l'API n'ouvre rien côté

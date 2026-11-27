@@ -95,28 +95,14 @@ MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
 MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
 MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
 MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
-# B2 — chaque marqueur exige un état qui ne peut pas pré-exister à la transition.
-# Un libellé présent dès l'écran précédent ne prouve rien ; « Arrêt 1 » est rendu en
-# course (ride_itinerary_timeline : titre de la jambe courante), donc jamais un négatif.
-# RUNNING = currentLegBanner « En route vers <stop> » (ride_details_bottom_sheet_widget:78-96),
-# null sauf RIDE_ACTIVE/RIDE_RUNNING : seul signal exclusif à la jambe. Le libellé du stop
-# (« E2E Stop 1 ») est rendu dès PENDING par la timeline complète, donc jamais un positif.
-MARK_rider_running_start='+En route vers|-Chargement'
-# Jambe 1 = bannière présente ET « Arrêt 2 » absent : la timeline réduite à la jambe
-# courante (ride_itinerary_timeline:288-295) ne rend le libellé du stop 2 qu'après l'ack du 1.
-MARK_rider_stop1_active='+En route vers|-Arrêt 2'
-# B2 — avancement des arrêts (my_strings.dart rider 64-65, stopsProgressSingular/Plural) :
-# l'app corrigée rend le compteur « X/2 arrêt(s) terminé(s) » en course (décision Papa : le
-# compteur jamais visible en RUNNING était un bug produit, fix app parallèle). Les marqueurs
-# mesurent les DEUX signaux du même écran, ET : le compteur, et la bannière de destination
-# (`currentLegBanner`, my_strings currentLeg) remise à jour sur la jambe suivante. Après
-# l'arrêt 1 : « 1/2 arrêt terminé » + « En route vers E2E Stop 2 Fann » (point 23). Après
-# l'arrêt 2 : « 2/2 arrêts terminés » + « En route vers E2E Dest Point E », la bannière
-# retombant sur la destination quand toutes les escales sont faites (point 24).
-# Un compteur seul peut mentir (bannière figée = l'ancien bug) et la bannière seule ne prouve
-# rien (elle s'affiche dès l'arrêt 1, stops vides) : chaque point exige les deux.
-MARK_rider_stop1_done='+1/2 arrêts? terminés?&+En route vers E2E Stop 2|En route vers Fann'
-MARK_rider_stop2_done='+2/2 arrêts? terminés?&+En route vers E2E Dest Point E|En route vers Point E'
+# Papa 27/11 21:22 — design F4-27 validé : frise Lieu de prise en charge → Arrêt 1…N →
+# Destination (plus de bandeaux « En route vers… » / « x/N arrêts » côté Rider).
+# Positif non générique = profil chauffeur assigné (E2E Driver) ; négatifs = composition
+# (SUMMARY_FIXTURE / Places) pour ne jamais PASS avant l'assignation.
+MARK_rider_running_start='+E2E Driver&+Arrêt 1|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous|-Chargement'
+MARK_rider_stop1_active='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous'
+MARK_rider_stop1_done='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+MARK_rider_stop2_done='+E2E Driver&+Arrêt 1&+Arrêt 2&+Destination|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
 MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
 MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
 MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
@@ -297,15 +283,32 @@ ui_pick_place() {
   fi
   # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
   places_wait_result "$label" 20 || true
-  # Run 44882204874 : le 2e arrêt (Fann) n'a pas trouvé la 1re suggestion dans la fenêtre
-  # d'attente ; le tap est rejoué sur des fenêtres fraîches avant de déclarer le résultat introuvable.
-  local pick_rc=1
-  for _ in 1 2 3; do
-    if tap_prefix "$RIDER_PKG" "$label" 12; then
+  # Run 44882204874 / 46060617800 : le 2e arrêt (Fann) rate la 1re suggestion (Places lent
+  # ou clavier masquant). On cache le clavier, on retape, et on accepte aussi le préfixe
+  # sans virgule (« Fann » → « Fann, Senegal »).
+  local pick_rc=1 alt
+  alt=$(printf '%s' "$label" | sed 's/,$//')
+  for round in 1 2 3 4; do
+    # KEYCODE_BACK une fois : ferme le clavier sans quitter l'écran de recherche (si ouvert).
+    adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
+    sleep 1
+    if tap_prefix "$RIDER_PKG" "$label" 10; then
       pick_rc=0
       break
     fi
-    sleep 2
+    if [ "$alt" != "$label" ] && tap_prefix "$RIDER_PKG" "$alt" 8; then
+      pick_rc=0
+      break
+    fi
+    if [ "$round" -lt 4 ]; then
+      log "places: miss round $round pour « $label » — resaisie ASCII"
+      tap_node_mode --empty-input "$RIDER_PKG" || true
+      # Effacer le champ (sélection + delete) puis retaper.
+      adb shell input keyevent KEYCODE_MOVE_END >/dev/null 2>&1 || true
+      adb shell input text "$(printf '%s' "$typed" | sed 's/ /%s/g')" >/dev/null 2>&1
+      sleep 3
+      places_wait_result "$label" 12 || true
+    fi
   done
   if [ "$pick_rc" != 0 ]; then
     log "compose_ride_ui: résultat « $label » introuvable"
@@ -879,6 +882,14 @@ print(next((x.get('driver_id') for x in vals if x.get('driver_id') is not None),
 [ -n "$ASSIGN_DRIVER" ] || ASSIGN_DRIVER=inconnu
 
 bring_fg "$RIDER_PKG" || true
+# Run 46060617800 preuve : compose UI a échoué (Fann introuvable) → ride_source=api →
+# Rider resté sur Places (« Confirmer le lieu ») ; DRIVER_ASSIGNED jamais vu dans logcat
+# (diag-rider-pusher n=0) alors que STOP_COMPLETED arrivait plus tard (Pusher OK).
+# Filet miroir de driver_open_ride_via_card : sortir du picker et ouvrir la course active
+# AVANT la capture 19, sinon toute la chaîne rider (assign→pay→note) TIMEOUT.
+if [ "${ui_compose:-0}" != "1" ] || [ "$RIDE_SOURCE" = "api" ]; then
+  rider_open_active_ride "$RIDER_PKG" || log "rider_open_active_ride: filet compose-API rc=$?"
+fi
 cap rider-driver-assigned 19-rider-driver-assigned "$RIDER_PKG" 30
 bring_fg "$DRIVER_PKG" || true
 # Filet : si l'acceptation est passée par l'API (offre jamais vue, ou tap UI sans effet),

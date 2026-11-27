@@ -161,31 +161,32 @@ def test_fail_from_api_fallback_survives_a_later_screen_pass():
     assert row["result"] == "FAIL", row
 
 
-# --------------------------------------------------------------- 3. marqueurs compteur Rider
-STOP2_BANNER = "En route vers E2E Stop 2, Fann, Dakar, Senegal"
-DEST_BANNER = "En route vers E2E Dest Point E"
+# --------------------------------------------------------------- 3. marqueurs Rider F4-27 (Arrêt N)
+# Papa 27/11 21:22 : plus de bandeaux « En route » / « x/N » ; frise Arrêt 1…N + Destination.
+FRISE_RUNNING = screen("Lieu de prise en charge", "Arrêt 1", "Arrêt 2", "Destination", "E2E Driver")
+FRISE_DONE = screen("Lieu de prise en charge", "Arrêt 1", "Arrêt 2", "Destination", "Point E", "E2E Driver")
+PLACES = screen("Confirmer le lieu", "Destination", "Fann, Senegal")  # run 460606 capture 19
 BLOCKED = screen("Terminez votre course", "Vous êtes arrivé à destination. Veuillez confirmer pour term",
-                 "Continuer", "Dismiss")  # écran réel des captures 23 et 24 du run 45004400552
+                 "Continuer", "Dismiss")
 
 
 @case
-def test_rider_stop1_done_matches_real_counter_and_banner():
-    assert spec_ok(marker("rider_stop1_done"), screen("1/2 arrêt terminé", STOP2_BANNER, "E2E Driver"))
+def test_rider_stop1_done_matches_f427_frise():
+    assert spec_ok(marker("rider_stop1_done"), FRISE_RUNNING)
 
 
 @case
-def test_rider_stop2_done_matches_real_plural_counter_and_banner():
-    assert spec_ok(marker("rider_stop2_done"), screen("2/2 arrêts terminés", DEST_BANNER))
+def test_rider_stop2_done_matches_f427_frise_with_destination():
+    assert spec_ok(marker("rider_stop2_done"), FRISE_DONE)
 
 
 @case
-def test_rider_stop_markers_not_weakened():
+def test_rider_stop_markers_reject_places_and_old_bandeaux():
     s1, s2 = marker("rider_stop1_done"), marker("rider_stop2_done")
-    assert not spec_ok(s1, screen("1/2 arrêt terminé"))            # compteur seul
-    assert not spec_ok(s1, screen(STOP2_BANNER))                     # bannière seule
-    assert not spec_ok(s1, screen("0/2 arrêt terminé", STOP2_BANNER))  # compteur périmé
-    assert not spec_ok(s2, screen("1/2 arrêt terminé", DEST_BANNER))
-    assert not spec_ok(s1, BLOCKED) and not spec_ok(s2, BLOCKED)    # le dialogue masque : jamais PASS
+    assert not spec_ok(s1, PLACES)  # stuck compose (460606)
+    assert not spec_ok(s1, screen("En route vers E2E Stop 2"))  # bandeau retiré
+    assert not spec_ok(s2, screen("2/2 arrêts terminés", "En route vers Point E"))
+    assert not spec_ok(s1, BLOCKED) and not spec_ok(s2, BLOCKED)
 
 
 # --------------------------------------------------------------- 4. accueil Rider
