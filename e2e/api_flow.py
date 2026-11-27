@@ -33,12 +33,17 @@ if "galassapp.com" in BASE:
 OUT = os.environ.get("OUT", "e2e-out")
 os.makedirs(OUT, exist_ok=True)
 
+RIDER_ID = int(os.environ.get("RIDER_ID", "900106"))
+DRIVER_ID = int(os.environ.get("DRIVER_ID", "900023"))
+if RIDER_ID <= 900000 or DRIVER_ID <= 900000:
+    raise SystemExit(
+        f"RIDER_ID/DRIVER_ID must be > 900000 (got rider={RIDER_ID} driver={DRIVER_ID}); "
+        "prod-like ids (106/23) share Pusher app — refuse"
+    )
+
 RT = os.environ["RIDER_TOKEN"]
 DT = os.environ["DRIVER_TOKEN"]
 DEV = os.environ["DEV_TOKEN"]
-
-RIDER_ID = int(os.environ.get("RIDER_ID", "106"))
-DRIVER_ID = int(os.environ.get("DRIVER_ID", "23"))
 
 _raw_fh = open(f"{OUT}/api.jsonl", "a")
 
@@ -214,8 +219,15 @@ def driver_details():
 
 
 def accept_offer(retries=20, delay=3):
+    """Accept the current ride offer.
+
+    Stop immediately on terminal remarks (offer_expired, balance_limit, …):
+    burning 20×3s after expiry caused B7/assign FAIL (run 45934624889, att=20).
+    """
     rid = ride_id()
     go_online()
+    # Terminal: further retries cannot help (B7 run 45934624889 burned att=20 on expiry).
+    terminal = {"offer_expired", "balance_limit", "driver_offline"}
     for i in range(retries):
         c, j = call("POST", "driver/ride/offer/respond", DT,
                     {"ride_id": rid, "action": "accept"})
@@ -224,9 +236,14 @@ def accept_offer(retries=20, delay=3):
             save()
             return True
         remark = j.get("remark")
-        if remark == "not_authorized" or remark == "ride_unavailable":
+        if remark in ("not_authorized", "ride_unavailable"):
             time.sleep(delay)
             continue
+        if remark in terminal:
+            st["offer_accept"] = j
+            save()
+            print(f"ACCEPT abort remark={remark} attempt={i+1}", flush=True)
+            return False
         # already assigned to this driver, or another terminal answer
         d = driver_details()
         if int(d.get("driver_id") or 0) == DRIVER_ID:
