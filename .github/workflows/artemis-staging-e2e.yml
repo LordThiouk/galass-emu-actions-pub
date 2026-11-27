@@ -173,9 +173,11 @@ jobs:
             echo "Driver flutter test VERT"
             exit 0
           fi
-          fails=$(grep -c 'Test failed\|FAILED\|Pixel test failed' /tmp/driver-flutter-test.log || true)
+          fails=$(grep -c 'Pixel test failed' /tmp/driver-flutter-test.log || true)
           ride_px=$(grep -c 'driver_ride_running_.*Pixel test failed' /tmp/driver-flutter-test.log || true)
-          other=$(grep 'Pixel test failed\|Test failed' /tmp/driver-flutter-test.log | grep -v 'driver_ride_running_' || true)
+          # Uniquement les lignes « Pixel test failed » hors ride_running
+          # (ignorer « Test failed. See exception logs above. » générique).
+          other=$(grep 'Pixel test failed' /tmp/driver-flutter-test.log | grep -v 'driver_ride_running_' || true)
           echo "::warning::DIAGNOSTIC goldens Driver rc=$drc fails≈$fails ride_running_px=$ride_px"
           grep -E 'driver_ride_running_|Flutter |version' /tmp/driver-flutter-test.log | head -40 || true
           if [ -n "$other" ]; then
