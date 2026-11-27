@@ -33,12 +33,17 @@ if "galassapp.com" in BASE:
 OUT = os.environ.get("OUT", "e2e-out")
 os.makedirs(OUT, exist_ok=True)
 
+RIDER_ID = int(os.environ.get("RIDER_ID", "900106"))
+DRIVER_ID = int(os.environ.get("DRIVER_ID", "900023"))
+if RIDER_ID <= 900000 or DRIVER_ID <= 900000:
+    raise SystemExit(
+        f"RIDER_ID/DRIVER_ID must be > 900000 (got rider={RIDER_ID} driver={DRIVER_ID}); "
+        "prod-like ids (106/23) share Pusher app — refuse"
+    )
+
 RT = os.environ["RIDER_TOKEN"]
 DT = os.environ["DRIVER_TOKEN"]
 DEV = os.environ["DEV_TOKEN"]
-
-RIDER_ID = int(os.environ.get("RIDER_ID", "106"))
-DRIVER_ID = int(os.environ.get("DRIVER_ID", "23"))
 
 _raw_fh = open(f"{OUT}/api.jsonl", "a")
 

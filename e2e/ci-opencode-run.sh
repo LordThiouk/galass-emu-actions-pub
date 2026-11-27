@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Après boot de l'émulateur : installe les APK, nettoie les courses 106/23,
+# Après boot de l'émulateur : installe les APK, nettoie les courses test (>900000),
 # puis lance le CLI opencode (modèles opencode/*-free, sans clé API) pour
 # piloter adb et le harnais e2e multi-stop (run.sh / api_flow.py / ui.sh).
 # Les secrets restent dans l'environnement : jamais affichés, jamais recopiés.
@@ -150,7 +150,7 @@ Contexte :
 À faire :
 1. Vérifie `adb devices` (au moins un appareil en état `device`).
 2. Exécute `bash e2e/run.sh` pour le scénario multi-stop (cleanup des
-   courses du passager 106 et du chauffeur 23, UI via ui.sh, API via
+   courses du passager/chauffeur de test (RIDER_ID/DRIVER_ID > 900000), UI via ui.sh, API via
    api_flow.py, assertions, rapport).
 3. Si une étape bloque, tu peux relancer une étape ciblée
    (`STEP=... python3 e2e/api_flow.py` ou des commandes adb / ui.sh)
@@ -408,7 +408,7 @@ prep_device() {
   # consommait la marge du step sans rien prouver, et son échec tuait le
   # script SANS verdict. Le harnais marque `apk-install` PASS/FAIL.
   log "émulateur prêt (installation des APK à la charge de e2e/run.sh : apk-install)"
-  # Cleanup courses stale du passager 106 / chauffeur 23 (sortie dans run.log seulement).
+  # Cleanup courses stale des comptes de test (RIDER_ID/DRIVER_ID > 900000).
   if command -v python3 >/dev/null && [ -f e2e/api_flow.py ]; then
     log "cleanup courses stale (STEP=reset)"
     STEP=reset python3 e2e/api_flow.py >> "$OUT/run.log" 2>&1 || log "reset : poursuivi (pas de course stale ou API indisponible)"
