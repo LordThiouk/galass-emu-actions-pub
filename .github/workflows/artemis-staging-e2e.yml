@@ -68,7 +68,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: "17"}
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: "3.44.8", channel: stable, cache: true}
+        with: {flutter-version: "3.50.1", channel: stable, cache: true}
       - name: Licences Android + NDK
         run: |
           SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -122,12 +122,10 @@ jobs:
           GRADLE
           echo "init script: $(wc -l < ~/.gradle/init.d/zz-debug-signing.gradle) lignes"
       - name: Tests unitaires Flutter (preuve ISC — avant rm -rf src)
-        # Mode diagnostic (Papa 2026-11-27) : les 4 goldens Driver
-        # driver_ride_running_* peuvent échouer à 2–4 px / 0.00 % sous
-        # Flutter 3.44.8 Artemis alors qu'ils sont verts sous 3.50.1 (forge/
-        # Aditi) — bruit de rasterisation police/moteur, pas une regen.
-        # Rider doit rester strictement vert. Driver : on journalise le
-        # diagnostic et on continue vers l'e2e P0 (jamais --update-goldens).
+        # Flutter Artemis aligné 3.50.1 (OK Papa 2026-11-26, goldens
+        # Rider/Driver rebasés sous 3.50.1). Jamais --update-goldens.
+        # Filet diagnostic : si seuls driver_ride_running_* restent à
+        # 2–4 px, continuer e2e P0 (ne pas bloquer le verdict offre/arrêts).
         run: |
           set -euo pipefail
           flutter --version
@@ -153,14 +151,14 @@ jobs:
             echo "$other"
             exit "$drc"
           fi
-          echo "DIAGNOSTIC: uniquement driver_ride_running_* (bruit Flutter 3.44.8 vs goldens 3.50.1) — e2e P0 continue, jamais regen"
+          echo "DIAGNOSTIC: uniquement driver_ride_running_* — e2e P0 continue, jamais regen"
           mkdir -p e2e-out
           {
             echo "flutter_artemis=$(flutter --version 2>/dev/null | head -1)"
-            echo "cause=raster_font_flutter_version_skew"
-            echo "goldens_ref_flutter=3.50.1 (forge/Aditi)"
-            echo "artemis_flutter=3.44.8"
-            echo "pattern=driver_ride_running_* 2-4px 0.00%"
+            echo "cause=residual_ride_running_px"
+            echo "goldens_ref_flutter=3.50.1"
+            echo "artemis_flutter=3.50.1"
+            echo "pattern=driver_ride_running_* 2-4px"
             echo "action=continue_e2e_diagnostic_no_regen"
           } | tee e2e-out/golden-diagnostic.txt
       - name: Build APK (staging, debug, même job, pas d'upload)
