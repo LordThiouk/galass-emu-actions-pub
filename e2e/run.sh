@@ -129,8 +129,9 @@ MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter
 MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
 # Papa 27/11 22:30 : compteurs x/N retirés (F5-14). Preuve = frise Arrêt N + Terminer.
 # Négatifs : offre + anciens bandeaux x/N (ne doivent plus PASS).
-MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
-MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+# Ancre non générique = adresse compose staging (Médina/Fann) — B2 anti-generic.
+MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Medina|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
 MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
 # L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,

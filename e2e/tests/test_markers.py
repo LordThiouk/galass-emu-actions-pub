@@ -364,8 +364,8 @@ RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
 DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
                     "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
                     "Consignes du client:")
-DRIVER_STOP1_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course")
-DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Destination", "Terminer la course")
+DRIVER_STOP1_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course", "Medina, Dakar, Senegal", "Fann, Dakar, Senegal")
+DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Destination", "Terminer la course", "Fann, Dakar, Senegal")
 
 
 def compose_body():
