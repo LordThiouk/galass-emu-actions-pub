@@ -722,17 +722,13 @@ ride_state
 EARLY_ACCEPT_LOG="$OUT/early-accept.log"
 EARLY_ACCEPT_PID=""
 if [ -n "$RIDE_ID" ]; then
-  # Run 44775318762 (L15) : le repli de fond, parti dès la création, gagnait la
-  # course À CHAQUE FOIS contre le vrai tap UI « Accepter la course » — acceptée
-  # côté API sans jamais passer par l'app, l'app ne transite jamais vers son écran
-  # d'acceptation et toute la suite du parcours UI chauffeur décroche (P0 18/30,
-  # contre 21-27/30 quand l'acceptation vient de l'app). Délai de 11s avant la
-  # 1re tentative : laisse au vrai tap UI sa chance de gagner (bring_fg+cap ont eu
-  # le temps de s'exécuter) ; le repli ne reste qu'un filet si l'UI n'a pas accepté
-  # à temps, toujours bien dans la fenêtre d'offre de ~30s (preuve run 44680233906).
+  # L15 : sleep 11 laissait le tap UI gagner, mais run 45934624889 (B7) a vu
+  # offer_expired att=20 — la fenêtre ~30s était déjà morte après compose+cap.
+  # Compromis : sleep 5 (tap UI a encore une fenêtre) puis filet API, toujours
+  # dans offer_timeout_sec (~30). accept_offer abort sur offer_expired (api_flow).
   # Appel direct (pas via l'alias api(), pour ne pas ajouter une 3e occurrence
   # du texte guetté par test_api_accept_still_two_occurrences).
-  (sleep 11; STEP=accept "$PY" e2e/api_flow.py) > "$EARLY_ACCEPT_LOG" 2>&1 &
+  (sleep 5; STEP=accept "$PY" e2e/api_flow.py) > "$EARLY_ACCEPT_LOG" 2>&1 &
   EARLY_ACCEPT_PID=$!
 fi
 

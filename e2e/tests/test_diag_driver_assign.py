@@ -229,6 +229,18 @@ def test_marker_is_not_named_assign_diag():
 
 
 @case
+def test_early_accept_sleep_is_five():
+    # B7 45934624889 : sleep 11 trop tard vs offer_timeout ~30s
+    assert "(sleep 5; STEP=accept" in run_text(), run_text()
+
+
+@case
+def test_accept_offer_aborts_on_offer_expired():
+    src = flow_text()
+    assert '"offer_expired"' in src and "ACCEPT abort" in src, src
+
+
+@case
 def test_api_accept_still_two_occurrences():
     n = len(re.findall(r"\bapi accept\b", run_text()))
     assert n == 2, n
