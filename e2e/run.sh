@@ -9,8 +9,9 @@ set -uo pipefail
 : "${BASE:?BASE is required (staging API, no prod)}"
 : "${DEV_TOKEN:?DEV_TOKEN is required}"
 
-RIDER_ID="${RIDER_ID:-106}"
-DRIVER_ID="${DRIVER_ID:-23}"
+# Comptes de test staging uniquement — ids > 900000 (jamais rider-user-106 / rider-driver-23 prod).
+RIDER_ID="${RIDER_ID:-900106}"
+DRIVER_ID="${DRIVER_ID:-900023}"
 OUT="${OUT:-e2e-out}"
 RIDER_PKG="sn.galass.galassrider"
 DRIVER_PKG="sn.galass.galassdriver"
@@ -126,8 +127,10 @@ MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintena
 MARK_rider_final_itinerary='+Course terminée|-Chargement|-Confirmer le lieu'
 # Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
 MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
-# Accueil réel après la course : sélecteur de lieu (my_strings confirmLocation / pickUpLocation).
-MARK_rider_home_after='+Confirmer le lieu|+Lieu de prise en charge|+Destination|-Course terminée'
+# Accueil réel après la course (run 45004400552, capture 31) : « Partons pour une course » (letsTakeARide,
+# location_pickup_widget:57) ET « Où allez-vous ? » (whereToGo) ; ni la notation, ni le dialogue de course,
+# ni le sélecteur de composition (« Confirmer le lieu ») ne doivent être au premier plan.
+MARK_rider_home_after='+Partons pour une course&+Où allez-vous&-Course terminée&-Terminez votre course&-Confirmer le lieu'
 # L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
 # construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
 MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
@@ -151,7 +154,7 @@ MARK_driver_summary='+En ligne|-Reçois\s+le\s+paiement|Confirmer\s+le\s+paiemen
 MARK_driver_home_online='+En ligne'
 # S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
 # « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
-MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|REFUSER|Prise en charge du client|+Arrêt 1'
+MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|-REFUSER|-Prise en charge du client|+Arrêt 1'
 
 # Les 9 écrans Driver n'ont jamais été atteints par le run 39992138248 (acceptation UI
 # impossible) : leurs libellés sont des hypothèses, taguées dans le sidecar.
@@ -294,7 +297,21 @@ ui_pick_place() {
   fi
   # 20 s d'attente instrumentée : réseau/Places (HTTP, erreurs logcat) vs écran lisible ou non.
   places_wait_result "$label" 20 || true
-  tap_prefix "$RIDER_PKG" "$label" 20 || { log "compose_ride_ui: résultat « $label » introuvable"; ui_screen_diag "places: écran sans résultat"; return 1; }
+  # Run 44882204874 : le 2e arrêt (Fann) n'a pas trouvé la 1re suggestion dans la fenêtre
+  # d'attente ; le tap est rejoué sur des fenêtres fraîches avant de déclarer le résultat introuvable.
+  local pick_rc=1
+  for _ in 1 2 3; do
+    if tap_prefix "$RIDER_PKG" "$label" 12; then
+      pick_rc=0
+      break
+    fi
+    sleep 2
+  done
+  if [ "$pick_rc" != 0 ]; then
+    log "compose_ride_ui: résultat « $label » introuvable"
+    ui_screen_diag "places: écran sans résultat"
+    return 1
+  fi
 }
 compose_ride_ui() {
   log "compose_ride_ui: début"
@@ -319,15 +336,33 @@ compose_ride_ui() {
   done
   # 17 : les deux arrêts sont posés, AVANT la demande.
   cap rider-multistop-summary 17-rider-multistop-summary "$RIDER_PKG" 25
+  # Bridge-B3 : ordre des arrêts TEL QU'AFFICHÉ par l'app (écran de composition), source
+  # indépendante du backend — ride/list ne porte pas les stops et une course composée par
+  # l'UI n'a pas de ride_create. Sans cette source, le gate ne mesure que la relecture.
+  COMPOSE_ORDER=$("$PY" e2e/compose_order.py "$OUT/ui/17-rider-multistop-summary.xml" \
+                    --state "$OUT/state.json" 2>/dev/null || true)
+  log "compose order (17): ${COMPOSE_ORDER:-WARN|indisponible}"
   # Les arrêts posés, l'app demande un SERVICE (« Sélectionnez un service ») : sans lui, ni mode de paiement
   # ni bouton de demande (run 44619326903). Le formulaire s'ouvre ensuite : mode de paiement, puis demande.
   tap_prefix "$RIDER_PKG" "Voiture" 20 || { log "compose_ride_ui: service Voiture absent"; return 1; }
   # Le formulaire s'ouvre sous la liste de services : le faire défiler dans la vue (deux arrêts allongent l'écran).
   sleep 3; adb shell input swipe 540 1900 540 700 400 >/dev/null 2>&1; sleep 2
   # Le formulaire affiche déjà « Paiement en espèces » (run 44647412466) : ne PAS rouvrir la feuille de paiement.
+  # Driver foreground + « En ligne » confirmé AVANT le tap « Trouver un chauffeur » (close-7 timing).
+  bring_fg "$DRIVER_PKG" || true
+  if ! wait_ui "$DRIVER_PKG" 20 "$MARK_driver_home_online"; then
+    log "compose_ride_ui: driver non En ligne avant Trouver un chauffeur"
+    ui_screen_diag "compose: driver non En ligne"
+  fi
+  bring_fg "$RIDER_PKG" || true
+  # Fenêtre d'offre = 30 s : composant Driver résolu et horodatage posés AVANT le tap, bascule Driver
+  # sur la ligne qui suit le tap (run 45051973500 : 21 s perdus avant le premier plan -> offre expirée).
+  DRIVER_COMP=$(fg_component "$DRIVER_PKG")
+  OFFER_REQ_TS="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
   # Le titre du formulaire porte le même libellé que le bouton : viser le DERNIER nœud (le bouton).
   TAP_PICK=last tap_when "$RIDER_PKG" "Trouver un chauffeur" "Réserver une course" || { log "compose_ride_ui: bouton demande absent"; ui_screen_diag "compose: bouton demande absent"; return 1; }
-  log "compose_ride_ui: demande envoyée par l'UI"
+  fg_switch_now "$DRIVER_PKG" "$DRIVER_COMP"
+  log "compose_ride_ui: demande envoyée par l'UI (driver En ligne confirmé avant tap, Driver ramené au premier plan sans attente)"
   return 0
 }
 
@@ -366,7 +401,12 @@ wait_fg() {
 bring_fg() {
   fg_is "$1" && return 0
   log "bring_fg $(fg_pkg) -> $1"
-  adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  # REORDER_TO_FRONT : ramène la tâche existante sans la recréer (monkey LAUNCHER renvoyait le Driver à
+  # l'accueil). Repli monkey si le composant n'est pas résolu.
+  local comp
+  comp=$(adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$1" 2>/dev/null | tail -1 | tr -d '\r')
+  if [[ "$comp" == */* ]] && adb shell am start -n "$comp" -f 0x20000 >/dev/null 2>&1; then :
+  else adb shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; fi
   wait_fg "$1" 30
 }
 
@@ -555,8 +595,8 @@ else
   mark apk-install FAIL "rider_rc=$r1 driver_rc=$r2"
 fi
 
-write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@galass.sn" "+221700000106"
-write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
+write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@galass.sn" "+221700900106"
+write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700900023"
 
 # ------------------------------------------------------------------ launch
 # Boîte « Let app always run in background? » du driver : exempter AVANT le lancement.
@@ -712,31 +752,56 @@ else
 fi
 ride_state
 
-# L14 (run 44680233906) : entre le tap et la 1re tentative d'acceptation, ~40s
-# s'écoulaient (wait_fg du passage au foreground chauffeur ~13-20s + capture/attente
-# UI jusqu'à 25s) alors que offer_timeout_sec est ~30s — la fenêtre d'offre était
-# déjà consommée avant même la première tentative. Repli API lancé en tâche de fond
-# dès que la course existe, pour qu'une tentative d'acceptation parte en quelques
-# secondes, en parallèle de la capture/tap UI (accept_offer() est idempotent : si
-# le tap UI accepte en premier, le repli voit juste "déjà assigné" et s'arrête).
-EARLY_ACCEPT_LOG="$OUT/early-accept.log"
-EARLY_ACCEPT_PID=""
-if [ -n "$RIDE_ID" ]; then
-  # Run 44775318762 (L15) : le repli de fond, parti dès la création, gagnait la
-  # course À CHAQUE FOIS contre le vrai tap UI « Accepter la course » — acceptée
-  # côté API sans jamais passer par l'app, l'app ne transite jamais vers son écran
-  # d'acceptation et toute la suite du parcours UI chauffeur décroche (P0 18/30,
-  # contre 21-27/30 quand l'acceptation vient de l'app). Délai de 11s avant la
-  # 1re tentative : laisse au vrai tap UI sa chance de gagner (bring_fg+cap ont eu
-  # le temps de s'exécuter) ; le repli ne reste qu'un filet si l'UI n'a pas accepté
-  # à temps, toujours bien dans la fenêtre d'offre de ~30s (preuve run 44680233906).
-  # Appel direct (pas via l'alias api(), pour ne pas ajouter une 3e occurrence
-  # du texte guetté par test_api_accept_still_two_occurrences).
-  (sleep 11; STEP=accept "$PY" e2e/api_flow.py) > "$EARLY_ACCEPT_LOG" 2>&1 &
-  EARLY_ACCEPT_PID=$!
+# Close-7 timing: Driver foreground + « En ligne » confirmé AVANT « Trouver un chauffeur »
+# (fait dans compose_ride_ui). Ici: UNE seule boucle de poll qui dump+tap « Accepter la course »,
+# capture 34 = XML au moment exact du tap ; log t_offer_to_tap ; WARN si > 25 s.
+# Exactement 2 `\bapi accept\b`.
+# Run 44912533775 (close-7) : l'offre n'a jamais été rendue, pour deux raisons de harnais
+# nommées — (a) la boucle rappelait `bring_fg` (monkey relaunch) à CHAQUE tour, ce qui relance
+# l'app Driver et fait perdre l'overlay d'offre ; (b) elle lisait `status=0` comme « offre
+# expirée » alors que `status=0` est l'état NORMAL d'une course fraîche sans chauffeur, et sa
+# re-demande (« Trouver un chauffeur ») invalidait l'offre en cours (remark backend
+# `offer_expired`, 40 tentatives d'acceptation API toutes mortes). Donc : UN bring_fg avant la
+# boucle, aucun relaunch pendant le poll, aucune re-demande pilotée par `status=0`.
+offer_t0=$SECONDS
+offer_seen=0
+ACCEPT_VIA_API=0
+t_offer_to_tap=""
+offer_poll_screen=""
+bring_fg "$DRIVER_PKG" || true
+while [ $((SECONDS - offer_t0)) -lt 75 ]; do
+  if ! ui_xml; then sleep 2; continue; fi
+  clear_sys
+  if _spec_ok "$MARK_driver_offer_with_stops"; then
+    # Capture 34 = XML au moment exact du tap (même dump).
+    cp "$UI_XML_PATH" "$OUT/ui/34-driver-offer-with-stops.xml" 2>/dev/null || true
+    adb exec-out screencap -p > "$OUT/screens/34-driver-offer-with-stops.png" 2>/dev/null
+    cap_fg_raw=$(fg_pkg 2>/dev/null || echo UNKNOWN)
+    cap_fg="$cap_fg_raw"; cap_fg_src="dumpsys"
+    [ "$(xml_pkg)" = "$DRIVER_PKG" ] && cap_fg="$DRIVER_PKG" && cap_fg_src="ui-dump"
+    _write_sidecar "34-driver-offer-with-stops" "$DRIVER_PKG" "$MARK_driver_offer_with_stops" \
+      "MATCH" "$((SECONDS - offer_t0))" "" "0" "driver-offer-with-stops" "grounded" "" "$cap_fg" "$cap_fg_src"
+    mark driver-offer-with-stops PASS "ui cap=34-driver-offer-with-stops.png marker ok (grounded, at-tap)"
+    t_offer_to_tap=$((SECONDS - offer_t0))
+    log "t_offer_to_tap=${t_offer_to_tap}s"
+    [ "$t_offer_to_tap" -gt 25 ] && mark driver-offer-timing WARN "t_offer_to_tap=${t_offer_to_tap}s > 25s"
+    tap_exact "Accepter la course" || log "tap_exact Accepter la course: miss après capture"
+    offer_seen=1
+    break
+  fi
+  # Premier écran Driver vu pendant le poll : sert au diagnostic borné du timeout.
+  if [ -z "$offer_poll_screen" ]; then
+    offer_poll_screen=$(python3 e2e/dump_diag.py "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-160)
+  fi
+  sleep 2
+done
+if [ "$offer_seen" != "1" ]; then
+  log "t_offer_to_tap=TIMEOUT (offre non vue en $((SECONDS-offer_t0))s)"
+  [ -n "$offer_poll_screen" ] && log "offre: premier écran driver pendant le poll: $offer_poll_screen"
+  ui_screen_diag "offre: écran driver au timeout"
+  offer_timeout_diag
+  cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 5
 fi
-
-cap driver-offer-with-stops 34-driver-offer-with-stops "$DRIVER_PKG" 25
 # B2 (a) — l'offre montre-t-elle les arrêts ? (même XML que la capture)
 if [ "$RIDE_SOURCE" != "ui" ]; then
   mark bug-b2-offer-stops WARN "B2 non concluant: ride composée par l'API (ride_source=$RIDE_SOURCE)"
@@ -759,30 +824,35 @@ printf '%s\n' "$ASSIGN_PRE_LINE" > "$OUT/assign-pre.txt"
 
 # S10: declines observed while the harness itself retries the accept are not evidence.
 DECLINES_BEFORE=$(count_in "ride_unavailable" "$LOG_FILE" 2>/dev/null || echo 0)
-if tap_exact "Accepter la course"; then
+ACCEPT_FALLBACK_LOG="$OUT/accept-fallback.log"
+ACCEPT_FALLBACK_PID=""
+if [ "$offer_seen" = "1" ]; then
+  # Filet API : lancé après le tap, délai court pour laisser wait_ui confirmer le tap UI
+  # mais assez tôt pour accepter avant expiration de l'offre si le tap UI n'a pas pris.
+  (sleep 5; STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
+  ACCEPT_FALLBACK_PID=$!
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
-    # L14 : le repli en tâche de fond (EARLY_ACCEPT_PID) n'a plus besoin d'être
-    # attendu ici — il se termine seul (déjà assigné) et laisse sa trace dans
-    # $EARLY_ACCEPT_LOG ; rien à collecter sur ce chemin de succès UI.
+    wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
   else
+    accept_fail_diag
     mark driver-accepted-details FAIL "api fallback: accept"
-    # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
-    # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
-    if [ -n "$EARLY_ACCEPT_PID" ]; then
-      wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
-    else
+    ACCEPT_VIA_API=1
+    wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
+    ride_state
+    if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
       api accept >> "$OUT/run.log" 2>&1
     fi
   fi
 else
-  log "tap_exact « Accepter la course » manqué"
+  log "tap_exact « Accepter la course » manqué (offre non vue)"
+  (STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
+  ACCEPT_FALLBACK_PID=$!
   mark driver-accepted-details FAIL "api fallback: accept"
-  # L14 : repli déjà lancé en tâche de fond dès la détection de la course (plus
-  # rapide que d'attendre l'échec de la capture/tap UI avant de le lancer).
-  if [ -n "$EARLY_ACCEPT_PID" ]; then
-    wait "$EARLY_ACCEPT_PID" 2>/dev/null; cat "$EARLY_ACCEPT_LOG" >> "$OUT/run.log" 2>/dev/null
-  else
+  ACCEPT_VIA_API=1
+  wait "$ACCEPT_FALLBACK_PID" 2>/dev/null; cat "$ACCEPT_FALLBACK_LOG" >> "$OUT/run.log" 2>/dev/null
+  ride_state
+  if ! grep -q "status=3\|status=4\|status=2" "$OUT/last-ride-state.txt" 2>/dev/null; then
     api accept >> "$OUT/run.log" 2>&1
   fi
 fi
@@ -811,6 +881,10 @@ print(next((x.get('driver_id') for x in vals if x.get('driver_id') is not None),
 bring_fg "$RIDER_PKG" || true
 cap rider-driver-assigned 19-rider-driver-assigned "$RIDER_PKG" 30
 bring_fg "$DRIVER_PKG" || true
+# Filet : si l'acceptation est passée par l'API (offre jamais vue, ou tap UI sans effet),
+# l'app n'a jamais ouvert l'écran détail d'elle-même (run 45083876294) ; forcer la navigation
+# via la carte « Course en cours » avant d'attendre tout écran de course plus loin.
+[ "${ACCEPT_VIA_API:-0}" = "1" ] && driver_open_ride_via_card "$DRIVER_PKG"
 cap driver-accepted-details 35-driver-accepted-details "$DRIVER_PKG" 30
 
 # B7 — sonde APRÈS acceptation (S9) : la notification est émise à la création, donc
@@ -886,9 +960,15 @@ fi
 ride_state
 bring_fg "$DRIVER_PKG" || true
 cap driver-running-stop1 37-driver-running-stop1 "$DRIVER_PKG" 25
-# B2 (b) — seconde capture Driver distincte, en course, après le start.
+# B2 (b) — seconde capture Driver distincte, en course, après le start. Prise sans attente elle
+# redonnait l'écran de 37 octet pour octet (duplicate-state, run 45004400552) : on attend un écran
+# réellement différent ; faute de quoi le point échoue avec la raison, jamais sur une copie.
 bring_fg "$DRIVER_PKG" || true
-cap driver-inride-stops 35b-driver-inride "$DRIVER_PKG" 25
+if wait_screen_change "$OUT/ui/37-driver-running-stop1.xml" 30; then
+  cap driver-inride-stops 35b-driver-inride "$DRIVER_PKG" 25
+else
+  mark driver-inride-stops WARN "écran en course du Driver statique : identique à 37-driver-running-stop1 après 30s, aucun écran distinct à capturer (non bloquant, pas de capture dupliquée)"
+fi
 if ! grep -qiE "Terminer la course|Arrêt 1" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
   mark bug-b2-inride-stops WARN "B2 non concluant: écran de course non atteint (35b)"
 elif grep -qiE "Arrêt [12]|E2E Stop" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
@@ -931,10 +1011,20 @@ for i in 0 1; do
   else
     ui_screen_diag "driver: écran réel sans « Confirmer l'arrêt » (arrêt $n)"
   fi
-  if try_confirm "$DRIVER_PKG" "Confirmer l'arrêt" \
-     && wait_ui "$DRIVER_PKG" 20 "${!next_marker}"; then
-    ui_stop_ok=1
+  # Preuve = SERVEUR (stops_done>=n) après des taps UI sur le parent cliquable, jamais l'API de
+  # complétion (run 44927908295 : aucun complete-stop reçu des taps, un seul POST = le repli).
+  driver_stop_confirm_ui "$DRIVER_PKG" "$n"; stop_rc=$?
+  if [ "$stop_rc" = "2" ]; then
+    # Le Driver a quitté l'écran de course (accueil « En ligne » observé à l'arrêt 2) : y revenir par
+    # la liste « Courses », puis un seul nouvel essai. Écran d'arrivée journalisé pour le prochain run.
+    ui_screen_diag "driver: hors écran de course avant l'arrêt $n — retour par Courses"
+    tap_when "$DRIVER_PKG" "Courses" >/dev/null 2>&1 || true
+    ui_screen_diag "driver: après tap Courses (arrêt $n)"
+    tap_when "$DRIVER_PKG" "E2E Rider" >/dev/null 2>&1 || true
+    wait_ui "$DRIVER_PKG" 20 "+Confirmer l.arrêt" || true
+    driver_stop_confirm_ui "$DRIVER_PKG" "$n"; stop_rc=$?
   fi
+  [ "$stop_rc" = "0" ] && ui_stop_ok=1
   if [ "$ui_stop_ok" = "1" ]; then
     if [ "$i" -eq 0 ]; then UI_STOP0=1; else UI_STOP1=1; fi
     ui_stops=$((ui_stops + 1))
@@ -945,6 +1035,9 @@ for i in 0 1; do
   fi
   ride_state
   bring_fg "$RIDER_PKG" || true
+  # Dialogue « Terminez votre course » : constat produit tracé (WARN), puis fermé par Back pour lire l'écran dessous.
+  rider_dismiss_blocking_dialog "$RIDER_PKG"; dlg_rc=$?
+  [ "$dlg_rc" = "3" ] || mark "bug-rider-stop${n}-run-dialog" WARN "dialogue « Terminez votre course » au-dessus de l'écran de course après l'arrêt $n (fermeture rc=$dlg_rc)"
   if [ "$i" -eq 0 ]; then
     # 23 : compteur « 1/2 arrêt terminé » rendu par l'app corrigée (marqueur ci-dessus).
     cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
@@ -1032,6 +1125,10 @@ fi
 deadline_check cash  # budget mur : verdict partiel plutôt qu'un step qui traîne
 if [ "$pay_ui" = 1 ]; then
   cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+  # 29 avant confirmation cash driver : le Pusher CASH_PAYMENT navigue ensuite le
+  # rider vers Avis (review screen). Capturer ici garde « Course terminée » visible.
+  # Même écran que 27 => paire revisited explicite dans report.py.
+  cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 25
   if grep -q '^rider-cash-waiting|FAIL|' <<<"$(printf '%s\n' "${RESULTS[@]}")"; then
     api pay_rider >> "$OUT/run.log" 2>&1
   fi
@@ -1039,6 +1136,7 @@ else
   api pay_rider >> "$OUT/run.log" 2>&1
   bring_fg "$RIDER_PKG" || true
   cap rider-cash-waiting 27-rider-cash-waiting "$RIDER_PKG" 25
+  cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 25
 fi
 bring_fg "$DRIVER_PKG" || true
 cap driver-cash-request 41-driver-cash-request "$DRIVER_PKG" 35
@@ -1069,7 +1167,11 @@ cap driver-cash-confirmed 42-driver-cash-confirmed "$DRIVER_PKG" 30
 adb shell input keyevent 4 >/dev/null 2>&1 || true
 cap driver-summary 43-driver-summary "$DRIVER_PKG" 25
 bring_fg "$RIDER_PKG" || true
-cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 35
+# 29 a déjà été capturé avant la confirmation cash (écran 27, « Course terminée »).
+# On ne recapture pas ici : le rider est maintenant sur Avis (Pusher CASH_PAYMENT).
+if ! [ -s "$OUT/ui/29-rider-final-itinerary.xml" ]; then
+  cap rider-final-itinerary 29-rider-final-itinerary "$RIDER_PKG" 35
+fi
 # B3 — la timeline finale doit porter prise en charge + 2 arrêts + destination.
 if ! [ -s "$OUT/ui/29-rider-final-itinerary.xml" ]; then
   mark bug-b3-final-timeline WARN "no evidence: capture 29 absente ou vide"
@@ -1085,21 +1187,16 @@ fi
 # ---------------------------------------------------------------- rating
 try_tap "$RIDER_PKG" "Noter la course" "Notez la course" "Avis" >/dev/null 2>&1 || true
 cap rider-rating 30-rider-rating "$RIDER_PKG" 20
-adb shell input keyevent 4 >/dev/null 2>&1 || true
-# S11: home-after only means something if the app never relaunched on the way there,
-# and only after point 29 was actually observed.
-home_left=0
-for _ in $(seq 1 10); do
-  fg_is "$RIDER_PKG" || { home_left=1; break; }
-  sleep 1
-done
-if [ "$home_left" = "1" ]; then
-  mark rider-home-after FAIL "l'app a quitté le premier plan (relance) après back"
-elif ! printf '%s\n' "${RESULTS[@]}" | grep -q '^rider-final-itinerary|PASS|'; then
+# S11: home-after = l'accueil OBSERVÉ, après le point 29. Plus de Back aveugle : sur l'accueil (racine
+# Flutter) il quittait l'app (run 44927908295, capture 30 = accueil déjà affiché).
+if ! printf '%s\n' "${RESULTS[@]}" | grep -q '^rider-final-itinerary|PASS|'; then
   mark rider-home-after FAIL "point 29 (rider-final-itinerary) non observé"
-else
-  bring_fg "$RIDER_PKG" || true
+elif ! bring_fg "$RIDER_PKG"; then
+  mark rider-home-after FAIL "Rider jamais au premier plan avant la sortie de la notation"
+elif rider_leave_rating "$RIDER_PKG" && fg_is "$RIDER_PKG"; then
   cap rider-home-after 31-rider-home-after "$RIDER_PKG" 25
+else
+  mark rider-home-after FAIL "accueil Rider jamais observé après notation (ou app hors premier plan)"
 fi
 # B1 — le dialogue « Terminez votre course » ne doit pas flotter au-dessus de l'accueil.
 if ! [ -s "$OUT/ui/31-rider-home-after.xml" ]; then
@@ -1114,9 +1211,9 @@ api cancel >> "$OUT/run.log" 2>&1
 
 # ------------------------------------------------------------- assertions
 deadline_check assertions  # budget mur : verdict partiel plutôt qu'un step qui traîne
-if "$PY" - "$OUT" <<'PY'
+if "$PY" - "$OUT" "$DRIVER_ID" <<'PY'
 import json, sys
-out = sys.argv[1]
+out, expect_driver = sys.argv[1], int(sys.argv[2])
 st = json.load(open(f"{out}/state.json"))
 d = st.get("driver_final") or {}
 r = st.get("rider_final") or {}
@@ -1124,7 +1221,7 @@ stops = st.get("stops") or d.get("stops") or []
 done = [s for s in stops if s.get("completed_at")]
 ok = (
     int(r.get("status") or -1) == 1
-    and int(d.get("driver_id") or r.get("driver_id") or 0) == 23
+    and int(d.get("driver_id") or r.get("driver_id") or 0) == expect_driver
     and len(stops) == 2
     and len(done) == 2
     and int(r.get("payment_status") or 0) == 1
@@ -1140,6 +1237,19 @@ then
 else
   mark backend-flow FAIL "see $OUT/state.json (status/stops/payment)"
 fi
+
+# --------------------------------------------- B3 ordre des arrêts (composé vs relu)
+# B3 : l'ordre composé dans l'app doit être l'ordre des ride_stops relu par GET detail.
+# Seul lecteur possible en CI : l'archive de preuves est chiffrée (GPG), ni state.json
+# ni captures ne sont consultables. FAIL (désaccord d'ordre) bascule le verdict ;
+# WARN (course composée par l'API, ou preuve illisible) ne mesure pas l'app.
+deadline_check b3-order
+B3_OUT=$("$PY" e2e/b3_order.py "$OUT" 2>/dev/null || true)
+B3_V=${B3_OUT%%|*}
+case "$B3_V" in
+  PASS|WARN|FAIL) mark bug-b3-stops-order "$B3_V" "${B3_OUT#*|}" ;;
+  *) mark bug-b3-stops-order WARN "no evidence: analyse d'ordre indisponible" ;;
+esac
 
 # ------------------------------------------------------------------ logcat
 kill "${LOGCAT_PID:-}" 2>/dev/null || true
@@ -1253,4 +1363,5 @@ fi
 log "diag final pickup: tap_ui=${PICKUP_TAP_UI:-non-tapé} start_status=${PICKUP_START_STATUS:-inconnu} ui_start=$UI_START — 2 = start UI jamais reçu par le backend, 3 = reçu (bug de rafraîchissement Driver)"
 # Re-signalé après le rapport (une ligne log, jamais un mark : le digest est déjà écrit).
 log "diag-driver-assign: ${ASSIGN_DIAG_V:-inconnu} ${ASSIGN_DIAG_D:-aucun} asg=${ASSIGN_DRIVER:-inconnu}"
+log "diag offer: seen=${offer_seen:-0} t_offer_to_tap=${t_offer_to_tap:-TIMEOUT} src=${RIDE_SOURCE:-unknown}"
 exit $report_rc

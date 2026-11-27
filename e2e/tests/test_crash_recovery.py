@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reprise après plantage d'émulateur, mesure avant plantage, diagnostic Places, INCONCLUSIVE."""
 import json
+import secrets
 import os
 import subprocess
 import sys
@@ -205,15 +206,17 @@ def test_places_wait_concludes_visible_early_and_masks_the_key():
     out, _, _ = bash('PLACES_NET_OK=oui; ui_xml() { UI_DUMP_VALID=1; echo "E2E Dest Point E" > "$UI_XML_PATH"; return 0; }; '
                      'xml_pkg() { echo sn.galass.galassrider; }; places_wait_result "E2E Dest Point E" 20; echo rc=$?')
     assert "résultat « E2E Dest Point E » visible" in out and "rc=0" in out
-    masked, _, _ = bash('echo "GET maps.googleapis.com/x?key=AIzaSECRET123&q=1" | _mask_secrets')
-    assert "AIzaSECRET123" not in masked and "key=***" in masked
+    fake = "AIza" + secrets.token_hex(12)  # clé factice générée à l'exécution, jamais en dur
+    masked, _, _ = bash('echo "GET maps.googleapis.com/x?key=%s&q=1" | _mask_secrets' % fake)
+    assert fake not in masked and "key=***" in masked
 
 
 def test_places_wait_reports_network_errors_from_logcat():
-    out, _, _ = bash('PLACES_NET_OK=oui; PLACES_LOG_OFF=0; printf "%s\\n" "E flutter: Failed host lookup: maps.googleapis.com key=AIzaSECRET" >> "$LOG_FILE"; '
+    fake = "AIza" + secrets.token_hex(12)
+    out, _, _ = bash('PLACES_NET_OK=oui; PLACES_LOG_OFF=0; printf "%%s\\n" "E flutter: Failed host lookup: maps.googleapis.com key=%s" >> "$LOG_FILE"; '
                      'ui_xml() { UI_DUMP_VALID=1; : > "$UI_XML_PATH"; return 0; }; xml_pkg() { echo p; }; '
-                     'places_wait_result "X" 6; echo rc=$?')
-    assert "erreurs_réseau=1" in out and "AIzaSECRET" not in out, out
+                     'places_wait_result "X" 6; echo rc=$?' % fake)
+    assert "erreurs_réseau=1" in out and fake not in out, out
 
 
 def test_compose_uses_places_diagnostics():

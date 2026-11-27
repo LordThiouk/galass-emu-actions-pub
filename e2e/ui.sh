@@ -481,6 +481,347 @@ dialog_confirm() {
   return 1
 }
 
+# last_stops_done : stops_done=N lu dans $OUT/last-ride-state.txt (écrit par ride_state), vide si absent.
+last_stops_done() { sed -n 's/.*stops_done=\([0-9][0-9]*\).*/\1/p' "$OUT/last-ride-state.txt" 2>/dev/null | tail -1; }
+
+# app_logcat_since ts : lignes logcat de l'app Driver (processus du paquet) depuis ts « MM-JJ HH:MM:SS.mmm » :
+# tout le tag flutter (Logger : url/status des appels HTTP, complete-stop POST/rejected/accepted), exceptions, FATAL.
+# Jetons masqués. Statistiques (brut = lignes de la fenêtre, app = lignes du pid du Driver) dans APP_LC_STATS pour que
+# « 0 ligne » soit explicable. Run 45046315983 : 0 ligne car la commande date non quotée perdait ses
+# quotes côté appareil (ts vide ; commande date passée en 2 arguments) ; sans ts valide on prend désormais les 600 dernières lignes.
+APP_LC_STATS=""
+app_logcat_since() {
+  local ts="${1:-}" pid n_raw=0 n_app=0 raw="$OUT/diag/.applc-raw.txt" app="$OUT/diag/.applc-app.txt"
+  local -a tsarg=(-t 600)
+  mkdir -p "$OUT/diag"
+  case "$ts" in
+    [0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]) tsarg=(-T "$ts") ;;
+    *) ts="" ;;
+  esac
+  pid=$(adb shell pidof "$DRIVER_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')
+  adb logcat -d -v threadtime "${tsarg[@]}" > "$raw" 2>/dev/null || true
+  n_raw=$(wc -l < "$raw" 2>/dev/null | tr -d ' ')
+  if [ -n "$pid" ]; then awk -v p="$pid" '$3==p' "$raw" > "$app"; else cp "$raw" "$app"; fi
+  n_app=$(wc -l < "$app" 2>/dev/null | tr -d ' ')
+  APP_LC_STATS="ts=${ts:-aucun(600 dernières lignes)} pid=${pid:-inconnu} brut=${n_raw:-0} app=${n_app:-0}"
+  if [ "${2:-}" = "decisive" ]; then
+    # Run 45058950773 : `tail -60` ne gardait que ~5 s de polling `dashboard` et perdait les lignes
+    # `complete-stop request/response/ignored` du Driver. Lignes décisives d'abord (sans coupe), puis la fin
+    # du reste SANS le bruit de polling ; cadres de log et piles `#n` écartés. Jetons masqués.
+    local key='complete-stop|LastPing|ping_age|location-update|location ping|\[dispatch\] (respond|ingress|presentOffer|modal)|APP STATE|remark=|rejected|accepted|refused|http=|DioException|Exception|FATAL'
+    grep -aE ' [VDIWEF] flutter *:|'"$key" "$app" | grep -avE '│ +#[0-9]|[┌└├]' \
+      | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' > "$app.flt"
+    { grep -aE "$key" "$app.flt" | head -80
+      grep -avE "$key|dashboard|Service already running|loadData|url-{5,}|status-{5,}|params-{5,}|body-{5,}" "$app.flt" | tail -30; }
+  else
+    grep -aE ' [VDIWEF] flutter *:|complete-stop|rejected|accepted|refused|http=|DioException|Exception|FATAL' "$app" \
+      | sed -E 's/(key|token|access_token|authorization)([=:]) *[^&" ]+/\1\2***/Ig' | tail -60
+  fi
+  rm -f "$raw" "$app" "$app.flt"
+}
+
+# fg_component pkg : composant lanceur du paquet (résolu HORS fenêtre d'offre, avant le tap de demande).
+fg_component() {
+  adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$1" 2>/dev/null | tail -1 | tr -d '\r'
+}
+
+# fg_switch_now pkg [composant] : bascule d'avant-plan SANS attente (un seul am start ; repli monkey).
+# Une offre vit 30 s (offer_timeout_sec) : run 45051973500, 21 s perdus entre le tap de demande et le Driver
+# au premier plan (deadline_check, dumpsys, wait_fg, dumps uiautomator) -> offre expirée avant d'être vue.
+fg_switch_now() {
+  local pkg="$1" comp="${2:-}"
+  if [[ "$comp" == */* ]]; then adb shell am start -n "$comp" -f 0x20000 >/dev/null 2>&1 || true
+  else adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true; fi
+  return 0
+}
+
+# offer_timeout_diag : TIMEOUT d'offre -> logcat du Driver depuis la demande (OFFER_REQ_TS) dans
+# diag/offer-timeout.logcat + lignes utiles au log. Distingue « jamais reçue » (aucun loadData/dispatch)
+# de « reçue trop tard » (loadData après l'expiration). Jamais bloquant.
+offer_timeout_diag() {
+  local f="$OUT/diag/offer-timeout.logcat" n
+  mkdir -p "$OUT/diag"
+  app_logcat_since "${OFFER_REQ_TS:-}" > "$f" 2>/dev/null || true
+  n=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+  _ulog "offer_timeout_diag: logcat=${n:-0} ligne(s) [${APP_LC_STATS}] depuis ${OFFER_REQ_TS:-?}"
+  grep -aE 'APP STATE|\[dispatch\]|loadData|onOffer|offer #' "$f" 2>/dev/null | tail -15 \
+    | while IFS= read -r l; do _ulog "offer_timeout_diag app: ${l:0:220}"; done
+  return 0
+}
+
+# accept_fail_diag : tap « Accepter » sans effet (run 45065480752 : offre vue, offer_expired). Logcat Driver depuis
+# la demande (OFFER_REQ_TS), lignes décisives seulement (respond HTTP/remark, presentOffer, APP STATE), dans
+# diag/accept-fail.logcat + log. Jamais bloquant.
+accept_fail_diag() {
+  local f="$OUT/diag/accept-fail.logcat" n
+  mkdir -p "$OUT/diag"
+  app_logcat_since "${OFFER_REQ_TS:-}" decisive > "$f" 2>/dev/null || true
+  n=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+  _ulog "accept_fail_diag: logcat=${n:-0} ligne(s) [${APP_LC_STATS}] depuis ${OFFER_REQ_TS:-?}"
+  head -20 "$f" | while IFS= read -r l; do _ulog "accept_fail_diag app: ${l:0:240}"; done
+  return 0
+}
+
+# ui_texts_log tag : textes visibles de l'écran courant dans le log (un toast de refus dure 5 s).
+ui_texts_log() {
+  local tag="$1" texts=""
+  ui_xml && texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
+  _ulog "ecran $tag: ${texts:-dump indisponible}"
+}
+
+# stop_diag tag : preuves d'une tentative d'arrêt (capture, dump, extrait logcat). Texte seul, aucun secret.
+# Écrit TOUJOURS dans le log (« stop_diag dbg-<tag> ») : les fichiers sous diag/ et screens/ ne sont
+# pas lisibles dans le log CI (run 45004400552 : aucune ligne « dbg-stop » alors que les taps avaient eu lieu).
+stop_diag() {
+  local tag="$1" texts="" lc
+  mkdir -p "$OUT/diag" "$OUT/screens"
+  adb exec-out screencap -p > "$OUT/screens/dbg-$tag.png" 2>/dev/null || true
+  if ui_xml; then
+    cp "$UI_XML_PATH" "$OUT/diag/dbg-$tag.xml" 2>/dev/null || true
+    texts=$(python3 "$(dirname "${BASH_SOURCE[0]}")/dump_diag.py" "$UI_XML_PATH" --texts 2>/dev/null | cut -c1-300)
+  fi
+  app_logcat_since "${STOP_TAP_TS:-}" decisive > "$OUT/diag/dbg-$tag.logcat" 2>/dev/null || true
+  lc=$(wc -l < "$OUT/diag/dbg-$tag.logcat" 2>/dev/null | tr -d ' ')
+  _ulog "stop_diag dbg-$tag: png=screens/dbg-$tag.png xml=diag/dbg-$tag.xml logcat=${lc:-0} ligne(s) [${APP_LC_STATS}] | ${texts:-dump indisponible}"
+  # Lignes décisives (complete-stop request/response/ignored) d'abord : elles disent si la requête part et ce que répond le serveur.
+  [ "${lc:-0}" -gt 0 ] && { grep -aE 'complete-stop|LastPing|ping_age|DioException|Exception|FATAL' "$OUT/diag/dbg-$tag.logcat" | head -12
+      grep -avE 'complete-stop|LastPing|ping_age|DioException|Exception|FATAL' "$OUT/diag/dbg-$tag.logcat" | tail -4; } \
+    | while IFS= read -r l; do _ulog "stop_diag dbg-$tag app: ${l:0:260}"; done
+  return 0
+}
+
+# stop_prime n : le serveur exige un ping de moins de 15 min et moins de 500 m de l'arrêt
+# (RideStopProgressionService::assertStopProximity) et le Driver émet son PROPRE ping GPS, qui écrase le ping API.
+# Avant CHAQUE tap : lecture de base de la position du driver sur le serveur, GPS émulateur sur l'arrêt (adb emu geo fix
+# longitude latitude), puis attente BORNÉE (STOP_PING_WAIT s, défaut 24) d'un ping Driver frais : location_updated_at
+# changé, moins de 500 m, moins de 15 min (api stop_ping_check). Aucun ping API tant que ce ping n'est pas vu ; au
+# délai, WARN et un ping API en dernier recours. Jamais bloquant. STOP_LAT / STOP_LNG posés par run.sh ; sans eux ou
+# sans `api`, ne fait rien.
+stop_prime() {
+  local n="$1" i=$(( $1 - 1 )) lat lng t=0 seen=0 prev out wait="${STOP_PING_WAIT:-24}" coords
+  type api >/dev/null 2>&1 || return 0
+  # Coordonnées RÉELLES de l'arrêt (serveur) en priorité : quand la course est composée par
+  # l'UI (Google Places), elles diffèrent du tableau STOP_LAT/STOP_LNG codé en dur (run
+  # 45093391102 : 2 à 3 km d'écart -> complete-stop rejeté stop_too_far à chaque tap réel).
+  # Repli sur le tableau codé en dur seulement si l'appel API ne rend rien.
+  coords="$(STOP_INDEX=$i api stop_coords 2>/dev/null | tail -1)"
+  lat="${coords%% *}"; lng="${coords#* }"
+  if [ -z "$lat" ] || [ -z "$lng" ] || [ "$lat" = "$coords" ]; then
+    lat="${STOP_LAT[$i]:-}"; lng="${STOP_LNG[$i]:-}"
+  fi
+  [ -n "$lat" ] && [ -n "$lng" ] || return 0
+  prev="$(STOP_INDEX=$i api stop_ping_check 2>/dev/null | sed -n 's/.*PING updated_at=\([^ ]*\).*/\1/p' | tail -1)"
+  [ "$prev" = "none" ] && prev=""
+  adb emu geo fix "$lng" "$lat" >/dev/null 2>&1 || true
+  while :; do
+    out="$(STOP_INDEX=$i PREV_UPDATED_AT="$prev" api stop_ping_check 2>/dev/null | grep -a 'PING updated_at' | tail -1)"
+    if printf '%s' "$out" | grep -aq 'PING_OK'; then seen=1; break; fi
+    [ "$t" -ge "$wait" ] && break
+    sleep 4; t=$((t + 4))
+  done
+  if [ "$seen" = 1 ]; then
+    _ulog "stop $n: GPS émulateur sur l'arrêt ($lat,$lng) ; ping Driver frais vu sur le serveur après ${t}s : ${out}"
+  else
+    STOP_INDEX=$i api loc_stop >> "$OUT/run.log" 2>&1 || true
+    _ulog "stop $n: WARN GPS émulateur sur l'arrêt ($lat,$lng) mais aucun ping Driver frais vu sur le serveur en ${wait}s (${out:-pas de lecture}) ; ping API posé en dernier recours"
+  fi
+  return 0
+}
+
+# driver_open_ride_via_card pkg : filet après un repli API d'acceptation. La navigation vers
+# l'écran détail (RideDetailsController, où vit « Confirmer l'arrêt ») ne se déclenche
+# normalement QUE par le tap UI sur l'offre (CallKit) ; un accept par l'API n'ouvre rien côté
+# app — run 45083876294 : zéro appel driver/rides/details de bout en bout, bouton absent aux
+# deux arrêts. Tape la carte « Course en cours » du tableau de bord pour forcer cette
+# navigation, puis attend (borné, DRIVER_DETAILS_WAIT s, défaut 20) un appel
+# driver/rides/details dans le logcat Driver. Jamais bloquant : 0 = vu, 1 = tapé mais jamais vu
+# (WARN), 2 = carte absente (aucun tap). L'appelant foreground le Driver avant d'appeler ceci.
+driver_open_ride_via_card() {
+  local pkg="$1" ts wait="${DRIVER_DETAILS_WAIT:-20}" t=0 seen=0
+  if ! tap_when "$pkg" "Course en cours"; then
+    _ulog "driver: carte « Course en cours » absente (filet accept API)"
+    return 2
+  fi
+  ts="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
+  while [ "$t" -lt "$wait" ]; do
+    app_logcat_since "$ts" > "$OUT/diag/.cardopen.txt" 2>/dev/null || true
+    grep -aq 'rides/details' "$OUT/diag/.cardopen.txt" 2>/dev/null && { seen=1; break; }
+    sleep 4; t=$((t + 4))
+  done
+  if [ "$seen" = 1 ]; then
+    _ulog "driver: écran détail ouvert via la carte « Course en cours » (driver/rides/details vu après ${t}s)"
+    return 0
+  fi
+  _ulog "driver: WARN carte « Course en cours » tapée mais aucun driver/rides/details vu en ${wait}s (filet accept API)"
+  return 1
+}
+
+# driver_stop_confirm_ui pkg n : « Confirmer l'arrêt » n côté Driver par taps UI uniquement.
+# 0 = le SERVEUR a vu l'arrêt n (stops_done>=n) à la suite de ces taps ; 2 = bouton absent ;
+# 3 = état inattendu (arrêt déjà fait avant tout tap) ; 1 = taps sans effet serveur (diagnostic écrit).
+# Diagnostic dbg-stopN-aK : écrit à CHAQUE tentative et sur TOUTES les sorties (échec, état inattendu,
+# dump indisponible, bouton absent, succès), jamais seulement après un échec silencieux.
+# Les taps visent le parent CLIQUABLE (même méthode que « Prise en charge », prouvée) ; l'ancien
+# tap_exact visait le centre du libellé, et le serveur n'a reçu aucun complete-stop (run 44927908295).
+# Un nouvel essai ne retape jamais si le serveur a déjà vu l'arrêt (sinon il confirmerait l'arrêt suivant).
+# Aucun appel API de complétion ici : le repli API reste à l'appelant, compté en échec.
+driver_stop_confirm_ui() {
+  local pkg="$1" n="$2" attempt tool res x y kind done_now
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  for attempt in 1 2 3; do
+    ride_state
+    done_now="$(last_stops_done)"; done_now="${done_now:-0}"
+    if [ "$done_now" -ge "$n" ]; then
+      if [ "$attempt" -eq 1 ]; then
+        _ulog "stop $n: déjà fait côté serveur avant tout tap"
+        stop_diag "stop${n}-a${attempt}-already"
+        return 3
+      fi
+      _ulog "stop $n: vu par le serveur après le tap de l'essai $((attempt - 1))"
+      stop_diag "stop${n}-a${attempt}-seen"
+      return 0
+    fi
+    if ! ui_xml; then
+      _ulog "stop $n: dump indisponible (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-nodump"
+      sleep 2; continue
+    fi
+    res=$(python3 "$tool" "$UI_XML_PATH" "Confirmer l'arrêt")
+    if [ -z "$res" ]; then
+      _ulog "stop $n: bouton « Confirmer l'arrêt » absent (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-nobutton"
+      return 2
+    fi
+    read -r x y kind <<<"$res"
+    stop_prime "$n"
+    STOP_TAP_TS="$(adb shell "date +'%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
+    adb shell input tap "$x" "$y" >/dev/null 2>&1
+    _ulog "stop $n: « Confirmer l'arrêt » tapé @ $x,$y ($kind, essai $attempt)"
+    # Dialogue d'arrêt réel (app_dialog.dart) : titre « Confirmer l'arrêt » + Annuler/Confirmer, jamais le
+    # dialogue de fin de course (« Veuillez confirmer »). Sans lui, aucun « Confirmer » n'est tapé.
+    if { ui_xml && _spec_ok '+Annuler&+Confirmer&+Confirmer l.arrêt'; } >/dev/null 2>&1; then
+      _ulog "stop $n: dialogue d'arrêt reconnu (titre « Confirmer l'arrêt » + Annuler/Confirmer)"
+    else
+      _ulog "stop $n: WARN titre « Confirmer l'arrêt » absent du dialogue (essai $attempt)"
+    fi
+    if dialog_confirm "$pkg" "Confirmer" "Annuler" 8 15; then
+      sleep 1
+      ui_texts_log "stop${n}-a${attempt}-apres-confirmer"
+    else
+      _ulog "stop $n: dialogue d'arrêt non confirmé (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-nodialog"
+    fi
+    sleep 3
+    ride_state
+    done_now="$(last_stops_done)"; done_now="${done_now:-0}"
+    if [ "$done_now" -ge "$n" ]; then
+      _ulog "stop $n: serveur stops_done=$done_now après les taps UI (essai $attempt)"
+      stop_diag "stop${n}-a${attempt}-ok"
+      return 0
+    fi
+    stop_diag "stop${n}-a${attempt}"
+  done
+  return 1
+}
+
+# rider_leave_rating pkg : après la notation, ramène le Rider à l'accueil SANS Back aveugle.
+# Un Back sur l'accueil (racine Flutter) quitte l'app : c'était la fausse panne « rider-home-after »
+# du run 44927908295, où la capture « notation » montrait déjà l'accueil. 0 = accueil (« Où allez-vous ? »)
+# observé ; 1 = accueil jamais atteint. Un Back n'est envoyé que si l'accueil n'est pas déjà là.
+rider_leave_rating() {
+  local pkg="$1" i tool res x y kind lab
+  tool="$(dirname "${BASH_SOURCE[0]}")/tap_node.py"
+  for i in 1 2 3 4 5 6; do
+    if ! ui_xml; then sleep 2; continue; fi
+    if [ -n "$(python3 "$tool" "$UI_XML_PATH" "Où allez-vous ?")" ]; then
+      _ulog "rider_leave_rating: accueil observé (essai $i), aucun Back envoyé si déjà là"
+      return 0
+    fi
+    res=""
+    for lab in "Plus tard" "Passer" "Ignorer" "Fermer"; do
+      res=$(python3 "$tool" "$UI_XML_PATH" "$lab")
+      [ -n "$res" ] && break
+    done
+    if [ -n "$res" ]; then
+      read -r x y kind <<<"$res"
+      adb shell input tap "$x" "$y" >/dev/null 2>&1
+      _ulog "rider_leave_rating: « $lab » tapé @ $x,$y ($kind)"
+    else
+      adb shell input keyevent 4 >/dev/null 2>&1
+      _ulog "rider_leave_rating: écran non-accueil, Back envoyé (essai $i)"
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+# _screen_sig xml : signature des textes visibles d'un dump, jetons de durée/horloge masqués
+# (un minuteur qui avance n'est pas un changement d'écran ; un compteur « 0/2 » → « 1/2 » en est un).
+_screen_sig() {
+  python3 - "$1" <<'PY'
+import html, re, sys
+try:
+    xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    xml = ""
+out = []
+for m in re.finditer(r"<node\b[^>]*>", xml):
+    tag = m.group(0)
+    if re.search(r'visible-to-user="false"', tag):
+        continue
+    for name in ("text", "content-desc"):
+        a = re.search(r'\b' + name + r'="([^"]*)"', tag)
+        t = re.sub(r"\s+", " ", html.unescape(a.group(1))).strip().lower() if a else ""
+        if t:
+            t = re.sub(r"\b\d+(?=\s*(?:mins?|minutes?|h|sec|s)\b)", "#", t)
+            t = re.sub(r"\b\d{1,2}:\d{2}\b", "#:#", t)
+            out.append(t)
+print("\n".join(out))
+PY
+}
+
+# wait_screen_change ref_xml timeout : attend que l'écran courant DIFFÈRE de ref_xml (signature de textes).
+# 0 = changement observé ; 1 = écran toujours identique à la référence après `timeout` s. Une capture
+# prise sans attendre redonnait l'écran précédent (35b = 37 octet pour octet, run 45004400552).
+wait_screen_change() {
+  local ref="$1" tmo="${2:-20}" t0=$SECONDS refsig cur
+  refsig="$(_screen_sig "$ref")"
+  while [ $((SECONDS - t0)) -lt "$tmo" ]; do
+    if ui_xml; then
+      cur="$(_screen_sig "$UI_XML_PATH")"
+      if [ -n "$cur" ] && [ "$cur" != "$refsig" ]; then
+        _ulog "wait_screen_change: écran différent de $(basename "$ref") après $((SECONDS - t0))s"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  _ulog "wait_screen_change: écran toujours identique à $(basename "$ref") après ${tmo}s"
+  return 1
+}
+
+# rider_dismiss_blocking_dialog pkg : ferme le dialogue « Terminez votre course » (my_strings
+# runningRideAlertTitle) qui recouvre l'écran de course côté Rider (run 45004400552, captures 23/24 :
+# seuls « Terminez votre course / Continuer / Dismiss » étaient visibles, donc compteur et bannière
+# introuvables). Back uniquement : jamais « Continuer » (il terminerait la course). 3 = dialogue absent ;
+# 0 = vu puis fermé (la présence est un constat produit à tracer par l'appelant) ; 1 = toujours là.
+rider_dismiss_blocking_dialog() {
+  local pkg="$1" i
+  ui_xml || return 3
+  grep -q 'Terminez votre course' "$UI_XML_PATH" 2>/dev/null || return 3
+  _ulog "rider: dialogue « Terminez votre course » au-dessus de l'écran de course"
+  for i in 1 2; do
+    adb shell input keyevent 4 >/dev/null 2>&1
+    sleep 2
+    if ui_xml && ! grep -q 'Terminez votre course' "$UI_XML_PATH" 2>/dev/null; then
+      _ulog "rider: dialogue fermé par Back (essai $i)"
+      return 0
+    fi
+  done
+  _ulog "rider: dialogue « Terminez votre course » toujours présent après 2 Back"
+  return 1
+}
+
 # tap_node_verified pkg label : tape le centre du nœud (ou de son parent cliquable) trouvé par
 # texte/content-desc dans le dump, puis PROUVE que l'écran a changé : le libellé a disparu ou
 # un champ de saisie est apparu. Jusqu'à 2 retaps. 0 = écran changé, 1 = rien ne s'est passé.

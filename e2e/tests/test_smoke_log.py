@@ -7,9 +7,11 @@ sanitized first: tokens, passwords, keys and phone numbers are masked.
 
 Run with `python3 e2e/tests/test_smoke_log.py`. No emulator, no network.
 """
+import base64
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -33,21 +35,34 @@ def text(name):
 
 
 # ------------------------------------------------------------------ masking
+def rnd(n):
+    """Valeur factice de n caractères hex, tirée à chaque exécution : jamais écrite en dur."""
+    return secrets.token_hex((n + 1) // 2)[:n]
+
+
+DEV = rnd(20)          # jeton dev-token factice
+UID = rnd(16)          # identifiant de course factice
+_b64 = lambda raw: base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+JWT_HEAD = _b64('{"alg":"HS256"}')
+JWT = ".".join([JWT_HEAD, _b64('{"sub":"%s"}' % rnd(8)), _b64(rnd(16))])
+BEARER, BASIC = rnd(16), _b64("%s:%s" % (rnd(8), rnd(8)))
+RT, PW, SK = rnd(12), rnd(10), "sk-live-" + rnd(16)
+CS, FCM, REMEMBER, GKEY = rnd(12), "fZ:APA91b-" + rnd(10), rnd(6), "AIzaSy" + rnd(10)
+
 SECRETS = [
-    ("Authorization: Bearer abcdef1234567890", ["abcdef1234567890"]),
-    ("Authorization: Basic dXNlcjpwYXNzd29yZA==", ["dXNlcjpwYXNzd29yZA=="]),
-    ("dev-token=deadbeefcafebabe1234", ["deadbeefcafebabe1234"]),
-    ('{"access_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl"}',
-     ["eyJhbGciOiJIUzI1NiJ9"]),
-    ('{"refresh_token":"r3fr3sh-s3cr3t","password": "hunter2"}', ["r3fr3sh-s3cr3t", "hunter2"]),
-    ("api_key: sk-live-0123456789abcdef", ["sk-live-0123456789abcdef"]),
-    ("client_secret=abcdEFGH1234", ["abcdEFGH1234"]),
+    ("Authorization: Bearer " + BEARER, [BEARER]),
+    ("Authorization: Basic " + BASIC, [BASIC]),
+    ("dev-token=" + DEV, [DEV]),
+    ('{"access_token": "%s"}' % JWT, [JWT_HEAD]),
+    ('{"refresh_token":"%s","password": "%s"}' % (RT, PW), [RT, PW]),
+    ("api_key: " + SK, [SK]),
+    ("client_secret=" + CS, [CS]),
     ('"user_phone_number": "+221700000106"', ["+221700000106", "700000106"]),
     ("phone=770123456", ["770123456"]),
     ("contact +221 77 123 45 67", ["77 123 45 67"]),
-    ('{"fcm_token":"fZ:APA91b-XYZ","remember_token":"abc123"}', ["fZ:APA91b-XYZ", "abc123"]),
-    ("X-Api-Key: AIzaSy0123456789", ["AIzaSy0123456789"]),
-    ('{"uid": "8f3c1d9a4b2e7c55"}', ["8f3c1d9a4b2e7c55"]),
+    ('{"fcm_token":"%s","remember_token":"%s"}' % (FCM, REMEMBER), [FCM, REMEMBER]),
+    ("X-Api-Key: " + GKEY, [GKEY]),
+    ('{"uid": "%s"}' % UID, [UID]),
     ("contact 221700000106", ["221700000106"]),
 ]
 
@@ -81,11 +96,11 @@ def test_masking_is_idempotent():
 @case
 def test_realistic_api_record_is_clean_but_still_useful():
     rec = {"t": 1761400000.1, "m": "GET", "path": "/api/ride/details", "code": 200,
-           "resp": {"uid": "8f3c1d9a4b2e7c55", "rider_phone": "+221700000106",
+           "resp": {"uid": UID, "rider_phone": "+221700000106",
                     "fcm_token": "fZ:APA91b-XYZ", "pickup_location": "E2E Pickup Plateau",
                     "name": "E2E Rider"}}
     out = sanitize(json.dumps(rec))
-    for leaked in ("8f3c1d9a4b2e7c55", "+221700000106", "fZ:APA91b-XYZ"):
+    for leaked in (UID, "+221700000106", "fZ:APA91b-XYZ"):
         assert leaked not in out, (leaked, out)
     assert "E2E Pickup Plateau" in out, out
 
@@ -115,7 +130,7 @@ def test_ordinary_log_content_survives():
 @case
 def test_uid_in_prose_is_masked():
     """Bloquant 1 — run.sh publie « … portant l'uid <uid> » : la prose doit être masquée."""
-    uid = "8f3c1d9a4b2e7c55"
+    uid = UID
     for raw in (
         f"notif: 0 notification portant l'uid {uid}",
         "uid 123",
@@ -150,7 +165,7 @@ def test_api_record_is_whitelisted_and_paths_masked():
     for keep in ("ride/list", "general-setting", "/api/general-setting"):
         assert mask_path(keep) == keep, keep
 
-    uid = "8f3c1d9a4b2e7c55"
+    uid = UID
     rec = {"t": 1761400000.1, "m": "GET", "path": "/api/ride/details/123", "code": 200,
            "resp": {"status": "success", "remark": "ok",
                     "data": {"ride": {
@@ -218,9 +233,9 @@ def test_api_flow_err_is_published_and_truncated():
     smoke = os.path.join(tmp, "smoke.log")
     err = os.path.join(tmp, "api-flow.err")
     with open(err, "w", encoding="utf-8") as fh:
-        fh.write("dev-token=deadbeefcafebabe1234 user +221700000106\n"
+        fh.write("dev-token=" + DEV + " user +221700000106\n"
                  "\n"
-                 "ConnectionResetError: ride uid 8f3c1d9a4b2e7c55\n")
+                 "ConnectionResetError: ride uid " + UID + "\n")
     env = dict(os.environ, SMOKE_LOG=smoke)
     proc = subprocess.run(
         ["bash", "-c", '. "$1"; smoke_emit_file "$2"', "_",
@@ -228,7 +243,7 @@ def test_api_flow_err_is_published_and_truncated():
         capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stderr
     body = open(smoke, encoding="utf-8").read()
-    for leaked in ("deadbeefcafebabe1234", "+221700000106", "8f3c1d9a4b2e7c55"):
+    for leaked in (DEV, "+221700000106", UID):
         assert leaked not in body, (leaked, body)
     assert "ConnectionResetError" in body, body
     assert "\n\n" not in "\n" + body, "les lignes vides doivent être ignorées"
@@ -263,11 +278,11 @@ def smoke_emit(line, extra_env=None):
 
 @case
 def test_shell_emit_writes_sanitized_stderr_and_file():
-    proc, body = smoke_emit("dev-token=deadbeefcafebabe1234 user +221700000106")
+    proc, body = smoke_emit("dev-token=" + DEV + " user +221700000106")
     assert proc.returncode == 0, proc.stderr
-    assert "deadbeefcafebabe1234" not in proc.stderr, proc.stderr
+    assert DEV not in proc.stderr, proc.stderr
     assert "+221700000106" not in proc.stderr, proc.stderr
-    assert "deadbeefcafebabe1234" not in body, body
+    assert DEV not in body, body
     assert "+221700000106" not in body, body
     assert "[REDACTED]" in body, body
     assert proc.stderr.strip() == body.strip(), (proc.stderr, body)
