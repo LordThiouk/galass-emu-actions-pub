@@ -29,8 +29,9 @@ jobs:
     timeout-minutes: 150
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
-      RIDER_ID: "106"
-      DRIVER_ID: "23"
+      # Comptes de test staging (>900000) — jamais 106/23 (canaux Pusher prod).
+      RIDER_ID: "900106"
+      DRIVER_ID: "900023"
       OUT: e2e-out
       # Chaîne des échéances (vérifiée par e2e/tests) : watchdog 90 < step 100 < job 150.
       # Le harnais rend son verdict partiel AVANT que le step soit coupé, et le step

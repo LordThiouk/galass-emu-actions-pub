@@ -9,8 +9,9 @@ set -uo pipefail
 : "${BASE:?BASE is required (staging API, no prod)}"
 : "${DEV_TOKEN:?DEV_TOKEN is required}"
 
-RIDER_ID="${RIDER_ID:-106}"
-DRIVER_ID="${DRIVER_ID:-23}"
+# Comptes de test staging uniquement — ids > 900000 (jamais rider-user-106 / rider-driver-23 prod).
+RIDER_ID="${RIDER_ID:-900106}"
+DRIVER_ID="${DRIVER_ID:-900023}"
 OUT="${OUT:-e2e-out}"
 RIDER_PKG="sn.galass.galassrider"
 DRIVER_PKG="sn.galass.galassdriver"
@@ -555,8 +556,8 @@ else
   mark apk-install FAIL "rider_rc=$r1 driver_rc=$r2"
 fi
 
-write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@galass.sn" "+221700000106"
-write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700000023"
+write_prefs "$RIDER_PKG" "${RIDER_TOKEN:-}" "$RIDER_ID" "E2E Rider" "e2e.rider@galass.sn" "+221700900106"
+write_prefs "$DRIVER_PKG" "${DRIVER_TOKEN:-}" "$DRIVER_ID" "E2E Driver" "e2e.driver@galass.sn" "+221700900023"
 
 # ------------------------------------------------------------------ launch
 # Boîte « Let app always run in background? » du driver : exempter AVANT le lancement.
@@ -1110,9 +1111,9 @@ api cancel >> "$OUT/run.log" 2>&1
 
 # ------------------------------------------------------------- assertions
 deadline_check assertions  # budget mur : verdict partiel plutôt qu'un step qui traîne
-if "$PY" - "$OUT" <<'PY'
+if "$PY" - "$OUT" "$DRIVER_ID" <<'PY'
 import json, sys
-out = sys.argv[1]
+out, expect_driver = sys.argv[1], int(sys.argv[2])
 st = json.load(open(f"{out}/state.json"))
 d = st.get("driver_final") or {}
 r = st.get("rider_final") or {}
@@ -1120,7 +1121,7 @@ stops = st.get("stops") or d.get("stops") or []
 done = [s for s in stops if s.get("completed_at")]
 ok = (
     int(r.get("status") or -1) == 1
-    and int(d.get("driver_id") or r.get("driver_id") or 0) == 23
+    and int(d.get("driver_id") or r.get("driver_id") or 0) == expect_driver
     and len(stops) == 2
     and len(done) == 2
     and int(r.get("payment_status") or 0) == 1
