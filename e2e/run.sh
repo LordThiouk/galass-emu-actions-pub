@@ -127,10 +127,10 @@ MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter
 # « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
 # seul le bouton d'arrêt distingue la course démarrée.
 MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
-# Progression d'arrêts (my_strings driver 82-85) : « Arrêt 2 »/« Arrivée » sont déjà
-# affichés (course en cours) ou appartiennent à l'écran de fin — faux PASS, retirés.
-MARK_driver_stop1_done='+1/2 arrêts? terminés?|-Accepter\s+la\s+course'
-MARK_driver_stop2_done='+2/2 arrêts? terminés?|-Accepter\s+la\s+course'
+# Papa 27/11 22:30 : compteurs x/N retirés (F5-14). Preuve = frise Arrêt N + Terminer.
+# Négatifs : offre + anciens bandeaux x/N (ne doivent plus PASS).
+MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
 MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
 MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
 # L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,
@@ -1050,7 +1050,7 @@ for i in 0 1; do
   rider_dismiss_blocking_dialog "$RIDER_PKG"; dlg_rc=$?
   [ "$dlg_rc" = "3" ] || mark "bug-rider-stop${n}-run-dialog" WARN "dialogue « Terminez votre course » au-dessus de l'écran de course après l'arrêt $n (fermeture rc=$dlg_rc)"
   if [ "$i" -eq 0 ]; then
-    # 23 : compteur « 1/2 arrêt terminé » rendu par l'app corrigée (marqueur ci-dessus).
+    # 23 : frise Rider Arrêt N (F4-27) — plus de compteur x/N.
     cap rider-stop1-done 23-rider-stop1-done "$RIDER_PKG" 25
   else
     cap rider-stop2-done 24-rider-stop2-done "$RIDER_PKG" 25

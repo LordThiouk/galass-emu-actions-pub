@@ -364,8 +364,8 @@ RIDER_END = _xml("Vous êtes arrivé", "Payer maintenant", "Facture à payer")
 DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
                     "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
                     "Consignes du client:")
-DRIVER_STOP1_DONE = _xml("1/2 arrêt terminé", "Arrêt 2", "Terminer la course")
-DRIVER_STOP2_DONE = _xml("2/2 arrêts terminés", "Terminer la course")
+DRIVER_STOP1_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course")
+DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Destination", "Terminer la course")
 
 
 def compose_body():
@@ -561,13 +561,16 @@ def test_driver_inride_marker_rejects_active_screen():
 
 
 @case
-def test_driver_stop_done_markers_accept_singular_and_plural_counter():
+def test_driver_stop_done_markers_use_arret_n_not_counter():
+    """Papa 27/11 : plus de x/N — frise Arrêt N + Terminer (F5-14)."""
     m = markers()
-    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé", "Confirmer l'arrêt")) == 0
-    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêts terminés")) == 0
-    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) == 0
-    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêt terminé")) == 0
-    assert spec_ok(m["driver_stop1_done"], _xml("0/2 arrêt terminé")) != 0
+    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0
+    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0
+    # Anciens compteurs seuls : FAIL (négatifs -1/2|-2/2 dans le spec)
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé")) != 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) != 0
+    assert "+1/2" not in m["driver_stop1_done"] and "+2/2" not in m["driver_stop2_done"]
+    assert "Arrêt 1" in m["driver_stop1_done"] and "Destination" in m["driver_stop2_done"]
 
 
 @case
@@ -580,12 +583,11 @@ def test_driver_summary_is_the_home_screen_the_app_really_shows():
 
 
 @case
-def test_l1_driver_stop_done_markers_require_progress_text():
+def test_l1_driver_stop_done_markers_require_arret_n_frise():
     m = markers()
     assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0, m["driver_stop1_done"]
     assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0, m["driver_stop2_done"]
-    # « Arrêt 2 » (déjà affiché en course) et « Vous êtes arrivé » (écran de fin) ne
-    # prouvent pas la confirmation de l'arrêt 1 : faux PASS de l'ancien spec.
+    # « Arrêt 2 » seul / écran fin : faux PASS
     assert spec_ok(m["driver_stop1_done"], _xml("Arrêt 2", "Terminer la course")) != 0, \
         m["driver_stop1_done"]
     assert spec_ok(m["driver_stop2_done"], _xml("Arrivée", "Vous êtes arrivé", "Terminer la course")) != 0, \
