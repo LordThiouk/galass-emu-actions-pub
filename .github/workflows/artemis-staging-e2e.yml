@@ -68,7 +68,9 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: "17"}
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: "3.50.1", channel: stable, cache: true}
+        # Papa 27/11 : pas de pin 3.50.1 pour coller à des goldens régénérés.
+        # Référence = PNG de main sous Flutter 3.44.8 (CI 16:20 = 0 %).
+        with: {flutter-version: "3.44.8", channel: stable, cache: true}
       - name: Licences Android + NDK
         run: |
           SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -122,10 +124,9 @@ jobs:
           GRADLE
           echo "init script: $(wc -l < ~/.gradle/init.d/zz-debug-signing.gradle) lignes"
       - name: Tests unitaires Flutter (preuve ISC — avant rm -rf src)
-        # Flutter 3.50.1. Jamais --update-goldens.
-        # Diagnostic P0 : continuer e2e si fails Rider = goldens
-        # (F4-27 UI vs PNG gelés ~12–13 % course_en_cours_*) et/ou
-        # flake F4-29 fonts dispose ; Driver = driver_ride_running_* seuls.
+        # Flutter 3.44.8. Jamais --update-goldens.
+        # Verdict golden sous 3.50.1 (run 46055061159) INVALIDE (Papa 27/11).
+        # Échec golden = signal ; ne pas continuer e2e en masquant.
         run: |
           set -euo pipefail
           flutter --version
