@@ -754,7 +754,7 @@ ride_state
 # Close-7 timing: Driver foreground + « En ligne » confirmé AVANT « Trouver un chauffeur »
 # (fait dans compose_ride_ui). Ici: UNE seule boucle de poll qui dump+tap « Accepter la course »,
 # capture 34 = XML au moment exact du tap ; log t_offer_to_tap ; WARN si > 25 s.
-# Exactement 2 `\bapi accept\b`.
+# Exactement 2 `api accept`.
 # Run 44912533775 (close-7) : l'offre n'a jamais été rendue, pour deux raisons de harnais
 # nommées — (a) la boucle rappelait `bring_fg` (monkey relaunch) à CHAQUE tour, ce qui relance
 # l'app Driver et fait perdre l'overlay d'offre ; (b) elle lisait `status=0` comme « offre
@@ -828,7 +828,7 @@ ACCEPT_FALLBACK_PID=""
 if [ "$offer_seen" = "1" ]; then
   # Filet API : lancé après le tap, délai court pour laisser wait_ui confirmer le tap UI
   # mais assez tôt pour accepter avant expiration de l'offre si le tap UI n'a pas pris.
-  (sleep 8; STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
+  (sleep 5; STEP=accept "$PY" e2e/api_flow.py) > "$ACCEPT_FALLBACK_LOG" 2>&1 &
   ACCEPT_FALLBACK_PID=$!
   if wait_ui "$DRIVER_PKG" 25 "$MARK_driver_accepted_details"; then
     UI_ACCEPT=1; log "acceptation par l'UI (écran suivant prouvé)"
