@@ -755,7 +755,7 @@ ride_state
 # Close-7 timing: Driver foreground + « En ligne » confirmé AVANT « Trouver un chauffeur »
 # (fait dans compose_ride_ui). Ici: UNE seule boucle de poll qui dump+tap « Accepter la course »,
 # capture 34 = XML au moment exact du tap ; log t_offer_to_tap ; WARN si > 25 s.
-# Exactement 2 `api accept`.
+# Exactement 2 `\bapi accept\b`.
 # Run 44912533775 (close-7) : l'offre n'a jamais été rendue, pour deux raisons de harnais
 # nommées — (a) la boucle rappelait `bring_fg` (monkey relaunch) à CHAQUE tour, ce qui relance
 # l'app Driver et fait perdre l'overlay d'offre ; (b) elle lisait `status=0` comme « offre
