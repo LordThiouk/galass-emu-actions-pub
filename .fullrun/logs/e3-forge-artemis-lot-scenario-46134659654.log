@@ -1,0 +1,1380 @@
+
+> Forge · deepseek-v4.1-flash-free
+
+→ Read /home/runner/work/_temp/oc/prompt.md
+
+$ ls -la /home/runner/work/_temp/oc/ 2>/dev/null; ls -la /home/runner/work/lifeos-ci/lifeos-ci 2>/dev/null
+total 32
+drwxr-xr-x 2 runner runner 4096 Nov 28 10:20 .
+drwxr-xr-x 9 runner runner 4096 Nov 28 10:20 ..
+-rw------- 1 runner runner 9680 Nov 28 10:20 opencode.json
+-rw-r--r-- 1 runner runner  100 Nov 28 10:21 opencode.log
+-rw-r--r-- 1 runner runner 4936 Nov 28 10:20 prompt.md
+total 20
+drwxr-xr-x  5 runner runner 4096 Nov 28 10:20 .
+drwxr-xr-x  3 runner runner 4096 Nov 28 10:19 ..
+drwxr-xr-x  8 runner runner 4096 Nov 28 10:20 ci
+dr-xr-xr-x 16 runner runner 4096 Nov 28 10:20 lifeos
+drwxr-xr-x  8 runner runner 4096 Nov 28 10:20 target
+
+$ pwd && ls -la && git status && git log --oneline -5
+/home/runner/work/lifeos-ci/lifeos-ci/target
+total 36
+drwxr-xr-x 8 runner runner 4096 Nov 28 10:20 .
+drwxr-xr-x 5 runner runner 4096 Nov 28 10:20 ..
+drwxr-xr-x 7 runner runner 4096 Nov 28 10:21 .git
+drwxr-xr-x 3 runner runner 4096 Nov 28 10:20 .github
+-rw-r--r-- 1 runner runner  499 Nov 28 10:20 .gitignore
+drwxr-xr-x 3 runner runner 4096 Nov 28 10:20 MEMORY
+drwxr-xr-x 4 runner runner 4096 Nov 28 10:20 e2e
+drwxr-xr-x 2 runner runner 4096 Nov 28 10:20 goldens
+drwxr-xr-x 3 runner runner 4096 Nov 28 10:20 vendor
+On branch cursor/artemis-2lanes-e410
+Your branch is up to date with 'origin/cursor/artemis-2lanes-e410'.
+
+nothing to commit, working tree clean
+8ed2184 ci(artemis): 2 lanes isolées (lane a|b, concurrency + comptes >900000)
+c768705 docs(isa): état réel post-E1 — marqueurs Driver visibles, ISC-EMU 0/4
+6f8dba0 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && find . -path ./.git -prune -o -type f -print | sort
+./.github/workflows/artemis-staging-e2e.yml
+./.github/workflows/golden-diff.yml
+./.github/workflows/stop-confirm-probe.yml
+./.gitignore
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+./e2e/_ephemeral/EV-local-20261118-F17/baseline-markers.txt
+./e2e/_ephemeral/EV-local-20261118-F17/bash-n.txt
+./e2e/_ephemeral/EV-local-20261118-F17/green-markers.txt
+./e2e/_ephemeral/EV-local-20261118-F17/red-markers.txt
+./e2e/api_flow.py
+./e2e/b3_order.py
+./e2e/base_guard.py
+./e2e/ci-opencode-run.sh
+./e2e/compose_order.py
+./e2e/crash_summary.py
+./e2e/device_prep.sh
+./e2e/diag_assign.py
+./e2e/dump_diag.py
+./e2e/emu_sampler.py
+./e2e/logcheck.sh
+./e2e/notif.py
+./e2e/probe_close_rides.py
+./e2e/probe_stop_confirm.sh
+./e2e/report.py
+./e2e/run.sh
+./e2e/sanitize.py
+./e2e/set_model.py
+./e2e/smoke_log.sh
+./e2e/stop_hook.sh
+./e2e/tap_node.py
+./e2e/tests/test_base_guard.py
+./e2e/tests/test_ci_direct_harness.py
+./e2e/tests/test_ci_opencode_run.py
+./e2e/tests/test_crash_recovery.py
+./e2e/tests/test_device_stability.py
+./e2e/tests/test_diag_driver_assign.py
+./e2e/tests/test_driver_open_ride_via_card.py
+./e2e/tests/test_fg_and_start_state.py
+./e2e/tests/test_markers.py
+./e2e/tests/test_offer_window.py
+./e2e/tests/test_opencode_cli.py
+./e2e/tests/test_place_pick.py
+./e2e/tests/test_prefs_order.py
+./e2e/tests/test_pusher_diag.py
+./e2e/tests/test_report.py
+./e2e/tests/test_smoke_log.py
+./e2e/tests/test_snap_sidecar.py
+./e2e/tests/test_stop_confirm_ui.py
+./e2e/tests/test_stop_diag_markers.py
+./e2e/tests/test_stop_logcat.py
+./e2e/tests/test_stop_prime_order.py
+./e2e/tests/test_stop_prime_real_coords.py
+./e2e/tests/test_ui_labels.py
+./e2e/tests/test_watchdog.py
+./e2e/ui.sh
+./goldens/README.md
+./goldens/board.py
+./goldens/gate.sh
+./vendor/artemis/.dockerignore
+./vendor/artemis/.env.example
+./vendor/artemis/.gitignore
+./vendor/artemis/.pre-commit-config.yaml
+./vendor/artemis/.quality-baseline.json
+./vendor/artemis/CONTRIBUTING.md
+./vendor/artemis/Dockerfile
+./vendor/artemis/LICENSE
+./vendor/artemis/Makefile
+./vendor/artemis/README.md
+./vendor/artemis/README_CN.md
+./vendor/artemis/apps/__init__.py
+./vendor/artemis/apps/admin_console/__init__.py
+./vendor/artemis/apps/admin_console/core/__init__.py
+./vendor/artemis/apps/admin_console/core/config.py
+./vendor/artemis/apps/admin_console/core/security.py
+./vendor/artemis/apps/admin_console/core/state.py
+./vendor/artemis/apps/admin_console/database/__init__.py
+./vendor/artemis/apps/admin_console/database/connection.py
+./vendor/artemis/apps/admin_console/database/repositories/__init__.py
+./vendor/artemis/apps/admin_console/database/repositories/session_repository.py
+./vendor/artemis/apps/admin_console/database/repositories/step_repository.py
+./vendor/artemis/apps/admin_console/database/repositories/trace_repository.py
+./vendor/artemis/apps/admin_console/index.html
+./vendor/artemis/apps/admin_console/replay_manager.py
+./vendor/artemis/apps/admin_console/routers/__init__.py
+./vendor/artemis/apps/admin_console/routers/media.py
+./vendor/artemis/apps/admin_console/routers/replay.py
+./vendor/artemis/apps/admin_console/routers/sessions.py
+./vendor/artemis/apps/admin_console/routers/steps.py
+./vendor/artemis/apps/admin_console/routers/stream.py
+./vendor/artemis/apps/admin_console/routers/system.py
+./vendor/artemis/apps/admin_console/routers/tasks.py
+./vendor/artemis/apps/admin_console/schemas/__init__.py
+./vendor/artemis/apps/admin_console/schemas/task_schema.py
+./vendor/artemis/apps/admin_console/server.py
+./vendor/artemis/apps/admin_console/services/__init__.py
+./vendor/artemis/apps/admin_console/services/device_stream_service.py
+./vendor/artemis/apps/admin_console/services/ipc_service.py
+./vendor/artemis/apps/admin_console/services/media_service.py
+./vendor/artemis/apps/admin_console/services/model_service.py
+./vendor/artemis/apps/admin_console/services/task_preset_catalog.py
+./vendor/artemis/apps/admin_console/services/task_queue_service.py
+./vendor/artemis/apps/admin_console/services/worker_process_io.py
+./vendor/artemis/apps/showcase_ui/README.md
+./vendor/artemis/apps/showcase_ui/angular.json
+./vendor/artemis/apps/showcase_ui/package-lock.json
+./vendor/artemis/apps/showcase_ui/package.json
+./vendor/artemis/apps/showcase_ui/proxy.conf.json
+./vendor/artemis/apps/showcase_ui/public/favicon.ico
+./vendor/artemis/apps/showcase_ui/public/logo.png
+./vendor/artemis/apps/showcase_ui/public/logo.svg
+./vendor/artemis/apps/showcase_ui/src/app/app.component.html
+./vendor/artemis/apps/showcase_ui/src/app/app.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/app.component.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/app.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/app.config.ts
+./vendor/artemis/apps/showcase_ui/src/app/app.routes.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/agent-stream/agent-stream-startup.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/agent-stream/agent-stream.component.html
+./vendor/artemis/apps/showcase_ui/src/app/components/agent-stream/agent-stream.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/components/agent-stream/agent-stream.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/chat-interface/chat-interface.component.html
+./vendor/artemis/apps/showcase_ui/src/app/components/chat-interface/chat-interface.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/components/chat-interface/chat-interface.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/floating-video-player/floating-video-player.component.html
+./vendor/artemis/apps/showcase_ui/src/app/components/floating-video-player/floating-video-player.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/components/floating-video-player/floating-video-player.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/legacy-agent-stream/legacy-agent-stream.component.html
+./vendor/artemis/apps/showcase_ui/src/app/components/legacy-agent-stream/legacy-agent-stream.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/components/legacy-agent-stream/legacy-agent-stream.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/components/nav-switcher/nav-switcher.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/components/nav-switcher/nav-switcher.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/data/smart-tasks.data.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/markdown.model.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/pro-tuning.model.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/pro-tuning.model.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/session.model.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/stream.model.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/models/system.model.ts
+./vendor/artemis/apps/showcase_ui/src/app/core/services/task-recommendation.service.ts
+./vendor/artemis/apps/showcase_ui/src/app/pages/home/home.component.html
+./vendor/artemis/apps/showcase_ui/src/app/pages/home/home.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/pages/home/home.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/pages/legacy-workspace/legacy-workspace.component.html
+./vendor/artemis/apps/showcase_ui/src/app/pages/legacy-workspace/legacy-workspace.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/pages/legacy-workspace/legacy-workspace.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/pages/workspace/workspace.component.html
+./vendor/artemis/apps/showcase_ui/src/app/pages/workspace/workspace.component.scss
+./vendor/artemis/apps/showcase_ui/src/app/pages/workspace/workspace.component.ts
+./vendor/artemis/apps/showcase_ui/src/app/services/agent.service.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/services/agent.service.ts
+./vendor/artemis/apps/showcase_ui/src/app/services/system.service.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/services/system.service.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/action-formatter.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/action-formatter.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/image-overlay.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/image-overlay.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/markdown-parser.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/markdown-parser.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/recording-timeline.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/recording-timeline.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/run-info.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/run-info.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/stream-aggregator.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/stream-aggregator.util.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/tool-formatter.util.spec.ts
+./vendor/artemis/apps/showcase_ui/src/app/utils/tool-formatter.util.ts
+./vendor/artemis/apps/showcase_ui/src/index.html
+./vendor/artemis/apps/showcase_ui/src/main.ts
+./vendor/artemis/apps/showcase_ui/src/styles.scss
+./vendor/artemis/apps/showcase_ui/tsconfig.app.json
+./vendor/artemis/apps/showcase_ui/tsconfig.json
+./vendor/artemis/apps/showcase_ui/tsconfig.spec.json
+./vendor/artemis/artemis/__init__.py
+./vendor/artemis/artemis/__main__.py
+./vendor/artemis/artemis/_legacy_imports.py
+./vendor/artemis/artemis/_version.py
+./vendor/artemis/artemis/agents/__init__.py
+./vendor/artemis/artemis/agents/checker/checker.json
+./vendor/artemis/artemis/agents/checker/checker.py
+./vendor/artemis/artemis/agents/diagnoser/diagnoser.json
+./vendor/artemis/artemis/agents/diagnoser/diagnoser.py
+./vendor/artemis/artemis/agents/explorer/constants.py
+./vendor/artemis/artemis/agents/explorer/explorer.json
+./vendor/artemis/artemis/agents/explorer/explorer.py
+./vendor/artemis/artemis/agents/explorer/geometry.py
+./vendor/artemis/artemis/agents/explorer/native_runner.py
+./vendor/artemis/artemis/agents/explorer/perception_tools.py
+./vendor/artemis/artemis/agents/explorer/run_setup.py
+./vendor/artemis/artemis/agents/explorer/screen_index.py
+./vendor/artemis/artemis/agents/explorer/tiers.py
+./vendor/artemis/artemis/agents/explorer/tool_declarations.py
+./vendor/artemis/artemis/agents/explorer/universal_runner.py
+./vendor/artemis/artemis/agents/flash/context_compressor.py
+./vendor/artemis/artemis/agents/flash/flash_runner.md
+./vendor/artemis/artemis/agents/flash/flash_summarizer.md
+./vendor/artemis/artemis/agents/flash/flash_summarizer_single.md
+./vendor/artemis/artemis/agents/flash/runner.py
+./vendor/artemis/artemis/agents/flash/summarizer.py
+./vendor/artemis/artemis/agents/history_analyzer/history_analyzer.md
+./vendor/artemis/artemis/agents/history_analyzer/history_analyzer.py
+./vendor/artemis/artemis/agents/image_processor/image_processor.md
+./vendor/artemis/artemis/agents/image_processor/image_processor.py
+./vendor/artemis/artemis/agents/log_analyzer/log_analyzer.md
+./vendor/artemis/artemis/agents/log_analyzer/log_analyzer.py
+./vendor/artemis/artemis/agents/log_analyzer/log_reader_sub_agent.md
+./vendor/artemis/artemis/agents/log_analyzer/output_analyzer.md
+./vendor/artemis/artemis/agents/log_analyzer/output_analyzer.py
+./vendor/artemis/artemis/agents/object_detector/object_detector.json
+./vendor/artemis/artemis/agents/object_detector/object_detector.py
+./vendor/artemis/artemis/agents/operator/operator.json
+./vendor/artemis/artemis/agents/operator/operator.py
+./vendor/artemis/artemis/agents/operator/prompts.py
+./vendor/artemis/artemis/agents/outputter/outputter.md
+./vendor/artemis/artemis/agents/outputter/outputter.py
+./vendor/artemis/artemis/agents/planner/planner.json
+./vendor/artemis/artemis/agents/planner/planner.py
+./vendor/artemis/artemis/agents/prompt_assembly.py
+./vendor/artemis/artemis/agents/summarizer/summarizer.py
+./vendor/artemis/artemis/agents/validator/action_execution.py
+./vendor/artemis/artemis/agents/validator/categories.py
+./vendor/artemis/artemis/agents/validator/execution_loop.py
+./vendor/artemis/artemis/agents/validator/incidents.py
+./vendor/artemis/artemis/agents/validator/pixel_safety_net.md
+./vendor/artemis/artemis/agents/validator/precondition_pixel.py
+./vendor/artemis/artemis/agents/validator/precondition_xml.py
+./vendor/artemis/artemis/agents/validator/tool_declarations.py
+./vendor/artemis/artemis/agents/validator/validator.py
+./vendor/artemis/artemis/agents/video_analyzer/__init__.py
+./vendor/artemis/artemis/agents/video_analyzer/audio_native.py
+./vendor/artemis/artemis/agents/video_analyzer/blackboard.py
+./vendor/artemis/artemis/agents/video_analyzer/chunk_agentic.py
+./vendor/artemis/artemis/agents/video_analyzer/chunk_conversation.py
+./vendor/artemis/artemis/agents/video_analyzer/chunk_native.py
+./vendor/artemis/artemis/agents/video_analyzer/conflict_resolution.py
+./vendor/artemis/artemis/agents/video_analyzer/gemini_files.py
+./vendor/artemis/artemis/agents/video_analyzer/native_coordinator.py
+./vendor/artemis/artemis/agents/video_analyzer/reliability.py
+./vendor/artemis/artemis/agents/video_analyzer/universal_engine.py
+./vendor/artemis/artemis/agents/video_analyzer/universal_tools.py
+./vendor/artemis/artemis/agents/video_analyzer/video_analyzer.md
+./vendor/artemis/artemis/agents/video_analyzer/video_analyzer.py
+./vendor/artemis/artemis/agents/video_analyzer/video_sub_agent.md
+./vendor/artemis/artemis/agents/video_analyzer/video_sub_agent_audio.md
+./vendor/artemis/artemis/clients/accessibility_client.py
+./vendor/artemis/artemis/clients/screen_client_factory.py
+./vendor/artemis/artemis/config/__init__.py
+./vendor/artemis/artemis/config/agent.py
+./vendor/artemis/artemis/config/constants.py
+./vendor/artemis/artemis/config/core/__init__.py
+./vendor/artemis/artemis/config/core/engine.py
+./vendor/artemis/artemis/config/core/interpolator.py
+./vendor/artemis/artemis/config/llm.py
+./vendor/artemis/artemis/config/paths.py
+./vendor/artemis/artemis/config/runtime.py
+./vendor/artemis/artemis/config/settings.py
+./vendor/artemis/artemis/constants.py
+./vendor/artemis/artemis/context.py
+./vendor/artemis/artemis/controllers/__init__.py
+./vendor/artemis/artemis/controllers/controller_factory.py
+./vendor/artemis/artemis/controllers/device_controller.py
+./vendor/artemis/artemis/controllers/types.py
+./vendor/artemis/artemis/controllers/unified_controller.py
+./vendor/artemis/artemis/core/__init__.py
+./vendor/artemis/artemis/core/diagnostics/__init__.py
+./vendor/artemis/artemis/core/diagnostics/adb_keys.py
+./vendor/artemis/artemis/core/diagnostics/adb_server_connection.py
+./vendor/artemis/artemis/core/diagnostics/device_smoke.py
+./vendor/artemis/artemis/core/diagnostics/emulator_manager.py
+./vendor/artemis/artemis/core/diagnostics/engine.py
+./vendor/artemis/artemis/core/diagnostics/hierarchy_parity.py
+./vendor/artemis/artemis/core/diagnostics/probes/adb_probe.py
+./vendor/artemis/artemis/core/diagnostics/probes/base.py
+./vendor/artemis/artemis/core/diagnostics/probes/credentials_probe.py
+./vendor/artemis/artemis/core/diagnostics/probes/host_probe.py
+./vendor/artemis/artemis/core/diagnostics/probes/runtime_probe.py
+./vendor/artemis/artemis/core/diagnostics/probes/toolchain_probe.py
+./vendor/artemis/artemis/core/diagnostics/readiness.py
+./vendor/artemis/artemis/core/diagnostics/schema.py
+./vendor/artemis/artemis/core/tool_declaration.py
+./vendor/artemis/artemis/core/tool_failure.py
+./vendor/artemis/artemis/data_engine/context_vars.py
+./vendor/artemis/artemis/data_engine/engine.py
+./vendor/artemis/artemis/data_engine/history_reader.py
+./vendor/artemis/artemis/data_engine/models.py
+./vendor/artemis/artemis/data_engine/storage.py
+./vendor/artemis/artemis/data_engine/trace.py
+./vendor/artemis/artemis/drivers/__init__.py
+./vendor/artemis/artemis/drivers/android/adb_driver.py
+./vendor/artemis/artemis/drivers/android/hierarchy.py
+./vendor/artemis/artemis/drivers/android/input_ime.py
+./vendor/artemis/artemis/drivers/android/recorder.py
+./vendor/artemis/artemis/drivers/base.py
+./vendor/artemis/artemis/drivers/cloud/cloud_driver.py
+./vendor/artemis/artemis/drivers/factory.py
+./vendor/artemis/artemis/drivers/mock/mock_driver.py
+./vendor/artemis/artemis/drivers/types.py
+./vendor/artemis/artemis/graph/checkpoints.py
+./vendor/artemis/artemis/graph/graph.py
+./vendor/artemis/artemis/graph/perception.py
+./vendor/artemis/artemis/graph/state.py
+./vendor/artemis/artemis/graph/visibility.py
+./vendor/artemis/artemis/interfaces/cli/__init__.py
+./vendor/artemis/artemis/interfaces/cli/commands/__init__.py
+./vendor/artemis/artemis/interfaces/cli/commands/batch.py
+./vendor/artemis/artemis/interfaces/cli/commands/doctor.py
+./vendor/artemis/artemis/interfaces/cli/commands/helper.py
+./vendor/artemis/artemis/interfaces/cli/commands/init.py
+./vendor/artemis/artemis/interfaces/cli/commands/mcp.py
+./vendor/artemis/artemis/interfaces/cli/commands/run.py
+./vendor/artemis/artemis/interfaces/cli/commands/server.py
+./vendor/artemis/artemis/interfaces/cli/commands/server_lifecycle.py
+./vendor/artemis/artemis/interfaces/cli/commands/trace.py
+./vendor/artemis/artemis/interfaces/cli/commands/ui.py
+./vendor/artemis/artemis/interfaces/cli/main.py
+./vendor/artemis/artemis/interfaces/sdk/__init__.py
+./vendor/artemis/artemis/interfaces/sdk/client.py
+./vendor/artemis/artemis/interfaces/sdk/task.py
+./vendor/artemis/artemis/llm/__init__.py
+./vendor/artemis/artemis/llm/fake_model.py
+./vendor/artemis/artemis/llm/google/__init__.py
+./vendor/artemis/artemis/llm/google/provider.py
+./vendor/artemis/artemis/llm/google/usage.py
+./vendor/artemis/artemis/llm/parser.py
+./vendor/artemis/artemis/llm/reliability.py
+./vendor/artemis/artemis/llm/router.py
+./vendor/artemis/artemis/llm/schemas.py
+./vendor/artemis/artemis/llm/structured.py
+./vendor/artemis/artemis/main.py
+./vendor/artemis/artemis/mcp/__init__.py
+./vendor/artemis/artemis/mcp/action_executor.py
+./vendor/artemis/artemis/mcp/action_manifest.py
+./vendor/artemis/artemis/mcp/action_names.py
+./vendor/artemis/artemis/mcp/action_server.py
+./vendor/artemis/artemis/mcp/action_session.py
+./vendor/artemis/artemis/mcp/action_specs.py
+./vendor/artemis/artemis/mcp/action_types.py
+./vendor/artemis/artemis/mcp/actuators/__init__.py
+./vendor/artemis/artemis/mcp/actuators/adb.py
+./vendor/artemis/artemis/mcp/actuators/base.py
+./vendor/artemis/artemis/mcp/actuators/mock.py
+./vendor/artemis/artemis/mcp/adb_server.py
+./vendor/artemis/artemis/mcp/observation.py
+./vendor/artemis/artemis/mcp/xml_search_server.py
+./vendor/artemis/artemis/memory/__init__.py
+./vendor/artemis/artemis/memory/chunking.py
+./vendor/artemis/artemis/memory/context_policy.py
+./vendor/artemis/artemis/memory/step_capsule.md
+./vendor/artemis/artemis/memory/step_memory.py
+./vendor/artemis/artemis/memory/transcript.py
+./vendor/artemis/artemis/platform/__init__.py
+./vendor/artemis/artemis/platform/base.py
+./vendor/artemis/artemis/platform/darwin.py
+./vendor/artemis/artemis/platform/linux.py
+./vendor/artemis/artemis/platform/windows.py
+./vendor/artemis/artemis/resources/__init__.py
+./vendor/artemis/artemis/resources/config/artemis.jsonc
+./vendor/artemis/artemis/resources/showcase_ui/favicon.ico
+./vendor/artemis/artemis/resources/showcase_ui/index.html
+./vendor/artemis/artemis/resources/showcase_ui/logo.png
+./vendor/artemis/artemis/resources/showcase_ui/logo.svg
+./vendor/artemis/artemis/resources/showcase_ui/main-BGAFACUZ.js
+./vendor/artemis/artemis/resources/showcase_ui/polyfills-5CFQRCPP.js
+./vendor/artemis/artemis/resources/showcase_ui/styles-CDJM3XQS.css
+./vendor/artemis/artemis/runtime/__init__.py
+./vendor/artemis/artemis/runtime/adb_endpoint.py
+./vendor/artemis/artemis/runtime/awake_lease.py
+./vendor/artemis/artemis/runtime/awake_service.py
+./vendor/artemis/artemis/runtime/cancel_requests.py
+./vendor/artemis/artemis/runtime/daemon_client.py
+./vendor/artemis/artemis/runtime/device_lock.py
+./vendor/artemis/artemis/runtime/device_pool.py
+./vendor/artemis/artemis/runtime/helper_manager.py
+./vendor/artemis/artemis/runtime/process_probe.py
+./vendor/artemis/artemis/runtime/server_lifecycle.py
+./vendor/artemis/artemis/runtime/supervisor.py
+./vendor/artemis/artemis/runtime/trace_store.py
+./vendor/artemis/artemis/sdk/__init__.py
+./vendor/artemis/artemis/sdk/agent.py
+./vendor/artemis/artemis/sdk/builders/__init__.py
+./vendor/artemis/artemis/sdk/builders/agent_config_builder.py
+./vendor/artemis/artemis/sdk/constants.py
+./vendor/artemis/artemis/sdk/run_outcome.py
+./vendor/artemis/artemis/sdk/types/__init__.py
+./vendor/artemis/artemis/sdk/types/agent.py
+./vendor/artemis/artemis/sdk/utils.py
+./vendor/artemis/artemis/services/llm.py
+./vendor/artemis/artemis/services/token_meter.py
+./vendor/artemis/artemis/telemetry/__init__.py
+./vendor/artemis/artemis/telemetry/models.py
+./vendor/artemis/artemis/telemetry/replay.py
+./vendor/artemis/artemis/telemetry/storage/json_storage.py
+./vendor/artemis/artemis/telemetry/tracer.py
+./vendor/artemis/artemis/toolchain/__init__.py
+./vendor/artemis/artemis/toolchain/descriptors.py
+./vendor/artemis/artemis/toolchain/resolver.py
+./vendor/artemis/artemis/tools/base.py
+./vendor/artemis/artemis/tools/command_tool.py
+./vendor/artemis/artemis/tools/committee_prompts.json
+./vendor/artemis/artemis/tools/committee_tool.py
+./vendor/artemis/artemis/tools/diagnoser_submit_answer_tool.py
+./vendor/artemis/artemis/tools/diagnostic_tool.py
+./vendor/artemis/artemis/tools/explorer_tool.py
+./vendor/artemis/artemis/tools/history/__init__.py
+./vendor/artemis/artemis/tools/history/replay.py
+./vendor/artemis/artemis/tools/history/screenshot.py
+./vendor/artemis/artemis/tools/history/search.py
+./vendor/artemis/artemis/tools/image_processor_tool.py
+./vendor/artemis/artemis/tools/index.py
+./vendor/artemis/artemis/tools/log_tool.py
+./vendor/artemis/artemis/tools/mobile/launch_app.py
+./vendor/artemis/artemis/tools/mobile/log_utils.py
+./vendor/artemis/artemis/tools/mobile/ocr.py
+./vendor/artemis/artemis/tools/mobile/read_hierarchy.py
+./vendor/artemis/artemis/tools/mobile/read_logs.py
+./vendor/artemis/artemis/tools/mobile/search_logs.py
+./vendor/artemis/artemis/tools/object_detection_tool.py
+./vendor/artemis/artemis/tools/scratchpad.py
+./vendor/artemis/artemis/tools/system/adb_shell.py
+./vendor/artemis/artemis/tools/tool_wrapper.py
+./vendor/artemis/artemis/tools/video_tool.py
+./vendor/artemis/artemis/tools/wait_tool.py
+./vendor/artemis/artemis/utils/app_launch_utils.py
+./vendor/artemis/artemis/utils/coordinates.py
+./vendor/artemis/artemis/utils/credentials_validator.py
+./vendor/artemis/artemis/utils/cv_canvas.py
+./vendor/artemis/artemis/utils/cython_compat.py
+./vendor/artemis/artemis/utils/element_hit_test.py
+./vendor/artemis/artemis/utils/image_diff.py
+./vendor/artemis/artemis/utils/image_hash.py
+./vendor/artemis/artemis/utils/notes.py
+./vendor/artemis/artemis/utils/ocr_api.py
+./vendor/artemis/artemis/utils/ocr_xml_fusion.py
+./vendor/artemis/artemis/utils/plan_grammar.py
+./vendor/artemis/artemis/utils/python_executor.py
+./vendor/artemis/artemis/utils/startup_progress.py
+./vendor/artemis/artemis/utils/task_tree.py
+./vendor/artemis/artemis/utils/text.py
+./vendor/artemis/artemis/utils/ui_filter.py
+./vendor/artemis/artemis/utils/video.py
+./vendor/artemis/artemis/utils/visualization.py
+./vendor/artemis/config/artemis.jsonc
+./vendor/artemis/mcp_server/README.md
+./vendor/artemis/mcp_server/__init__.py
+./vendor/artemis/mcp_server/__main__.py
+./vendor/artemis/mcp_server/background/__init__.py
+./vendor/artemis/mcp_server/background/task_runner.py
+./vendor/artemis/mcp_server/base.py
+./vendor/artemis/mcp_server/notifiers/__init__.py
+./vendor/artemis/mcp_server/notifiers/agentapi.py
+./vendor/artemis/mcp_server/notifiers/base.py
+./vendor/artemis/mcp_server/notifiers/composite.py
+./vendor/artemis/mcp_server/notifiers/desktop.py
+./vendor/artemis/mcp_server/notifiers/file.py
+./vendor/artemis/mcp_server/notifiers/script.py
+./vendor/artemis/mcp_server/notifiers/webhook.py
+./vendor/artemis/mcp_server/rules.md
+./vendor/artemis/mcp_server/server.py
+./vendor/artemis/mcp_server/tools/__init__.py
+./vendor/artemis/mcp_server/tools/device_state.py
+./vendor/artemis/mcp_server/tools/diagnose.py
+./vendor/artemis/mcp_server/tools/inspect_trace.py
+./vendor/artemis/mcp_server/tools/task_manager.py
+./vendor/artemis/mcp_server/tools/task_runner.py
+./vendor/artemis/mcp_server/utils/__init__.py
+./vendor/artemis/mcp_server/utils/device_utils.py
+./vendor/artemis/mcp_server/utils/env_utils.py
+./vendor/artemis/packages/artemis-accessibility-helper/.gitignore
+./vendor/artemis/packages/artemis-accessibility-helper/ArtemisAccessibilityHelper.apk
+./vendor/artemis/packages/artemis-accessibility-helper/app/build.gradle.kts
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/AndroidManifest.xml
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/A11yNode.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/ArtemisAccessibilityService.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/CommandServer.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/DisplayUtils.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/GestureController.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/HierarchyDumper.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/TokenReceiver.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/TokenStore.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/java/com/artemis/helper/XmlUtils.java
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/res/values/strings.xml
+./vendor/artemis/packages/artemis-accessibility-helper/app/src/main/res/xml/accessibility_service_config.xml
+./vendor/artemis/packages/artemis-accessibility-helper/build.gradle.kts
+./vendor/artemis/packages/artemis-accessibility-helper/build_apk.sh
+./vendor/artemis/packages/artemis-accessibility-helper/debug.keystore
+./vendor/artemis/packages/artemis-accessibility-helper/gradle.properties
+./vendor/artemis/packages/artemis-accessibility-helper/helper_manifest.json
+./vendor/artemis/packages/artemis-accessibility-helper/settings.gradle.kts
+./vendor/artemis/packages/artemis-client/DESIGN.md
+./vendor/artemis/packages/artemis-client/README.md
+./vendor/artemis/packages/artemis-client/examples/basic.py
+./vendor/artemis/packages/artemis-client/pyproject.toml
+./vendor/artemis/packages/artemis-client/src/artemis_client/__init__.py
+./vendor/artemis/packages/artemis-client/src/artemis_client/client.py
+./vendor/artemis/packages/artemis-client/src/artemis_client/errors.py
+./vendor/artemis/packages/artemis-client/src/artemis_client/models.py
+./vendor/artemis/packages/artemis-client/src/artemis_client/py.typed
+./vendor/artemis/packages/artemis-client/src/artemis_client/transport.py
+./vendor/artemis/pyproject.toml
+./vendor/artemis/pyright-core.json
+./vendor/artemis/scripts/check_dependency_sources.py
+./vendor/artemis/scripts/install_deps.ps1
+./vendor/artemis/scripts/install_deps.sh
+./vendor/artemis/scripts/quality_ratchet.py
+./vendor/artemis/scripts/real_device_video_acceptance.py
+./vendor/artemis/scripts/run_edge_case_part.py
+./vendor/artemis/scripts/run_ui.py
+./vendor/artemis/scripts/start.ps1
+./vendor/artemis/scripts/test_all_edge_cases.py
+./vendor/artemis/scripts/verify_concurrency_and_devices.py
+./vendor/artemis/setup.py
+./vendor/artemis/start.bat
+./vendor/artemis/start.sh
+./vendor/artemis/third_party/mobile_use/LICENSE
+./vendor/artemis/third_party/mobile_use/METADATA
+./vendor/artemis/third_party/mobile_use/NOTICE
+./vendor/artemis/third_party/mobile_use/__init__.py
+./vendor/artemis/third_party/mobile_use/agents/__init__.py
+./vendor/artemis/third_party/mobile_use/agents/hopper/__init__.py
+./vendor/artemis/third_party/mobile_use/agents/hopper/hopper.md
+./vendor/artemis/third_party/mobile_use/agents/hopper/hopper.py
+./vendor/artemis/third_party/mobile_use/clients/__init__.py
+./vendor/artemis/third_party/mobile_use/clients/ui_automator_client.py
+./vendor/artemis/third_party/mobile_use/config/__init__.py
+./vendor/artemis/third_party/mobile_use/config/llm.py
+./vendor/artemis/third_party/mobile_use/config/output.py
+./vendor/artemis/third_party/mobile_use/context.py
+./vendor/artemis/third_party/mobile_use/controllers/__init__.py
+./vendor/artemis/third_party/mobile_use/controllers/platform_specific_commands_controller.py
+./vendor/artemis/third_party/mobile_use/controllers/types.py
+./vendor/artemis/third_party/mobile_use/controllers/unified_controller.py
+./vendor/artemis/third_party/mobile_use/graph.py
+./vendor/artemis/third_party/mobile_use/llm_service.py
+./vendor/artemis/third_party/mobile_use/main.py
+./vendor/artemis/third_party/mobile_use/sdk/__init__.py
+./vendor/artemis/third_party/mobile_use/sdk/agent.py
+./vendor/artemis/third_party/mobile_use/sdk/builders/__init__.py
+./vendor/artemis/third_party/mobile_use/sdk/builders/agent_config_builder.py
+./vendor/artemis/third_party/mobile_use/sdk/builders/index.py
+./vendor/artemis/third_party/mobile_use/sdk/builders/task_request_builder.py
+./vendor/artemis/third_party/mobile_use/sdk/types/__init__.py
+./vendor/artemis/third_party/mobile_use/sdk/types/agent.py
+./vendor/artemis/third_party/mobile_use/sdk/types/exceptions.py
+./vendor/artemis/third_party/mobile_use/sdk/types/task.py
+./vendor/artemis/third_party/mobile_use/testing.py
+./vendor/artemis/third_party/mobile_use/tools/__init__.py
+./vendor/artemis/third_party/mobile_use/tools/index.py
+./vendor/artemis/third_party/mobile_use/tools/mobile/__init__.py
+./vendor/artemis/third_party/mobile_use/tools/mobile/launch_app.py
+./vendor/artemis/third_party/mobile_use/tools/tool_wrapper.py
+./vendor/artemis/third_party/mobile_use/utils/__init__.py
+./vendor/artemis/third_party/mobile_use/utils/app_launch_utils.py
+./vendor/artemis/third_party/mobile_use/utils/cli_helpers.py
+./vendor/artemis/third_party/mobile_use/utils/decorators.py
+./vendor/artemis/third_party/mobile_use/utils/file.py
+./vendor/artemis/third_party/mobile_use/utils/logger.py
+./vendor/artemis/third_party/mobile_use/utils/media.py
+./vendor/artemis/third_party/mobile_use/utils/shell_utils.py
+./vendor/artemis/third_party/mobile_use/utils/video.py
+./vendor/artemis/uv.lock
+
+✗ cd /home/runner/work/lifeos-ci/lifeos-ci/target && git remote -v && git branch -a failed
+Error: The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules [{"permission":"*","action":"allow","pattern":"*"},{"permission":"bash","pattern":"*","action":"allow"},{"permission":"bash","pattern":"git push*","action":"deny"},{"permission":"bash","pattern":"git merge*","action":"deny"},{"permission":"bash","pattern":"gh *","action":"deny"},{"permission":"bash","pattern":"ssh *","action":"deny"},{"permission":"bash","pattern":"scp *","action":"deny"},{"permission":"bash","pattern":"sudo *","action":"deny"},{"permission":"bash","pattern":"*sudo *","action":"deny"},{"permission":"bash","pattern":"*git remote*","action":"deny"},{"permission":"bash","pattern":"*http.extraheader*","action":"deny"}]
+→ Read .github/workflows/artemis-staging-e2e.yml
+→ Read e2e/report.py
+→ Read e2e/run.sh
+→ Read e2e/ci-opencode-run.sh
+→ Read e2e/run.sh [offset=949]
+→ Read e2e/tests/test_report.py
+→ Read e2e/ui.sh
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && sed -n '1,200p' e2e/device_prep.sh
+# Préparation de l'appareil + stabilité de l'émulateur (harnais seulement : jamais de
+# changement dans les apps Rider/Driver, leur auto-online reste tel quel — point D-1).
+# Sourcé par run.sh après ui.sh (utilise adb borné, _ulog, ui_xml, xml_pkg, tap_exact).
+
+# Motifs qui prouvent que c'est l'ÉMULATEUR qui est instable, pas l'app testée.
+EMU_UNSTABLE_RE='ActivityManager has died|ANR in system|Process system_server has died|system_server has died'
+
+_dp_log() { if declare -F _ulog >/dev/null; then _ulog "$*"; else printf '%s\n' "$*"; fi; }
+
+# whitelist_battery pkg... : l'app driver ouvre « Let app always run in background? »
+# (RequestIgnoreBatteryOptimizations) et recouvre son écran. On l'exempte AVANT le lancement.
+whitelist_battery() {
+  local pkg out ok
+  for pkg in "$@"; do
+    out=$(adb shell dumpsys deviceidle whitelist +"$pkg" 2>&1 | tr -d '\r' | head -2 | tr '\n' ' ')
+    _dp_log "whitelist_battery $pkg: deviceidle -> ${out:-rc=$?}"
+    for op in RUN_ANY_IN_BACKGROUND RUN_IN_BACKGROUND; do
+      adb shell cmd appops set "$pkg" "$op" allow >/dev/null 2>&1
+      _dp_log "whitelist_battery $pkg: appops $op allow rc=$?"
+    done
+    if adb shell dumpsys deviceidle whitelist 2>/dev/null | grep -q "$pkg"; then ok=oui; else ok=non; fi
+    _dp_log "whitelist_battery $pkg: présent dans la whitelist deviceidle = $ok"
+  done
+}
+
+# dismiss_bg_dialog : si la boîte « Let app always run in background? » est au premier plan,
+# tape Allow/Autoriser (nœud trouvé dans le dump uiautomator). 0 = fermée, 1 = rien à fermer
+# ou échec. Tracé dans les deux cas.
+dismiss_bg_dialog() {
+  ui_xml || return 1
+  [ "$(xml_pkg)" = "com.android.settings" ] || return 1
+  grep -qiE 'always run in background|toujours.*arrière-plan|RequestIgnoreBattery' "$UI_XML_PATH" 2>/dev/null \
+    || grep -qiE 'text="(Allow|ALLOW|Autoriser|AUTORISER)"' "$UI_XML_PATH" 2>/dev/null || return 1
+  _dp_log "dismiss_bg_dialog: boîte batterie détectée"
+  local lab
+  for lab in Allow ALLOW Autoriser AUTORISER; do
+    if tap_exact "$lab" >/dev/null 2>&1; then
+      _dp_log "dismiss_bg_dialog: bouton « $lab » tapé"
+      sleep 1
+      return 0
+    fi
+  done
+  _dp_log "dismiss_bg_dialog: bouton Allow introuvable dans le dump"
+  return 1
+}
+
+# emu_unstable_scan logfile : 0 si le logcat contient un signe d'émulateur instable.
+emu_unstable_scan() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  grep -E "$EMU_UNSTABLE_RE" "$f" 2>/dev/null | head -3 | cut -c1-200 | while IFS= read -r l; do
+    _dp_log "emu_unstable: $l"
+  done
+  grep -qE "$EMU_UNSTABLE_RE" "$f" 2>/dev/null
+}
+
+# emu_quiet_prepare : gèle ce qui charge gms en arrière-plan (autorisé ou non : tracé).
+emu_quiet_prepare() {
+  local pkg rc
+  for pkg in com.google.android.configupdater; do
+    adb shell pm disable-user --user 0 "$pkg" >/dev/null 2>&1; rc=$?
+    _dp_log "emu_quiet_prepare: pm disable-user $pkg rc=$rc"
+  done
+  adb shell settings put global auto_time 0 >/dev/null 2>&1 || true
+  adb shell settings put global package_verifier_enable 0 >/dev/null 2>&1 || true
+  adb shell settings put global verifier_verify_adb_installs 0 >/dev/null 2>&1 || true
+}
+
+# emu_wait_calm logfile quiet_sec max_sec : sys.boot_completed=1 puis AUCUN « ANR in »
+# pendant quiet_sec consécutives. 0 = calme, 1 = jamais calme dans max_sec.
+emu_wait_calm() {
+  local f="$1" quiet="${2:-60}" max="${3:-240}" t0=$SECONDS last_anr cur
+  last_anr=$(grep -c "ANR in" "$f" 2>/dev/null || echo 0)
+  local calm_since=$SECONDS
+  while [ $((SECONDS - t0)) -lt "$max" ]; do
+    if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then
+      calm_since=$SECONDS
+    fi
+    cur=$(grep -c "ANR in" "$f" 2>/dev/null || echo 0)
+    if [ "$cur" != "$last_anr" ]; then
+      _dp_log "emu_wait_calm: nouvel ANR ($last_anr -> $cur), minuteur remis à zéro"
+      last_anr=$cur; calm_since=$SECONDS
+    fi
+    if [ $((SECONDS - calm_since)) -ge "$quiet" ]; then
+      _dp_log "emu_wait_calm: calme depuis ${quiet}s (attente $((SECONDS - t0))s)"
+      return 0
+    fi
+    sleep 5
+  done
+  _dp_log "emu_wait_calm: jamais ${quiet}s sans ANR en ${max}s"
+  return 1
+}
+
+# ---------------------------------------------------------------- reprise après plantage
+# Un plantage d'émulateur (system_server mort, UI qui redémarre, dumps illisibles) n'est
+# JAMAIS un FAIL de l'app : on attend le retour du système, on refait le calme, on relance
+# l'app, on rejoue le point UNE fois. Pas de preuve d'écran = pas de PASS ; sinon
+# INCONCLUSIVE emulator_crash (le verdict reste FAIL pour un point P0, rien n'est affaibli).
+EMU_CRASHES=0
+EMU_LOG_OFF=0
+EMU_SS_PID=""
+EMU_LAST_CRASH_NOTE=""
+SNAP_REPLAYED=0
+_dp_here() { dirname "${BASH_SOURCE[0]}"; }
+
+# emu_checkpoint : nouvelle base de comparaison (journal, pid system_server, dumps).
+emu_checkpoint() {
+  EMU_LOG_OFF=$(wc -l < "${LOG_FILE:-/dev/null}" 2>/dev/null | tr -d ' ' || echo 0)
+  [ -n "$EMU_LOG_OFF" ] || EMU_LOG_OFF=0
+  EMU_DUMP_FAILS=0
+  EMU_DUMP_FAILS_MAX=0
+  EMU_SS_PID=$(adb shell pidof system_server 2>/dev/null | tr -d '\r' | awk '{print $1}')
+}
+
+# emu_crash_reason : imprime la raison et rend 0 s'il y a une preuve de plantage depuis le
+# dernier checkpoint ; rend 1 sinon.
+emu_crash_reason() {
+  local boot pid
+  if [ -s "${LOG_FILE:-}" ] && tail -n +$((EMU_LOG_OFF + 1)) "$LOG_FILE" 2>/dev/null \
+       | grep -aqE "$EMU_UNSTABLE_RE"; then
+    echo "journal: ActivityManager/system_server mort ou ANR in system"; return 0
+  fi
+  if [ "${EMU_DUMP_FAILS_MAX:-0}" -ge 2 ]; then
+    echo "dumps uiautomator indisponibles x${EMU_DUMP_FAILS_MAX} d'affilée"; return 0
+  fi
+  boot=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+  if [ "$boot" != "1" ]; then
+    echo "sys.boot_completed='${boot}' (interface en redémarrage)"; return 0
+  fi
+  pid=$(adb shell pidof system_server 2>/dev/null | tr -d '\r' | awk '{print $1}')
+  if [ -n "$pid" ] && [ -n "$EMU_SS_PID" ] && [ "$pid" != "$EMU_SS_PID" ]; then
+    echo "system_server redémarré (pid $EMU_SS_PID -> $pid)"; return 0
+  fi
+  return 1
+}
+
+emu_crash_summary() {
+  python3 "$(_dp_here)/crash_summary.py" "$OUT" "${1:-}" 60 2>&1 | while IFS= read -r l; do _dp_log "$l"; done
+}
+
+emu_apply_settings() {
+  adb shell settings put global window_animation_scale 0 >/dev/null 2>&1
+  adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1
+  adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1
+  adb shell svc power stayon true >/dev/null 2>&1
+  adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1
+}
+
+# emu_recover pkg reason : 0 = système revenu et app relancée, 1 = jamais revenu.
+emu_recover() {
+  local pkg="$1" reason="$2" t0=$SECONDS boot=0
+  EMU_CRASHES=$((EMU_CRASHES + 1))
+  EMU_LAST_CRASH_NOTE="$reason"
+  _dp_log "CRASH #$EMU_CRASHES à $(date -u +%H:%M:%SZ) — émulateur: $reason (app=$pkg)"
+  emu_crash_summary "$(date +%s)"
+  ADB_TMO="${EMU_RECOVER_ADB_TMO:-120}" adb wait-for-device >/dev/null 2>&1
+  while [ $((SECONDS - t0)) -lt "${EMU_RECOVER_BOOT_MAX:-180}" ]; do
+    if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then boot=1; break; fi
+    sleep 3
+  done
+  if [ "$boot" != "1" ]; then
+    _dp_log "REPRISE ÉCHEC à $(date -u +%H:%M:%SZ) — sys.boot_completed jamais revenu en $((SECONDS - t0))s"
+    return 1
+  fi
+  _dp_log "REPRISE #$EMU_CRASHES à $(date -u +%H:%M:%SZ) — sys.boot_completed=1 après $((SECONDS - t0))s"
+  # logcat meurt parfois avec system_server : le relancer pour ne pas perdre l'évidence.
+  if [ -n "${LOGCAT_PID:-}" ] && ! kill -0 "$LOGCAT_PID" 2>/dev/null && [ -n "${LOG_FILE:-}" ]; then
+    command adb logcat -v threadtime >> "$LOG_FILE" 2>&1 &
+    LOGCAT_PID=$!
+    _dp_log "REPRISE: logcat relancé (pid $LOGCAT_PID)"
+  fi
+  emu_apply_settings
+  whitelist_battery "${DRIVER_PKG:-sn.galass.galassdriver}" "${RIDER_PKG:-sn.galass.galassrider}"
+  emu_wait_calm "${LOG_FILE:-/dev/null}" "${EMU_RECOVER_QUIET:-60}" "${EMU_RECOVER_CALM_MAX:-180}" \
+    || _dp_log "REPRISE: calme non atteint, on poursuit"
+  launch "$pkg"
+  wait_fg "$pkg" 60 || true
+  emu_checkpoint
+  _dp_log "REPRISE terminée à $(date -u +%H:%M:%SZ) — app $pkg relancée (total $((SECONDS - t0))s)"
+  return 0
+}
+
+# snap_with_recovery <args de snap> : 0 MATCH prouvé par snap (au 1er essai ou rejoué),
+# 1 échec sans preuve de plantage (vrai échec), 2 plantage d'émulateur (INCONCLUSIVE).
+# Le premier argument de snap est le nom, le deuxième le paquet.
+snap_with_recovery() {
+  local pkg="$2" reason
+  SNAP_REPLAYED=0
+  if snap "$@"; then emu_checkpoint; return 0; fi
+  reason=$(emu_crash_reason) || return 1
+  if ! emu_recover "$pkg" "$reason"; then
+    EMU_LAST_CRASH_NOTE="$reason; reprise impossible"
+    return 2
+  fi
+  _dp_log "REJEU unique du point ($1) après la reprise"
+  if snap "$@"; then
+    SNAP_REPLAYED=1
+    emu_checkpoint
+    return 0
+  fi
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && ls -la e2e/ && git log --oneline -15 -- e2e/ .github/workflows/artemis-staging-e2e.yml
+total 300
+drwxr-xr-x 4 runner runner  4096 Nov 28 10:20 .
+drwxr-xr-x 8 runner runner  4096 Nov 28 10:20 ..
+drwxr-xr-x 3 runner runner  4096 Nov 28 10:20 _ephemeral
+-rwxr-xr-x 1 runner runner 18262 Nov 28 10:20 api_flow.py
+-rw-r--r-- 1 runner runner  2954 Nov 28 10:20 b3_order.py
+-rw-r--r-- 1 runner runner  1441 Nov 28 10:20 base_guard.py
+-rwxr-xr-x 1 runner runner 22542 Nov 28 10:20 ci-opencode-run.sh
+-rw-r--r-- 1 runner runner  3483 Nov 28 10:20 compose_order.py
+-rw-r--r-- 1 runner runner  3260 Nov 28 10:20 crash_summary.py
+-rw-r--r-- 1 runner runner 13373 Nov 28 10:20 device_prep.sh
+-rw-r--r-- 1 runner runner  3848 Nov 28 10:20 diag_assign.py
+-rw-r--r-- 1 runner runner  2758 Nov 28 10:20 dump_diag.py
+-rw-r--r-- 1 runner runner  2941 Nov 28 10:20 emu_sampler.py
+-rw-r--r-- 1 runner runner  1586 Nov 28 10:20 logcheck.sh
+-rw-r--r-- 1 runner runner  2159 Nov 28 10:20 notif.py
+-rw-r--r-- 1 runner runner  1745 Nov 28 10:20 probe_close_rides.py
+-rwxr-xr-x 1 runner runner  4359 Nov 28 10:20 probe_stop_confirm.sh
+-rw-r--r-- 1 runner runner 21323 Nov 28 10:20 report.py
+-rwxr-xr-x 1 runner runner 75430 Nov 28 10:20 run.sh
+-rw-r--r-- 1 runner runner  7153 Nov 28 10:20 sanitize.py
+-rw-r--r-- 1 runner runner  1381 Nov 28 10:20 set_model.py
+-rw-r--r-- 1 runner runner  1075 Nov 28 10:20 smoke_log.sh
+-rwxr-xr-x 1 runner runner   902 Nov 28 10:20 stop_hook.sh
+-rw-r--r-- 1 runner runner  4600 Nov 28 10:20 tap_node.py
+drwxr-xr-x 2 runner runner  4096 Nov 28 10:20 tests
+-rw-r--r-- 1 runner runner 48263 Nov 28 10:20 ui.sh
+8ed2184 ci(artemis): 2 lanes isolées (lane a|b, concurrency + comptes >900000)
+6f8dba0 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+0589138 fix(artemis): gate Driver — ignorer « Test failed » générique
+449f0d4 fix(artemis): pin Flutter 3.44.8 (pas 3.50.1 / goldens regen)
+6ff36a5 fix(artemis): diagnostic Rider goldens F4-27 → e2e P0 continue
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+d69b9ad fix(e2e): mode diagnostic goldens Driver 2–4 px — continuer P0
+b073d55 fix(e2e): restaure le commentaire Exactement 2 \\bapi accept\\b
+1046d2e fix(e2e): comptes de test ids > 900000 (Pusher)
+1eaf100 fix(e2e): accept avant offer_expired (B7 harness)
+da9814d fix(e2e): stop_prime géolocalise sur les coordonnées réelles du stop (serveur)
+f7753d0 fix(e2e): filet — ouvrir l'écran détail Driver via la carte « Course en cours » après un repli API d'acceptation
+f19369a fix(e2e): avant chaque tap « Confirmer l'arrêt », geo fix puis ping Driver frais lu sur le serveur
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && sed -n '200,400p' e2e/device_prep.sh
+fi
+  if reason=$(emu_crash_reason); then
+    EMU_LAST_CRASH_NOTE="replanté pendant le rejeu: $reason"
+    _dp_log "CRASH pendant le rejeu de $1 : $reason"
+  else
+    EMU_LAST_CRASH_NOTE="écran du point non retrouvé après la reprise (état perdu au redémarrage)"
+  fi
+  emu_checkpoint
+  return 2
+}
+
+# ---------------------------------------------------------------- diagnostic recherche Places
+PLACES_LOG_OFF=0
+PLACES_NET_OK=unknown
+_mask_secrets() { sed -E 's/(key|token|access_token)=[^&" ]+/\1=***/g'; }
+
+# places_diag_start : base du journal + sonde réseau hôte (HTTP) et AVD (TCP 443) vers
+# maps.googleapis.com (l'app Rider y fait place/autocomplete). Sans clé : aucune donnée secrète.
+places_diag_start() {
+  local code body st rc
+  PLACES_LOG_OFF=$(wc -l < "${LOG_FILE:-/dev/null}" 2>/dev/null | tr -d ' ' || echo 0)
+  code=$(command timeout 12 curl -m 8 -s -o "${OUT:-.}/.places-probe.json" -w '%{http_code}' \
+         'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=E2E' 2>/dev/null || echo 000)
+  st=$(grep -oE '"status" *: *"[A-Z_]+"' "${OUT:-.}/.places-probe.json" 2>/dev/null | head -1 | grep -oE '[A-Z_]{3,}"' | tr -d '"')
+  rm -f "${OUT:-.}/.places-probe.json"
+  adb shell "echo | toybox nc -w 3 maps.googleapis.com 443" >/dev/null 2>&1; rc=$?
+  _dp_log "places: sonde hôte HTTP=${code:-000} status_api=${st:-n/a} ; sonde AVD tcp/443 rc=$rc"
+  if [ "${code:-000}" != "000" ] && [ "$rc" -eq 0 ]; then PLACES_NET_OK=oui; else PLACES_NET_OK=non; fi
+}
+
+# places_field_check query : relit l'écran, journalise le texte COMPLET de chaque champ (focus
+# indiqué) et rend 0 si l'un d'eux contient la requête tapée (sans accents ni casse).
+places_field_check() {
+  local q="$1" d rc=1
+  ui_xml || { _dp_log "places saisie: dump illisible"; return 2; }
+  d=$(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)
+  python3 "$(_dp_here)/dump_diag.py" --contains "$UI_XML_PATH" "$q" && rc=0
+  _dp_log "places saisie: requête='${q}' trouvée_dans_un_champ=$([ $rc = 0 ] && echo oui || echo NON) ${d}"
+  return $rc
+}
+
+# places_wait_result label max : sonde toutes les 5 s pendant max s, SANS taper. Journalise
+# si le dump est lisible, si des requêtes réseau apparaissent au logcat, et conclut.
+places_wait_result() {
+  local label="$1" max="${2:-20}" t0=$SECONDS lines reqs errs dumps_ok=0 dumps_ko=0 vis=non pkg fresh
+  while [ $((SECONDS - t0)) -lt "$max" ]; do
+    if ui_xml; then
+      dumps_ok=$((dumps_ok + 1)); fresh=1; pkg=$(xml_pkg)
+      grep -qF "$label" "$UI_XML_PATH" 2>/dev/null && vis=oui || vis=non
+    else
+      dumps_ko=$((dumps_ko + 1)); fresh=0; pkg=?; vis=non
+    fi
+    lines=$(tail -n +$((PLACES_LOG_OFF + 1)) "${LOG_FILE:-/dev/null}" 2>/dev/null \
+            | grep -aiE 'maps\.googleapis|place/autocomplete|OVER_QUERY_LIMIT|REQUEST_DENIED|UnknownHost|Failed host lookup|SocketException|HttpException' || true)
+    reqs=$(printf '%s' "$lines" | grep -aciE 'maps\.googleapis|place/autocomplete' || true)
+    errs=$(printf '%s' "$lines" | grep -aciE 'OVER_QUERY_LIMIT|REQUEST_DENIED|UnknownHost|Failed host lookup|SocketException|HttpException' || true)
+    _dp_log "places t=$((SECONDS - t0))s: dump=$([ $dumps_ko -gt 0 ] && [ "$pkg" = "?" ] && echo indisponible || echo lisible) pkg=${pkg} résultat_visible=$vis requêtes_logcat=${reqs:-0} erreurs_réseau=${errs:-0}"
+    if [ "$fresh" = 1 ] && { [ "$dumps_ok" -eq 1 ] || [ "$vis" = "oui" ]; }; then
+      _dp_log "places champ: $(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)"
+    fi
+    [ "$vis" = "oui" ] && break
+    sleep 5
+  done
+  [ "$vis" = "oui" ] || { ui_xml && _dp_log "places champ (fin): $(python3 "$(_dp_here)/dump_diag.py" "$UI_XML_PATH" 2>/dev/null | _mask_secrets)"; }
+  printf '%s' "${lines:-}" | head -3 | cut -c1-160 | _mask_secrets | while IFS= read -r l; do _dp_log "places logcat: $l"; done
+  if [ "$vis" = "oui" ]; then
+    _dp_log "places: CONCLUSION résultat « $label » visible après $((SECONDS - t0))s"
+  elif [ "$PLACES_NET_OK" = "non" ]; then
+    _dp_log "places: CONCLUSION panne réseau ou Places (sonde réseau KO), pas un émulateur lent"
+  elif [ "$dumps_ok" -eq 0 ] || [ "$dumps_ko" -gt "$dumps_ok" ]; then
+    _dp_log "places: CONCLUSION émulateur lent/instable (écran illisible $dumps_ko fois sur $((dumps_ok + dumps_ko)))"
+  else
+    _dp_log "places: CONCLUSION réseau OK et écran lisible, résultat absent (recherche vide ou lente, pas l'émulateur)"
+  fi
+  [ "$vis" = "oui" ]
+}
+
+→ Read MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && sed -n '1,400p' e2e/tests/test_ci_opencode_run.py
+#!/usr/bin/env python3
+"""Le harnais e2e ne doit pas s'auto-tuer sous `set -euo pipefail`.
+
+CI run 43811595159 (job log ~L1416-1427) : `e2e/ci-opencode-run.sh` line 57
+declarait `local main="$1" chain="$main" m norm`. Bash expanse TOUS les mots
+d'un `local` AVANT d'affecter : `$main` est lu alors qu'il est encore unset
+-> "line 57: main: unbound variable" -> la chaine de modeles n'est jamais
+construite, zero scenario joue, verdict=FAIL, ~3s apres l'installation APK.
+
+Ce test rejoue build_chain() extrait VERBATIM du vrai script dans un bash
+`set -euo pipefail` (sans reseau, sans emulator, sans credentials) et
+detecte statiquement la classe entiere : un `local`/`declare` qui lit une
+variable qu'il affecte dans le meme statement.
+"""
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT = os.path.join(ROOT, "ci-opencode-run.sh")
+MODEL = "opencode/deepseek-v4.1-flash-free"
+CASES = []
+
+
+def case(fn):
+    CASES.append(fn)
+    return fn
+
+
+def script():
+    return open(SCRIPT, encoding="utf-8").read()
+
+
+def extract_fn(text, name):
+    """Bloc `name() { ... }` — jusqu'au premier `}` en début de ligne."""
+    m = re.search(r"^%s\(\) \{\n(?:.*\n)*?^\}$" % re.escape(name), text, re.M)
+    assert m, f"fonction {name}() introuvable dans {SCRIPT}"
+    return m.group(0)
+
+
+def extract_defaults(text):
+    """Les constantes de haut niveau dont build_chain() a besoin."""
+    names = ("OUT", "VERDICT", "PROMPT_FILE", "OC_LOG",
+             "DEFAULT_MODEL", "DEFAULT_CHAIN", "APK_RIDER", "APK_DRIVER")
+    lines = [l for l in text.splitlines()
+             if any(l.startswith(n + "=") for n in names)]
+    assert lines, "constantes de haut niveau introuvables"
+    return "\n".join(lines)
+
+
+def build_chain_probe(tmpdir):
+    """Écrit un bash minimal contenant le VRAI build_chain() et ses dépendances."""
+    text = script()
+    fail_one_liner = re.search(r"^fail\(\) \{[^\n]*\}$", text, re.M)
+    assert fail_one_liner, "fail() introuvable"
+    parts = [extract_defaults(text),
+             fail_one_liner.group(0),
+             extract_fn(text, "normalize_model"),
+             extract_fn(text, "validate_model"),
+             extract_fn(text, "build_chain")]
+    path = os.path.join(tmpdir, "build_chain_probe.sh")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(parts) + "\n")
+    return path
+
+
+def run_probe(probe, script, *args):
+    return subprocess.run(["bash", "-c", script, "_", probe, *args],
+                          capture_output=True, text=True, timeout=30)
+
+
+@case
+def test_build_chain_survives_set_u():
+    """build_chain() doit tourner sous `set -euo pipefail` sans unbound variable."""
+    with tempfile.TemporaryDirectory() as d:
+        probe = build_chain_probe(d)
+        proc = run_probe(probe,
+                         'set -euo pipefail; source "$1"; '
+                         'chain=$(build_chain "$2"); printf "chain=%s\\n" "$chain"',
+                         MODEL)
+    assert "unbound variable" not in proc.stderr, \
+        f"build_chain() lit une variable non assignee sous set -u : {proc.stderr.strip()}"
+    assert proc.returncode == 0, \
+        f"build_chain() a echoue (rc={proc.returncode}): {proc.stderr.strip()}"
+    assert proc.stdout.startswith(f"chain={MODEL}"), proc.stdout
+
+
+@case
+def test_build_chain_starts_with_the_requested_model():
+    """La chaine commence par le modele demande, puis les extras valides."""
+    with tempfile.TemporaryDirectory() as d:
+        probe = build_chain_probe(d)
+        proc = run_probe(probe,
+                         'set -euo pipefail; source "$1"; build_chain "$2"',
+                         MODEL)
+    assert proc.returncode == 0, proc.stderr
+    chain = proc.stdout.strip()
+    assert chain.split(",")[0] == MODEL, chain
+    assert len(chain.split(",")) > 1, f"chaine trop courte : {chain}"
+    for model in chain.split(","):
+        assert re.match(r"^opencode/[a-z0-9][a-z0-9.-]*-free$", model), model
+
+
+@case
+def test_build_chain_has_no_self_referencing_local():
+    """`local main="$1" chain="$main"` : bash expanse avant d'affecter -> BUG."""
+    block = extract_fn(script(), "build_chain")
+    stmt = re.search(r"^\s*(?:local|declare)\s+.*chain.*$", block, re.M)
+    assert stmt, "la declaration de `chain` est introuvable dans build_chain()"
+    line = stmt.group(0)
+    assigned = set(re.findall(r"(?:^|\s)(\w+)=", line))
+    referenced = set(re.findall(r"\$\{?(\w+)", line))
+    assert not (assigned & referenced), \
+        (f"`{line.strip()}` lit {assigned & referenced} avant affectation "
+         "(bash expanse tous les mots du local d'abord) — declarer en deux lignes")
+
+
+@case
+def test_no_self_referencing_local_in_e2e_shell_scripts():
+    """Balayage de la classe dans tout l'arbre e2e/ (pas seulement ce fichier)."""
+    e2e_dir = ROOT
+    hits = []
+    for name in sorted(os.listdir(e2e_dir)):
+        if not name.endswith(".sh"):
+            continue
+        path = os.path.join(e2e_dir, name)
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh.read().splitlines(), 1):
+                m = re.match(r"\s*(?:local|declare)\s+(.*)$", line)
+                if not m:
+                    continue
+                stmt = m.group(1)
+                assigned = set(re.findall(r"(?:^|\s)(\w+)=", stmt))
+                referenced = set(re.findall(r"\$\{?(\w+)", stmt))
+                for var in sorted(assigned & referenced):
+                    hits.append(f"{name}:{lineno} `{line.strip()}` ({var})")
+    assert not hits, "local/declare auto-referencant (bash expanse avant d'affecter) : " \
+                     + " | ".join(hits)
+
+
+def main():
+    failed = 0
+    for fn in CASES:
+        try:
+            fn()
+            print(f"PASS {fn.__name__}")
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL {fn.__name__}: {exc}")
+    print(f"\n{len(CASES) - failed}/{len(CASES)} ci-opencode-run cases passed")
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && grep -n "artemis-staging-e2e\|workflow\|concurrency\|emulator-options\|camera\|scenario" -r e2e/tests | head -80
+e2e/tests/test_smoke_log.py:24:WORKFLOW = os.path.join(ROOT, "..", ".github", "workflows", "artemis-staging-e2e.yml")
+e2e/tests/test_smoke_log.py:319:def test_workflow_publishes_smoke_artifact():
+e2e/tests/test_stop_diag_markers.py:129:def test_workflow_collects_dbg_diag_files():
+e2e/tests/test_stop_diag_markers.py:130:    wf = open(os.path.join(ROOT, "..", ".github", "workflows", "artemis-staging-e2e.yml"), encoding="utf-8").read()
+e2e/tests/test_device_stability.py:11:WF = open(os.path.join(os.path.dirname(ROOT), ".github/workflows/artemis-staging-e2e.yml"),
+e2e/tests/test_device_stability.py:116:def test_workflow_gives_avd_more_resources():
+e2e/tests/test_ci_opencode_run.py:8:construite, zero scenario joue, verdict=FAIL, ~3s apres l'installation APK.
+e2e/tests/test_ci_direct_harness.py:342:def workflow_text():
+e2e/tests/test_ci_direct_harness.py:343:    path = os.path.join(ROOT, "..", ".github", "workflows",
+e2e/tests/test_ci_direct_harness.py:344:                        "artemis-staging-e2e.yml")
+e2e/tests/test_ci_direct_harness.py:598:    - la valeur du workflow (RUN_DEADLINE_MIN=90) reste le PLAFOND ;
+e2e/tests/test_ci_direct_harness.py:634:            f"atteindre le plafond du workflow (90), vu {eff}min")
+e2e/tests/test_ci_direct_harness.py:678:def test_script_budget_defaults_stay_in_sync_with_the_workflow():
+e2e/tests/test_ci_direct_harness.py:679:    """Les defauts du script doivent SUIVRE le workflow (pas l'inverse).
+e2e/tests/test_ci_direct_harness.py:681:    Le workflow fixe timeout-minutes: 100 (step) et RUN_DEADLINE_MIN: "90".
+e2e/tests/test_ci_direct_harness.py:682:    Le script ne peut pas modifier le workflow : ses defauts doivent donc
+e2e/tests/test_ci_direct_harness.py:688:    wf = workflow_text()
+e2e/tests/test_ci_direct_harness.py:695:        f"du workflow ({step})")
+e2e/tests/test_ci_direct_harness.py:698:        f"workflow ({wf_deadline})")
+e2e/tests/test_opencode_cli.py:8:WORKFLOW = os.path.join(ROOT, "..", ".github", "workflows", "artemis-staging-e2e.yml")
+e2e/tests/test_opencode_cli.py:27:def test_workflow_has_no_llm_api_key_or_freellm():
+e2e/tests/test_opencode_cli.py:31:        assert needle not in body, f"reste interdit dans le workflow: {needle}"
+e2e/tests/test_opencode_cli.py:35:def test_workflow_installs_same_opencode_cli_as_fullrun():
+e2e/tests/test_markers.py:20:WORKFLOW = os.path.join(ROOT, "..", ".github", "workflows", "artemis-staging-e2e.yml")
+e2e/tests/test_markers.py:1009:def test_workflow_hardens_checkouts_and_runs_tests():
+e2e/tests/test_markers.py:1024:        assert loop or name in body, f"{name} n'est exécuté par aucun step du workflow"
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && sed -n '1,180p' e2e/tests/test_device_stability.py
+#!/usr/bin/env python3
+"""Whitelist batterie, tap par nœud vérifié, détection d'émulateur instable."""
+import os
+import re
+import subprocess
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RUN = open(os.path.join(ROOT, "run.sh"), encoding="utf-8").read()
+REPORT = open(os.path.join(ROOT, "report.py"), encoding="utf-8").read()
+WF = open(os.path.join(os.path.dirname(ROOT), ".github/workflows/artemis-staging-e2e.yml"),
+          encoding="utf-8").read()
+UI, DP, TAP = (os.path.join(ROOT, n) for n in ("ui.sh", "device_prep.sh", "tap_node.py"))
+
+# Libellé non cliquable dans un parent cliquable : le tap doit viser le parent.
+XML = ('<?xml version="1.0"?><hierarchy>'
+       '<node class="android.view.View" clickable="true" visible-to-user="true" bounds="[0,500][1080,700]">'
+       '<node class="android.widget.TextView" clickable="false" visible-to-user="true" text="Où allez-vous ?" bounds="[100,560][400,640]"/>'
+       '</node></hierarchy>')
+XML_INPUT = ('<?xml version="1.0"?><hierarchy><node class="android.widget.EditText" '
+             'bounds="[0,0][1080,100]" text=""/></hierarchy>')
+
+
+def tmp(content, name="d.xml"):
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, name)
+    open(p, "w", encoding="utf-8").write(content)
+    return p
+
+
+def tap_node(xml, label):
+    return subprocess.run(["python3", TAP, tmp(xml), label], capture_output=True, text=True).stdout.strip()
+
+
+def test_tap_targets_clickable_parent_not_the_label():
+    assert tap_node(XML, "Où allez-vous ?") == "540 600 clickable"
+
+
+def test_tap_node_absent_label_returns_nothing():
+    assert tap_node(XML, "Inexistant") == ""
+
+
+def test_has_input_detects_edittext():
+    assert subprocess.run(["python3", TAP, "--has-input", tmp(XML_INPUT)]).returncode == 0
+    assert subprocess.run(["python3", TAP, "--has-input", tmp(XML)]).returncode == 1
+
+
+def run_bash(script):
+    d = tempfile.mkdtemp()
+    env = dict(os.environ, OUT=d, UI_XML=os.path.join(d, "w.xml"))
+    return subprocess.run(["bash", "-c", f'. "{UI}"; . "{DP}"; {script}'],
+                          capture_output=True, text=True, env=env, cwd=d, timeout=60)
+
+
+def test_whitelist_runs_deviceidle_and_appops_before_trace():
+    r = run_bash('CALLS=; adb() { echo "$*" >> calls.txt; }; whitelist_battery sn.galass.galassdriver; cat calls.txt')
+    assert "dumpsys deviceidle whitelist +sn.galass.galassdriver" in r.stdout
+    assert "appops set sn.galass.galassdriver RUN_ANY_IN_BACKGROUND allow" in r.stdout
+
+
+def test_tap_node_verified_gives_up_after_three_taps_when_screen_never_changes():
+    r = run_bash(
+        'adb() { case "$*" in *"input tap"*) echo TAP >> taps.txt;; esac; return 0; }; '
+        'ui_xml() { cp "%s" "$UI_XML_PATH"; UI_DUMP_VALID=1; return 0; }; '
+        'wait_ui() { return 0; }; sleep() { :; }; '
+        'tap_node_verified sn.galass.galassrider "Où allez-vous ?"; echo rc=$?; wc -l < taps.txt'
+        % tmp(XML))
+    assert "rc=1" in r.stdout and r.stdout.strip().endswith("3"), r.stdout + r.stderr
+
+
+def test_tap_node_verified_ok_when_input_appears():
+    r = run_bash(
+        'n=0; adb() { return 0; }; '
+        'ui_xml() { n=$((n+1)); if [ $n -le 1 ]; then cp "%s" "$UI_XML_PATH"; else cp "%s" "$UI_XML_PATH"; fi; UI_DUMP_VALID=1; return 0; }; '
+        'wait_ui() { return 0; }; sleep() { :; }; '
+        'tap_node_verified sn.galass.galassrider "Où allez-vous ?"; echo rc=$?' % (tmp(XML), tmp(XML_INPUT)))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+
+
+def test_dismiss_bg_dialog_taps_allow_found_in_dump():
+    dlg = ('<?xml version="1.0"?><hierarchy><node package="com.android.settings" text="Let app always run in background?" bounds="[0,0][9,9]"/>'
+           '<node package="com.android.settings" text="Allow" bounds="[100,100][200,200]"/>' + " " * 400 + '</hierarchy>')
+    r = run_bash('adb() { return 0; }; ui_xml() { cp "%s" "$UI_XML_PATH"; UI_DUMP_VALID=1; return 0; }; '
+                 'tap_exact() { echo TAPPED:$1 > tapped.txt; return 0; }; sleep() { :; }; dismiss_bg_dialog; echo rc=$?; cat tapped.txt' % tmp(dlg))
+    assert "TAPPED:Allow" in r.stdout and "rc=0" in r.stdout, r.stdout + r.stderr
+
+
+def test_unstable_scan_flags_activitymanager_died_and_anr_system():
+    bad = tmp("11-17 05:15:54 W ActivityManager has died\n", "l.log")
+    r = run_bash(f'emu_unstable_scan "{bad}"; echo rc=$?')
+    assert "rc=0" in r.stdout
+    bad2 = tmp("ANR in system (broadcast UPDATE_LANG_ID)\n", "l2.log")
+    assert "rc=0" in run_bash(f'emu_unstable_scan "{bad2}"; echo rc=$?').stdout
+
+
+def test_unstable_scan_clean_log_is_not_unstable():
+    ok = tmp("I normal logcat line\nANR in com.google.android.gms.persistent\n", "ok.log")
+    assert "rc=1" in run_bash(f'emu_unstable_scan "{ok}"; echo rc=$?').stdout
+
+
+def test_report_labels_unstable_emulator():
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, "emulator-unstable.flag"), "w").close()
+    r = subprocess.run(["python3", os.path.join(ROOT, "report.py"), d], capture_output=True, text=True)
+    assert "emulator_unstable=1" in r.stdout
+    assert "ÉMULATEUR INSTABLE" in open(os.path.join(d, "summary.md"), encoding="utf-8").read()
+
+
+def test_run_sh_ordering_calm_then_whitelist_then_launch():
+    calm = RUN.find("emu_wait_calm")
+    wl = RUN.find('whitelist_battery "$DRIVER_PKG"')
+    launch = RUN.find('launch "$RIDER_PKG"; wait_fg')
+    assert -1 < calm < wl < launch
+
+
+def test_workflow_gives_avd_more_resources():
+    assert "ram-size: 6144" in WF and "cores: 3" in WF
+
+
+CASES = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+
+if __name__ == "__main__":
+    for fn in CASES:
+        fn()
+        print(f"ok - {fn.__name__}")
+    print(f"PASS ({len(CASES)}/{len(CASES)})")
+
+$ cd /home/runner/work/lifeos-ci/lifeos-ci/target && sed -n '990,1040p' e2e/tests/test_markers.py && echo ---- && sed -n '330,360p' e2e/tests/test_ci_direct_harness.py && echo ---- && sed -n '670,710p' e2e/tests/test_ci_direct_harness.py
+assert "printf '%s|%s\\n'" in mark_fn, mark_fn
+
+
+# ---------------------------------------------------------- S17/S20/S22/S23
+@case
+def test_gitignore_covers_evidence_artifacts():
+    body = open(os.path.join(ROOT, "..", ".gitignore"), encoding="utf-8").read()
+    for pat in ("ev.tgz", "*.tgz", "*.gpg", "evidence/"):
+        assert pat in body, pat
+
+
+@case
+def test_api_flow_uses_subprocess_for_stop_hook():
+    body = open(os.path.join(ROOT, "api_flow.py"), encoding="utf-8").read()
+    assert "os.system(" not in body, body
+    assert "subprocess.run([hook" in body, body
+
+
+@case
+def test_workflow_hardens_checkouts_and_runs_tests():
+    body = open(WORKFLOW, encoding="utf-8").read()
+    assert body.count("persist-credentials: false") >= 2, body
+    assert "bash -n e2e/*.sh" in body, body
+    assert "for t in e2e/tests/test_*.py" in body, body
+
+
+@case
+def test_every_harness_test_runs_in_ci():
+    body = open(WORKFLOW, encoding="utf-8").read()
+    tests = sorted(os.path.basename(p) for p in
+                   glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
+    assert tests, "aucune spec dans e2e/tests"
+    loop = "for t in e2e/tests/test_*.py" in body
+    for name in tests:
+        assert loop or name in body, f"{name} n'est exécuté par aucun step du workflow"
+
+
+@case
+def test_deadlines_are_ordered_watchdog_step_job():
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    m = re.search(r"- name: E2E multistop \([^)]+\)\n\s+timeout-minutes: (\d+)", wf)
+    assert m, "le step E2E doit porter son propre timeout-minutes"
+    step = int(m.group(1))
+    job = int(re.search(r"^  e2e:\n(?:.*\n)*?    timeout-minutes: (\d+)", wf, re.M).group(1))
+    env_deadline = int(re.search(r'RUN_DEADLINE_MIN: "(\d+)"', wf).group(1))
+    default = int(re.search(r'RUN_DEADLINE_MIN="\$\{RUN_DEADLINE_MIN:-(\d+)\}', run_text()).group(1))
+    assert env_deadline == default, (env_deadline, default)
+    assert env_deadline < step < job, (env_deadline, step, job)
+
+
+@case
+----
+        values = [line.strip() for line in fh if line.strip()]
+    return values[-1] if values else None
+
+
+def log_value(stdout, key, suffix=""):
+    """Extrait la valeur numerique d'une cle du journal `budget: ...`."""
+    import re
+    m = re.search(re.escape(key) + r"=(\d+)" + re.escape(suffix), stdout)
+    assert m, f"la cle {key} est absente du journal : {stdout[-800:]}"
+    return int(m.group(1))
+
+
+def workflow_text():
+    path = os.path.join(ROOT, "..", ".github", "workflows",
+                        "artemis-staging-e2e.yml")
+    with open(os.path.abspath(path), encoding="utf-8") as fh:
+        return fh.read()
+
+
+# --- cas rouges/verts -------------------------------------------------------
+
+@case
+def test_direct_harness_first_and_agent_never_called():
+    """Le harnais direct tranche avant l'agent : opencode n'est pas invoque.
+
+    Sur le fichier d'avant inversion ce cas est ROUGE : run_opencode part en
+    premier, le faux opencode (rc=124 immediat) est appele une fois par modele de la
+    chaine avant que le harnais direct ne tourne.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        make_sandbox(d, OC_TIMEOUT)
+----
+        with open(out_file(d, "run.log"), encoding="utf-8") as fh:
+            run_log = fh.read()
+        assert "budget effectif=" in run_log, (
+            f"le budget effectif doit etre visible dans e2e-out/run.log : {run_log[-800:]}")
+        assert "temps déjà consommé=" in run_log, run_log[-800:]
+
+
+@case
+def test_script_budget_defaults_stay_in_sync_with_the_workflow():
+    """Les defauts du script doivent SUIVRE le workflow (pas l'inverse).
+
+    Le workflow fixe timeout-minutes: 100 (step) et RUN_DEADLINE_MIN: "90".
+    Le script ne peut pas modifier le workflow : ses defauts doivent donc
+    reproduire ces valeurs, sinon le budget derive ne protegerait rien.
+    """
+    import re
+    with open(SCRIPT, encoding="utf-8") as fh:
+        script = fh.read()
+    wf = workflow_text()
+    step = int(re.search(r"- name: E2E multistop \([^)]+\)\n\s+timeout-minutes: (\d+)", wf).group(1))
+    wf_deadline = int(re.search(r'RUN_DEADLINE_MIN: "(\d+)"', wf).group(1))
+    script_step = int(re.search(r'E2E_STEP_BUDGET_MIN:-(\d+)', script).group(1))
+    script_cap = int(re.search(r'RUN_DEADLINE_CAP="\$\{RUN_DEADLINE_MIN:-(\d+)\}"', script).group(1))
+    assert script_step == step, (
+        f"E2E_STEP_BUDGET_MIN ({script_step}) doit suivre le timeout du step "
+        f"du workflow ({step})")
+    assert script_cap == wf_deadline, (
+        f"le plafond RUN_DEADLINE_MIN ({script_cap}) doit suivre la valeur du "
+        f"workflow ({wf_deadline})")
+
+
+@case
+def test_fail_count_blocks_pass_even_with_clean_p0_counters():
+    """(R4a) fail_count > 0 rend FAIL/1 meme si p0_nonpass est vide.
+
+    Le mutant "suppression de la clause fail_count" doit etre TUYE : sans
+    elle, un rapport forger portant verdict=PASS, fail_count=2 et des
+    compteurs P0 propres ressortait en PASS/0 (faux vert).
+    """
+    with tempfile.TemporaryDirectory() as d:
+        make_sandbox(d, OC_TIMEOUT, run_body=RUN_FAIL_COUNT)
+
