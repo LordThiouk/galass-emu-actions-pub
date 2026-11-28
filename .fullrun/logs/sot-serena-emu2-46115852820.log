@@ -1,0 +1,534 @@
+
+> Architect · deepseek-v4.1-flash-free
+
+I'll read the prompt file first.
+→ Read /home/runner/work/_temp/oc/prompt.md
+
+$ ls -la /home/runner/work/lifeos-ci/lifeos-ci/; ls /home/runner/work/_temp/oc/
+total 20
+drwxr-xr-x  5 runner runner 4096 Nov 28 06:16 .
+drwxr-xr-x  3 runner runner 4096 Nov 28 06:16 ..
+drwxr-xr-x  8 runner runner 4096 Nov 28 06:16 ci
+dr-xr-xr-x 16 runner runner 4096 Nov 28 06:16 lifeos
+drwxr-xr-x  8 runner runner 4096 Nov 28 06:16 target
+opencode.json
+opencode.log
+prompt.md
+
+$ pwd; ls -la; git status --short | head -50; git branch -a | head -30; git log --oneline -10
+/home/runner/work/lifeos-ci/lifeos-ci/target
+total 36
+drwxr-xr-x 8 runner runner 4096 Nov 28 06:16 .
+drwxr-xr-x 5 runner runner 4096 Nov 28 06:16 ..
+drwxr-xr-x 7 runner runner 4096 Nov 28 06:17 .git
+drwxr-xr-x 3 runner runner 4096 Nov 28 06:16 .github
+-rw-r--r-- 1 runner runner  499 Nov 28 06:16 .gitignore
+drwxr-xr-x 3 runner runner 4096 Nov 28 06:16 MEMORY
+drwxr-xr-x 4 runner runner 4096 Nov 28 06:16 e2e
+drwxr-xr-x 2 runner runner 4096 Nov 28 06:16 goldens
+drwxr-xr-x 3 runner runner 4096 Nov 28 06:16 vendor
+* cursor/artemis-f427-pusher-e410
+  remotes/origin/cursor/artemis-build-log-tail-e410
+  remotes/origin/cursor/artemis-f427-pusher-e410
+  remotes/origin/cursor/artemis-flutter-3501-e410
+  remotes/origin/cursor/artemis-ms-close-b7-ids-e410
+  remotes/origin/cursor/artemis-visible-markers-e410
+  remotes/origin/cursor/b7-offer-accept-before-expiry-e410
+  remotes/origin/cursor/e2e-high-test-ids-e410
+  remotes/origin/feat/multistop-e2e-2026-11-15
+  remotes/origin/feat/multistop-rider-close-2026-11-20
+  remotes/origin/fix/e2e-artemis-hang
+  remotes/origin/fix/e2e-harness-wip
+  remotes/origin/fix/e2e-offer-flow
+  remotes/origin/fix/e2e-smoke-log
+  remotes/origin/fix/e2e-vision-chain
+  remotes/origin/fix/real-places
+  remotes/origin/fix/staging-http-guard
+  remotes/origin/main
+6f8dba0 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+0589138 fix(artemis): gate Driver — ignorer « Test failed » générique
+449f0d4 fix(artemis): pin Flutter 3.44.8 (pas 3.50.1 / goldens regen)
+6ff36a5 fix(artemis): diagnostic Rider goldens F4-27 → e2e P0 continue
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+d69b9ad fix(e2e): mode diagnostic goldens Driver 2–4 px — continuer P0
+b073d55 fix(e2e): restaure le commentaire Exactement 2 \\bapi accept\\b
+1046d2e fix(e2e): comptes de test ids > 900000 (Pusher)
+
+$ ls -R MEMORY | head -100; echo ---; ls -la MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ 2>/dev/null
+MEMORY:
+WORK
+
+MEMORY/WORK:
+20261123-galass-emu-golden-anti-regression
+
+MEMORY/WORK/20261123-galass-emu-golden-anti-regression:
+ISA.md
+---
+total 28
+drwxr-xr-x 2 runner runner  4096 Nov 28 06:16 .
+drwxr-xr-x 3 runner runner  4096 Nov 28 06:16 ..
+-rw-r--r-- 1 runner runner 18545 Nov 28 06:16 ISA.md
+
+$ git log --oneline origin/main..HEAD | head -30; echo ---; git diff --stat origin/main...HEAD | tail -30; echo ---; git status --short
+6f8dba0 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+0589138 fix(artemis): gate Driver — ignorer « Test failed » générique
+449f0d4 fix(artemis): pin Flutter 3.44.8 (pas 3.50.1 / goldens regen)
+6ff36a5 fix(artemis): diagnostic Rider goldens F4-27 → e2e P0 continue
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+d69b9ad fix(e2e): mode diagnostic goldens Driver 2–4 px — continuer P0
+b073d55 fix(e2e): restaure le commentaire Exactement 2 \\bapi accept\\b
+1046d2e fix(e2e): comptes de test ids > 900000 (Pusher)
+1eaf100 fix(e2e): accept avant offer_expired (B7 harness)
+b4b0c91 feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+c6a782e wip(autosave): arbre de travail
+bfabf60 docs(isa): scaffold harnais emu — repère invisible stable + planche goldens + porte CI (ISA-only)
+da9814d fix(e2e): stop_prime géolocalise sur les coordonnées réelles du stop (serveur)
+f7753d0 fix(e2e): filet — ouvrir l'écran détail Driver via la carte « Course en cours » après un repli API d'acceptation
+f19369a fix(e2e): avant chaque tap « Confirmer l'arrêt », geo fix puis ping Driver frais lu sur le serveur
+6ab3d66 chore(e2e): sonde « Confirmer l'arrêt » du Driver (workflow dédié, hors e2e complet)
+3c35e43 fix(e2e): accept_fail_diag capture le logcat Driver de la fenêtre d'acceptation
+1ff1262 fix(e2e): le logcat Driver des diagnostics d'arrêt garde complete-stop request/response
+874c61e fix(e2e): Driver ramené au premier plan dès le tap de demande + logcat Driver au timeout d'offre
+f909a40 e2e: capture logcat Driver robuste, GPS+ping avant chaque tap, inride en WARN, clé de test générée
+afa3207 e2e: stop_diag capture le logcat de l'app Driver sur la fenêtre du tap
+bf2ac80 fix(e2e): diagnostics d'arrêt toujours écrits, marqueur accueil Rider réel, attente 35b, dialogue de course
+428aa0e fix(e2e): tap UI « Confirmer l'arrêt » prouvé par le serveur ; sortie notation Rider sans Back aveugle
+f640fc1 fix(e2e): poll d'offre sans relaunch ni re-demande (status=0 n'est pas une expiration)
+5c02c70 fix(e2e): close-7 timing, stop-confirm fallback, 29 before cash pusher, b2/refuser literal
+dfaba02 wip(autosave): arbre de travail
+263a677 wip(ci): état non commité à la fin du run (dépôt supplémentaire galass-emu-actions-pub)
+05e82b2 wip(autosave): arbre de travail
+---
+ .github/workflows/artemis-staging-e2e.yml          |  80 +++-
+ .github/workflows/golden-diff.yml                  | 147 +++++++
+ .github/workflows/stop-confirm-probe.yml           | 146 +++++++
+ .../ISA.md                                         | 119 ++++++
+ e2e/api_flow.py                                    |  68 +++-
+ e2e/b3_order.py                                    |  77 ++++
+ e2e/ci-opencode-run.sh                             |   6 +-
+ e2e/compose_order.py                               | 104 +++++
+ e2e/probe_close_rides.py                           |  43 +++
+ e2e/probe_stop_confirm.sh                          |  83 ++++
+ e2e/report.py                                      |  36 +-
+ e2e/run.sh                                         | 319 ++++++++++-----
+ e2e/tests/test_crash_recovery.py                   |  13 +-
+ e2e/tests/test_diag_driver_assign.py               |  12 +
+ e2e/tests/test_driver_open_ride_via_card.py        | 124 ++++++
+ e2e/tests/test_markers.py                          | 155 ++++----
+ e2e/tests/test_offer_window.py                     | 129 +++++++
+ e2e/tests/test_report.py                           |  52 ++-
+ e2e/tests/test_smoke_log.py                        |  57 ++-
+ e2e/tests/test_stop_confirm_ui.py                  | 138 +++++++
+ e2e/tests/test_stop_diag_markers.py                | 428 +++++++++++++++++++++
+ e2e/tests/test_stop_logcat.py                      | 136 +++++++
+ e2e/tests/test_stop_prime_order.py                 | 102 +++++
+ e2e/tests/test_stop_prime_real_coords.py           |  73 ++++
+ e2e/ui.sh                                          | 383 ++++++++++++++++++
+ goldens/README.md                                  | 138 +++++++
+ goldens/board.py                                   | 180 +++++++++
+ goldens/gate.sh                                    | 179 +++++++++
+ 28 files changed, 3295 insertions(+), 232 deletions(-)
+---
+
+→ Read MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+✗ git log --oneline -5 origin/cursor/artemis-visible-markers-e410; echo ---; git diff --stat HEAD...origin/cursor/artemis-visible-markers-e410; echo ---; git merge-base HEAD origin/cursor/artemis-visible-markers-e410 failed
+Error: The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules [{"permission":"*","action":"allow","pattern":"*"},{"permission":"bash","pattern":"*","action":"allow"},{"permission":"bash","pattern":"git push*","action":"deny"},{"permission":"bash","pattern":"git merge*","action":"deny"},{"permission":"bash","pattern":"gh *","action":"deny"},{"permission":"bash","pattern":"ssh *","action":"deny"},{"permission":"bash","pattern":"scp *","action":"deny"},{"permission":"bash","pattern":"sudo *","action":"deny"},{"permission":"bash","pattern":"*sudo *","action":"deny"},{"permission":"bash","pattern":"*git remote*","action":"deny"},{"permission":"bash","pattern":"*http.extraheader*","action":"deny"}]
+
+$ grep -n "MARK_rider_stop\|MARK_driver_stop\|galass.driver\|Arrêt\|arret\|stop1_done\|stop2_done" e2e/run.sh | head -80
+95:MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
+96:MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
+98:# Papa 27/11 21:22 — design F4-27 validé : frise Lieu de prise en charge → Arrêt 1…N →
+102:MARK_rider_running_start='+E2E Driver&+Arrêt 1|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous|-Chargement'
+103:MARK_rider_stop1_active='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous'
+104:MARK_rider_stop1_done='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+105:MARK_rider_stop2_done='+E2E Driver&+Arrêt 1&+Arrêt 2&+Destination|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+114:# Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
+123:MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
+127:# « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
+129:MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
+130:# Papa 27/11 22:30 : compteurs x/N retirés (F5-14). Preuve = frise Arrêt N + Terminer.
+133:MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Medina|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+134:MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+143:# « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
+144:MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|-REFUSER|-Prise en charge du client|+Arrêt 1'
+149:driver_running_stop1 driver_stop1_done driver_stop2_done driver_cash_request \
+816:elif grep -qiE "Arrêt [12]|2 arrêts|E2E Stop" "$OUT/ui/34-driver-offer-with-stops.xml" 2>/dev/null; then
+984:if ! grep -qiE "Terminer la course|Arrêt 1" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
+986:elif grep -qiE "Arrêt [12]|E2E Stop" "$OUT/ui/35b-driver-inride.xml" 2>/dev/null; then
+1015:  next_marker="MARK_driver_stop${n}_done"
+1054:    # 23 : frise Rider Arrêt N (F4-27) — plus de compteur x/N.
+1191:  rows=$(grep -o -iE "Arrêt [12]|Destination|Lieu de prise en charge|Prise en charge" "$OUT/ui/29-rider-final-itinerary.xml" | wc -l)
+
+$ git log --oneline -8 origin/cursor/artemis-visible-markers-e410; echo '--- diffstat'; git diff --stat HEAD...origin/cursor/artemis-visible-markers-e410; echo '--- base'; git rev-list --max-count=1 $(git rev-list --max-count=1 HEAD) ^origin/cursor/artemis-visible-markers-e410 2>/dev/null; git rev-list --count origin/cursor/artemis-visible-markers-e410..HEAD
+68af0c2 fix(e2e): marqueurs Driver stop1/stop2 sur textes visibles uniquement
+6f8dba0 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+0589138 fix(artemis): gate Driver — ignorer « Test failed » générique
+449f0d4 fix(artemis): pin Flutter 3.44.8 (pas 3.50.1 / goldens regen)
+6ff36a5 fix(artemis): diagnostic Rider goldens F4-27 → e2e P0 continue
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+--- diffstat
+ e2e/run.sh                | 9 +++++----
+ e2e/tests/test_markers.py | 8 ++++++--
+ 2 files changed, 11 insertions(+), 6 deletions(-)
+--- base
+0
+
+$ sed -n '85,160p' e2e/run.sh
+backend-flow no-prod-calls"
+export P0_POINTS
+
+# ---------------------------------------------------------------- MARK table
+# Unique source of truth for every screen marker. Grammar: '+regex' present, '-regex'
+# absent, '|' = OR, the kind propagates over the alternatives. 'cap' resolves a point's
+# marker through `local -n`, so a point with no MARK_ entry can never be captured PASS.
+MARK_rider_home_loaded='+Où allez-vous|+Partons pour une course|-Chargement'
+MARK_rider_destination_selected='+E2E Dest Point E|Point E|-Où allez-vous'
+# Picker ouvert par « Ajouter un arrêt » : my_strings.dart confirmLocation (766) + stopPickerHint (47).
+MARK_rider_stop_picker='+Confirmer le lieu|Adresse de l.arrêt|-Où allez-vous'
+MARK_rider_multistop_summary='+Arrêt 2|Ajouter un arrêt|Changer|-Où allez-vous'
+MARK_rider_driver_assigned='+E2E Driver|+E2E-0001'
+# Papa 27/11 21:22 — design F4-27 validé : frise Lieu de prise en charge → Arrêt 1…N →
+# Destination (plus de bandeaux « En route vers… » / « x/N arrêts » côté Rider).
+# Positif non générique = profil chauffeur assigné (E2E Driver) ; négatifs = composition
+# (SUMMARY_FIXTURE / Places) pour ne jamais PASS avant l'assignation.
+MARK_rider_running_start='+E2E Driver&+Arrêt 1|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous|-Chargement'
+MARK_rider_stop1_active='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-Où allez-vous'
+MARK_rider_stop1_done='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+MARK_rider_stop2_done='+E2E Driver&+Arrêt 1&+Arrêt 2&+Destination|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+MARK_rider_destination_arrived='+Vous êtes arrivé à destination|+Payer maintenant|Facture à payer|-En attente de la réponse du chauffeur'
+MARK_rider_cash_methods='+Espèces|Cash|+Wave|Orange Money'
+MARK_rider_cash_waiting='+En attente de la réponse du chauffeur|-Payer maintenant'
+# Run 44441344957 : les captures 26/27/29/30 tombaient sur l'écran de composition (« Lieu de
+# prise en charge », « Destination », « Confirmer le lieu »), où les deux alternatives « Lieu de
+# prise en charge » et « Destination » suffisaient à faire PASSER 29 — faux PASS écarté par le
+# négatif « Confirmer le lieu », l'affordance de composition.
+MARK_rider_final_itinerary='+Course terminée|-Chargement|-Confirmer le lieu'
+# Écran réel : « Avis » (+ « Course terminée », Arrêt 1 / Arrêt 2). « Notez » n'existe pas.
+MARK_rider_rating='+Avis|Course terminée|-Payer maintenant|-Chargement'
+# Accueil réel après la course (run 45004400552, capture 31) : « Partons pour une course » (letsTakeARide,
+# location_pickup_widget:57) ET « Où allez-vous ? » (whereToGo) ; ni la notation, ni le dialogue de course,
+# ni le sélecteur de composition (« Confirmer le lieu ») ne doivent être au premier plan.
+MARK_rider_home_after='+Partons pour une course&+Où allez-vous&-Course terminée&-Terminez votre course&-Confirmer le lieu'
+# L'offre est un toast AU-DESSUS du dashboard : la navbar « Accueil » reste visible par
+# construction, elle n'est jamais un négatif. Les quatre libellés sont des ALTERNATIVES.
+MARK_driver_offer_with_stops='+Accepter\s+la\s+course|REFUSER|Prix recommandé|Consignes du client'
+MARK_driver_accepted_details='+Point de prise en charge|+Arrêt 1|-Accepter\s+la\s+course'
+# B2 — pickup-only : « Point de prise en charge » appartient à l'écran accepté, pas ici.
+MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter\s+la\s+course'
+# Écran RUNNING réel : bouton « Confirmer l'arrêt » (confirmStop) + « Terminer la course ». Aucun bouton
+# « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
+# seul le bouton d'arrêt distingue la course démarrée.
+MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
+# Papa 27/11 22:30 : compteurs x/N retirés (F5-14). Preuve = frise Arrêt N + Terminer.
+# Négatifs : offre + anciens bandeaux x/N (ne doivent plus PASS).
+# Ancre non générique = adresse compose staging (Médina/Fann) — B2 anti-generic.
+MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Medina|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
+MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
+# L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,
+# Accueil / Activité / Courses). C'est cet écran réel qui est capturé en 43.
+MARK_driver_summary='+En ligne|-Reçois\s+le\s+paiement|Confirmer\s+le\s+paiement|Terminer la course'
+# Non-P0 captures (same table, same rules).
+MARK_driver_home_online='+En ligne'
+# S3 : la capture in-ride doit nier l'offre (-REFUSER) pour être distinguable de (a).
+# « Arrêt 1 » seul vaut aussi sur l'écran ACTIVE : « Terminer la course » (RUNNING) est exigé.
+MARK_driver_inride_stops='+Terminer la course|-Accepter\s+la\s+course|-REFUSER|-Prise en charge du client|+Arrêt 1'
+
+# Les 9 écrans Driver n'ont jamais été atteints par le run 39992138248 (acceptation UI
+# impossible) : leurs libellés sont des hypothèses, taguées dans le sidecar.
+MARK_HYPOTHESIS="driver_offer_with_stops driver_accepted_details driver_pickup_arrived \
+driver_running_stop1 driver_stop1_done driver_stop2_done driver_cash_request \
+driver_cash_confirmed driver_summary"
+
+marker_source() {
+  case " $MARK_HYPOTHESIS " in
+    *" $1 "*) echo hypothesis ;;
+    *) echo grounded ;;
+  esac
+}
+
+# Flags UI_* : une transition n'est acquise que si l'écran SUIVANT le prouve.
+UI_ACCEPT=0; UI_START=0; UI_STOP0=0; UI_STOP1=0; UI_END=0; UI_CASH=0
+
+$ git diff HEAD origin/cursor/artemis-visible-markers-e410 -- e2e/run.sh e2e/tests/test_markers.py
+diff --git a/e2e/run.sh b/e2e/run.sh
+index 14f31e5..fdfe857 100755
+--- a/e2e/run.sh
++++ b/e2e/run.sh
+@@ -127,11 +127,12 @@ MARK_driver_pickup_arrived='+Je suis arrivé|Prise en charge du client|-Accepter
+ # « Terminer l'arrêt » n'existe. L'écran ACTIVE (« Prise en charge du client ») montre déjà « Arrêt 1 » :
+ # seul le bouton d'arrêt distingue la course démarrée.
+ MARK_driver_running_stop1='+Arrêt 1|-Accepter\s+la\s+course|Prise en charge du client|+Confirmer l.arrêt'
+-# Papa 27/11 22:30 : compteurs x/N retirés (F5-14). Preuve = frise Arrêt N + Terminer.
+-# Négatifs : offre + anciens bandeaux x/N (ne doivent plus PASS).
+-# Ancre non générique = adresse compose staging (Médina/Fann) — B2 anti-generic.
++# Papa 28/11 : aucun Semantics/ValueKey galass.driver.* — preuves = textes visibles.
++# stop1/stop2/fin : « Arrêt 1 », « Arrêt 2 », « Terminer la course » (+ Confirmer l'arrêt en RUNNING).
++# Négatifs : offre + anciens bandeaux x/N. Ancre adresse Medina/Fann (B2 anti-generic).
++# Destination retirée du marqueur stop2 (souvent hors viewport sheet — faux FAIL Artemis).
+ MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Medina|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+-MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
++MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+ MARK_driver_cash_request='+Reçois le paiement|+Confirmer le paiement|+Tarif de la course'
+ MARK_driver_cash_confirmed='+Tarif de la course|Distance|-Reçois\s+le\s+paiement|-Confirmer\s+le\s+paiement'
+ # L'app chauffeur n'a pas d'écran de résumé : après le cash elle revient à l'accueil (« En ligne »,
+diff --git a/e2e/tests/test_markers.py b/e2e/tests/test_markers.py
+index 86c31e1..9ee8091 100644
+--- a/e2e/tests/test_markers.py
++++ b/e2e/tests/test_markers.py
+@@ -365,7 +365,7 @@ DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
+                     "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
+                     "Consignes du client:")
+ DRIVER_STOP1_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course", "Medina, Dakar, Senegal", "Fann, Dakar, Senegal")
+-DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Destination", "Terminer la course", "Fann, Dakar, Senegal")
++DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course", "Fann, Dakar, Senegal")
+ 
+ 
+ def compose_body():
+@@ -570,7 +570,11 @@ def test_driver_stop_done_markers_use_arret_n_not_counter():
+     assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé")) != 0
+     assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) != 0
+     assert "+1/2" not in m["driver_stop1_done"] and "+2/2" not in m["driver_stop2_done"]
+-    assert "Arrêt 1" in m["driver_stop1_done"] and "Destination" in m["driver_stop2_done"]
++    assert "Arrêt 1" in m["driver_stop1_done"] and "Arrêt 2" in m["driver_stop2_done"]
++    # Papa 28/11 : Destination n'est plus exigée (textes visibles Arrêt N / Terminer).
++    assert "Destination" not in m["driver_stop2_done"]
++    assert "galass.driver" not in m["driver_stop1_done"]
++    assert "galass.driver" not in m["driver_stop2_done"]
+ 
+ 
+ @case
+
+$ grep -rn "galass\.driver\|galass\.rider\|Semantics\|semantics" e2e/ MEMORY/ .github/ 2>/dev/null | head -40; echo '--- markers test'; sed -n '1,220p' e2e/tests/test_markers.py
+MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:28:Le harnais lit un repère **stable et invisible** (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22/F5-14) à la place du texte du compteur — la détection de progression des arrêts survit au retrait du compteur sans réécrire le harnais à chaque changement de libellé. Chaque PR sur Rider/Driver déclenche une comparaison de ses écrans aux **goldens officiels** (générés depuis `main`, commités dans `test/goldens/` de chaque app) ; tout écart fait échouer la porte, sans seuil caché, et une nouvelle référence ne s'accepte que par une commande ou un label nommé explicitement, avec planche avant/après en artefact. La validation finale du multistop est une e2e verte qui couvre les arrêts, les contrats d'écran (Rider `ISC-F4-29`, Driver `ISC-F5-17`) et zéro écart golden non accepté.
+MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:39:- **repère invisible stable** — `Key`/`Semantics` posé sur le nœud actif ou l'état course par l'app (ISC-F4-22 Rider, ISC-F5-14 Driver), lisible par `uiautomator dump` sans dépendre du texte affiché. *Avoid* : confondre avec un simple `Key` de debug non garanti en prod.
+MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:69:- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22 Rider / ISC-F5-14 Driver) à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Bloqué** : le contrat exact de la clé (nom, portée, valeur) doit être fixé avec les ISA Rider/Driver avant d'écrire le marqueur harnais — ne pas deviner le nom de clé côté harnais avant que le code app existe. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend d'un contrat app · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
+--- markers test
+#!/usr/bin/env python3
+"""TDD spec for the screen markers in e2e/run.sh and the UI helpers in e2e/ui.sh.
+
+Run with `python3 e2e/tests/test_markers.py`. No emulator, no network: every
+device call is either a fixture (UI_XML_SRC) or a stub `adb` on PATH.
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RUN = os.path.join(ROOT, "run.sh")
+UI = os.path.join(ROOT, "ui.sh")
+LOGCHECK = os.path.join(ROOT, "logcheck.sh")
+SET_MODEL = os.path.join(ROOT, "set_model.py")
+WORKFLOW = os.path.join(ROOT, "..", ".github", "workflows", "artemis-staging-e2e.yml")
+CASES = []
+
+
+def case(fn):
+    CASES.append(fn)
+    return fn
+
+
+def run_text():
+    return open(RUN, encoding="utf-8").read()
+
+
+def ui_text():
+    return open(UI, encoding="utf-8").read()
+
+
+def markers():
+    return dict(re.findall(r"^MARK_([A-Za-z0-9_]+)='([^']*)'", run_text(), re.M))
+
+
+def p0_points():
+    m = re.search(r'P0_POINTS="([^"]+)"', run_text(), re.S)
+    assert m, "P0_POINTS introuvable"
+    return set(m.group(1).replace("\\\n", " ").split())
+
+
+def spec_groups(spec):
+    """`+A|B&-C` -> [('+', ['A','B']), ('-', ['C'])] comme le `groups()` de e2e/ui.sh.
+
+    `|` = OU dans le groupe courant ; `&` = ET (nouveau groupe, type hérité).
+    """
+    out, kind, new_group = [], None, True
+    for raw in re.split(r"([|&])", spec):
+        if raw == "|":
+            new_group = False
+            continue
+        if raw == "&":
+            new_group = True
+            continue
+        raw = raw.strip()
+        if not raw:
+            continue
+        if raw[0] in "+-":
+            kind, raw = raw[0], raw[1:]
+        if not kind or not raw:
+            continue
+        if new_group or not out or out[-1][0] != kind:
+            out.append((kind, [raw]))
+        else:
+            out[-1][1].append(raw)
+        new_group = False
+    return out
+
+
+def spec_chunks(spec):
+    """Vue plate de `spec_groups` : [(kind, valeur)] — pour les gardes de specs."""
+    return [(kind, pat) for kind, pats in spec_groups(spec) for pat in pats]
+
+
+FIXTURE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+    <node index="1" text="Où allez-vous ?" content-desc="" visible-to-user="true" bounds="[100,200][900,300]" />
+    <node index="2" text="Accepter la&#10;course" content-desc="" visible-to-user="true" bounds="[100,800][600,1000]" />
+    <node index="3" text="Accepter" content-desc="" visible-to-user="true" bounds="[700,800][900,900]" />
+    <node index="4" text="Chargement..." content-desc="" visible-to-user="false" bounds="[100,1500][600,1600]" />
+    <node index="5" text="Arrêt 1" content-desc="" visible-to-user="true" bounds="[0,0][0,0]" />
+  </node>
+</hierarchy>
+"""
+
+
+def spec_ok(spec, fixture=FIXTURE):
+    """Run the real bash _spec_ok against a fixture XML."""
+    tmp = tempfile.mkdtemp(prefix="e2e-spec-")
+    xml = os.path.join(tmp, "w.xml")
+    with open(xml, "w", encoding="utf-8") as fh:
+        fh.write(fixture)
+    env = dict(os.environ, OUT=tmp, UI_XML=xml)
+    proc = subprocess.run(
+        ["bash", "-c", '. "$1"; _spec_ok "$2"', "_", UI, spec],
+        capture_output=True, text=True, env=env)
+    return proc.returncode
+
+
+# ------------------------------------------------------------------ cases
+@case
+def test_every_cap_point_has_a_marker():
+    text = run_text()
+    points = [p for p in re.findall(r"^\s*cap\s+([a-z0-9][a-z0-9-]+)\s+", text, re.M)]
+    assert points, "aucun appel cap trouvé"
+    known = markers()
+    missing = [p for p in points if p.replace("-", "_") not in known]
+    assert not missing, f"markers manquants: {missing}"
+
+
+@case
+def test_every_marker_has_a_positive_spec():
+    bad = {k: v for k, v in markers().items() if not any(c[0] == "+" for c in spec_chunks(v))}
+    assert not bad, f"specs sans positif: {bad}"
+
+
+GENERIC_POS = re.compile(
+    r"^(destination|arr[eê]t( \d+)?|note[rz]?|cash|avis|gains|r[eé]sum[eé]"
+    r"|terminer la course|prise en charge|arr[eê]t en cours)$", re.I)
+
+
+@case
+def test_no_generic_only_marker():
+    """B2: no P0 marker may rest on a generic label alone — `Destination` in particular
+    must never be the sole positive of a P0 marker."""
+    known = markers()
+    p0 = {p.replace("-", "_") for p in p0_points()}
+    bad = {}
+    for name, spec in known.items():
+        if name not in p0:
+            continue
+        positives = [c[1].strip() for c in spec_chunks(spec) if c[0] == "+"]
+        if not positives or all(GENERIC_POS.match(p) for p in positives):
+            bad[name] = spec
+    assert not bad, f"marqueurs génériques: {bad}"
+
+
+@case
+def test_b1_no_false_fail_on_running_start():
+    spec = markers().get("rider_running_start", "")
+    negatives = [c[1].lower() for c in spec_chunks(spec) if c[0] == "-"]
+    assert not any("terminez votre course" in n for n in negatives), spec
+    assert any(c[0] == "+" for c in spec_chunks(spec)), spec
+
+
+@case
+def test_b3_no_stop_requirement_on_final_itinerary():
+    spec = markers().get("rider_final_itinerary", "")
+    assert "arrêt" not in spec.lower() and "arret" not in spec.lower(), spec
+
+
+@case
+def test_b2_markers_exist():
+    m = markers()
+    for name in ("driver_offer_with_stops", "driver_accepted_details", "driver_stop1_done",
+                 "driver_stop2_done", "driver_accepted_details"):
+        assert name in m, name
+    assert "accepter\\s+la\\s+course" in m["driver_offer_with_stops"].lower()
+
+
+@case
+def test_hypothesis_markers_are_the_nine_driver_screens():
+    text = run_text()
+    m = re.search(r"MARK_HYPOTHESIS=\"([^\"]*)\"", text, re.S)
+    assert m, "MARK_HYPOTHESIS introuvable"
+    hyp = {t for t in m.group(1).split() if re.fullmatch(r"[a-z0-9_]+", t)}
+    expected = {"driver_offer_with_stops", "driver_accepted_details", "driver_pickup_arrived",
+                "driver_running_stop1", "driver_stop1_done", "driver_stop2_done",
+                "driver_cash_request", "driver_cash_confirmed", "driver_summary"}
+    assert hyp == expected, hyp ^ expected
+
+
+@case
+def test_p0_includes_new_points():
+    p0 = p0_points()
+    for point in ("rider-destination-selected", "rider-cash-methods"):
+        assert point in p0, point
+
+
+@case
+def test_five_api_fallbacks_are_adjacent_to_a_fail_mark():
+    lines = run_text().splitlines()
+    pairs = [("api accept", "driver-accepted-details", "api fallback: accept"),
+             ("api start", "rider-running-start", "api fallback: start"),
+             ("api stop_one", "driver-stop${n}-done", "api fallback: stop"),
+             ("api end", "rider-destination-arrived", "api fallback: end"),
+             ("api cash_driver", "driver-cash-confirmed", "api fallback: cash")]
+    for call, point, mark_txt in pairs:
+        idx = [i for i, line in enumerate(lines) if re.search(rf"\b{re.escape(call)}\b", line)]
+        assert idx, f"{call} introuvable"
+        ok = False
+        for i in idx:
+            window = "\n".join(lines[max(0, i - 6): i + 7])
+            if ("FAIL" in window and "api fallback:" in window
+                    and mark_txt in window and point in window):
+                ok = True
+        assert ok, f"{call}: aucun mark FAIL adjacent ({point} / {mark_txt})"
+
+
+@case
+def test_driver_stop_retry_precedes_the_api_fallback():
+    """Run 44927908295 : aucun complete-stop reçu des taps UI. La voie UI (driver_stop_confirm_ui,
+    preuve SERVEUR, 3 essais sans re-tap si l'arrêt est déjà vu) précède le repli API, qui reste
+    le dernier ressort (mark FAIL adjacent + api stop_one) et ne compte jamais comme succès."""
+    t = run_text()
+    start = t.index('next_marker="MARK_driver_stop${n}_done"')
+    end = t.index('mark "driver-stop${n}-done" FAIL', start)
+    window = t[start:end]
+    assert 'driver_stop_confirm_ui "$DRIVER_PKG" "$n"' in window, window
+    assert '[ "$stop_rc" = "0" ] && ui_stop_ok=1' in window, window
+    assert window.index('driver_stop_confirm_ui') < window.index('if [ "$ui_stop_ok" = "1" ]; then'), window
+    ui = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui.sh")).read()
+    fn = ui[ui.index("driver_stop_confirm_ui() {"):ui.index("rider_leave_rating() {")]
+    assert "for attempt in 1 2 3" in fn and "stop_one" not in fn, fn
+
