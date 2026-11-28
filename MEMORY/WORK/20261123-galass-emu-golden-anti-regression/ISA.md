@@ -4,11 +4,11 @@ slug: 20261123-galass-emu-golden-anti-regression
 project: galass-emu-actions-pub
 isa_kind: task
 phase: plan
-progress: 1/4
+progress: 0/4
 algorithm: 8.20.2
 isa_spec: 2.21.0
 started: 2026-11-23T12:00:00Z
-updated: 2026-11-23T06:23:46.563Z
+updated: 2026-11-28T06:23:22.696Z
 parent: null
 principal_stated_goal: "Méthode anti-régression UI multistop — harnais emu : repère invisible stable (remplace les compteurs x/N textuels), planche e2e branche vs main, validation finale multistop (arrêts + contrats d'écran + zéro écart golden non accepté)"
 principal_stated_goal_source: principal
@@ -16,12 +16,13 @@ principal_stated_goal_signal: 5
 principal_stated_goal_locked: 2026-11-23T12:00:00Z
 context_sufficient: true
 interview_invoked: false
-isa_stamp: hmac-sha256:f9129b82c254a4f59b608be1d23d3a216eb164a4a4e41d23514a95faba7c7c76
+isa_stamp: hmac-sha256:c3679f58179697aa2a8954fdf1c4826c06f7c7c7c7ecec683a0d722cdae08ec8
 ---
 
 ## Problem
 
 Le harnais e2e (`e2e/run.sh`) détecte la progression des arrêts par **texte affiché** : `MARK_rider_stop1_done='+1/2 arrêts? terminés?&...'`, `MARK_rider_stop2_done='+2/2 arrêts? terminés?&...'`, `MARK_driver_stop1_done='+1/2 arrêts? terminés?|...'`, `MARK_driver_stop2_done='+2/2 arrêts? terminés?|...'` (confirmé par lecture, `e2e/run.sh` l.117-118, l.145-146). Les ISA Rider (`ISC-F4-22`) et Driver (`ISC-F5-14`) retirent ce texte de l'UI (méthode anti-régression 2026-11-23) : une fois ce correctif livré, ces 4 marqueurs ne matcheront plus **rien**, et le harnais ne peut aujourd'hui pas distinguer « régression » de « marqueur devenu obsolète par un retrait volontaire ». Par ailleurs, aucune comparaison golden n'existe : la revue UI du 2026-11-23 (F10 Rider, F6 Driver) s'est faite à l'œil sur des captures e2e ponctuelles, sans référence stable ni porte bloquante par PR.
+État réel 2026-11-28 (post-E1) : les compteurs x/N ont été retirés et le harnais lit désormais des textes visibles (frise Arrêt N, Terminer la course, ancres Medina/Fann) ; aucun Semantics `galass.driver.*` n'est posé. Voir Decisions et ISC-EMU-1.
 
 ## Vision
 
@@ -61,12 +62,14 @@ Un harnais qui (1) survit au retrait des compteurs x/N sans perdre la détection
 - **2026-11-23 — Amorçage (bootstrap) : la porte ne peut pas être verte sans goldens sur la référence.** `--base origin/main` sur Rider sort en `exit 2` (« aucun golden sur origin/main dans test/goldens/rider ») tant que le leg goldens n'est pas fusionné — c'est voulu : une référence absente n'est pas une absence d'écart. Les trois chemins documentés (`goldens/README.md` § Amorçage) : branche portant les goldens, worktree `main` + goldens en commit détaché, puis `origin/main` après fusion. Le workflow reçoit `base_ref` en paramètre pour couvrir les deux premiers.
 - **2026-11-23 — Preuve à deux runs (Flutter 3.44.8, surface 412×915@2, `fr_SN`).** Base = `origin/main` `7984da7` + goldens (commit détaché `08cc8cd` dans un worktree séparé) : **VERT 10/10, 0 écart**. Branche Rider `feat/multistop-rider-close-2026-11-20` (`47a2ee2`) : **ROUGE 5/10** — `course_en_cours_stop1_actif` 27,33 %, `tous_arrets_faits` 27,33 %, `stop1_fait` 27,31 %, `course_en_cours_simple` 19,20 %, `course_terminee` 8,31 %. `--accept` sur le run rouge exporte 5 nouvelles références dans `accepted-goldens/` sans toucher la référence (exit 0, aucune écriture dans `test/goldens/`).
 - **2026-11-23 — Le rouge ne nomme qu'une des quatre régressions attendues, et c'est une mesure, pas un choix.** Les goldens venant de `main`, ils figent l'état de `main`. Contrat d'écran Rider (`test/widget/course_en_cours_contract_test.dart`, mêmes fixtures) mesuré sur les deux arbres : ISC-F4-25 PASS sur `main` / FAIL sur la branche (régression introduite par la branche → c'est elle que l'écart pixel de `course_en_cours_simple` révèle) ; ISC-F4-26 FAIL/FAIL et ISC-F4-27 FAIL/FAIL (défauts **préexistants** sur `main`, donc figés par la référence, invisibles en diff) ; ISC-F4-28 PASS/PASS (aucune disparition du SOS mesurée en `RIDE_RUNNING` — l'écart Papa/code porte donc sur un autre état que RUNNING). Conséquence écrite dans les deux README : « vert = zéro écart vs la référence », jamais « aucune régression ».
+- **2026-11-28 — État réel post-E1 : marqueurs Driver = textes visibles, aucun Semantics `galass.driver.*`.** Lecture au tip `6f8dba0` de `e2e/run.sh` : `MARK_driver_stop1_done` exige `Arrêt 1`, `Arrêt 2`, `Terminer la course` et l'ancre `Medina` ; `MARK_driver_stop2_done` exige `Arrêt 1`, `Arrêt 2`, `Destination`, `Terminer la course` et l'ancre `Fann` ; les deux nient l'offre et les anciens bandeaux `1/2`/`2/2`. Aucun `Semantics`/`ValueKey` `galass.driver.*` n'est posé par l'app. Le leg Vera (`308decf`, branche `feat/multistop-e2e-2026-11-15`) qui fixait le contrat `galass.driver.stops=<done>/<total>` n'est donc pas l'état réel. Conséquence : ISC-EMU-1 reste ouvert (le repère stable invisible exigé n'existe pas) ; les marqueurs actuels survivent au retrait des compteurs x/N mais restent dépendants des libellés visibles. Le tip de #15 (`cursor/artemis-visible-markers-e410`, `68af0c2`) est un delta de 2 fichiers (retrait de `Destination` du marqueur stop2, assertions `galass.driver` absentes) absorbable dans #14 ; il n'a pas été absorbé dans ce tour (scope ISATool).
+- **2026-11-28 — Audit ISC-EMU : 0/4 fermé, aucune preuve CI nommée au tip.** ISC-EMU-4 avait été cochée sur une trace locale (`c6a782e`, puis `b4b0c91`) mais `golden-diff.yml` n'a jamais été dispatché et les goldens ne sont pas sur la base (`exit 2`) : la porte n'a pas tourné en CI sur une PR de test. ISC-EMU-1/2/3 restent ouverts (repère invisible absent, pas de planche e2e branche-vs-main, pas de verdict e2e global). `progress` recalculé par ISATool à 0/4.
 
 ## Features
 
 ### F1 · Repère invisible stable (remplace les marqueurs texte x/N)
 
-- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22 Rider / ISC-F5-14 Driver) à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Bloqué** : le contrat exact de la clé (nom, portée, valeur) doit être fixé avec les ISA Rider/Driver avant d'écrire le marqueur harnais — ne pas deviner le nom de clé côté harnais avant que le code app existe. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend d'un contrat app · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
+- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22 Rider / ISC-F5-14 Driver) à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Ouvert 2026-11-28 (état réel E1)** : Driver n'expose aucun Semantics galass.driver.* — les marqueurs au tip sont des textes visibles (frise Arrêt N, Terminer la course, ancres Medina/Fann). Les 4 marqueurs survivent au retrait x/N mais restent dépendants du libellé, donc l'ISC (repère stable invisible) reste ouvert. Le tip de #15 (marqueurs visibles) est absorbable dans #14. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend d'un contrat app · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
 
 ### F2 · Planche e2e branche vs main
 
@@ -76,9 +79,9 @@ Un harnais qui (1) survit au retrait des compteurs x/N sans perdre la détection
 
 - [ ] ISC-EMU-3: un verdict e2e unique couvre (a) la progression des arrêts (via ISC-EMU-1), (b) les contrats d'écran Rider (`ISC-F4-29`) et Driver (`ISC-F5-17`) — présence des éléments obligatoires capturée en e2e, pas seulement en widget test local — et (c) zéro écart golden non accepté (dépend de F4/porte CI). [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend ISC-F4-29/F5-17 + porte CI · preuve: 1 run e2e vert couvrant les 3 volets]
 
-### F4 · Porte CI golden-diff (dépôt à confirmer)
+### F4 · Porte CI golden-diff (galass-emu-actions-pub)
 
-- [x] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Bloqué** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) non confirmé par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
+- [ ] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Ouvert 2026-11-28** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) tranché par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. Preuve locale seulement (c6a782e, b4b0c91), aucun dispatch CI nommé au tip, donc l'ISC reste ouvert. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
 
 ## Test Strategy
 
@@ -88,6 +91,7 @@ Un harnais qui (1) survit au retrait des compteurs x/N sans perdre la détection
 | ISC-EMU-2 | bash | génération de la planche branche-vs-main | artefact produit, non vide | python3 e2e/report.py (ou nouveau script planche) | literal |
 | ISC-EMU-3 | integration | run e2e couvrant arrêts + contrats d'écran + zéro écart golden non accepté | verdict global PASS | galass-emu-actions-pub run | ISC-F4-29, ISC-F5-17, ISC-EMU-4 |
 | ISC-EMU-4 | integration | porte CI golden-diff sur PR de test | rouge sur écart volontaire, vert sinon | workflow CI (dépôt à confirmer) | literal — emplacement à confirmer |
+Note 2026-11-28 — la ligne `ISC-EMU-4` de la table garde « dépôt à confirmer » car le garde d'écriture refuse le caractère `|` dans `replace` ; l'emplacement réel est `galass-emu-actions-pub` (voir Decisions et le libellé ISC-EMU-4).
 
 ## Learning
 
@@ -100,20 +104,24 @@ Un harnais qui (1) survit au retrait des compteurs x/N sans perdre la détection
 
 ## Verification
 
-(Aucune entrée — aucun ISC fermé à ce tour.)
-- ISC-EMU-4: preuve locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
+(Trace locale et audit — aucun ISC fermé à ce tour.)
+- ISC-EMU-4: trace locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
+- ISC-EMU-4: NON VALIDÉ — Preuve locale seulement, aucun dispatch CI golden-diff nommé au tip, et la porte a changé après la preuve c6a782e, donc l'ISC reste ouvert.
+- Audit ISC-EMU 2026-11-28: 0/4 fermé ; `python3 e2e/tests/test_markers.py` = 75/75 ; `bash -n e2e/run.sh` OK ; `python3 -m py_compile e2e/report.py goldens/board.py` OK ; marqueurs Driver au tip = textes visibles (Arrêt N, Terminer la course, Medina/Fann), aucun `galass.driver.*`.
 
 ## Remaining Work
 
-- [ ] Confirmer avec Papa l'emplacement de la porte CI golden-diff (`galass-emu-actions-pub` vs `galass-ci`) avant d'écrire le moindre workflow YAML.
-- [ ] Fixer le contrat exact du repère invisible stable avec les ISA Rider (ISC-F4-22) et Driver (ISC-F5-14) avant d'écrire ISC-EMU-1 dans le harnais.
+- [x] Emplacement de la porte CI golden-diff tranché (`galass-emu-actions-pub` vs `galass-ci`), dispatch suivi dans l'item dédié.
+- [ ] Trancher avec les ISA Rider (ISC-F4-22) et Driver (ISC-F5-14) : accepter les marqueurs textuels visibles ou poser un repère invisible, avant d'écrire ISC-EMU-1 dans le harnais.
 - [ ] Construire l'infra `test/goldens/` dans Rider et Driver (worktree séparé sur `main`, données/appareil fixes) — dépendance bloquante pour F2/F4, non construite ce tour.
 - [ ] Une fois F1-F4 livrés : Bridge final vers Rider (`Bridge-B7`, 20261006-galass-rider-multistop) et Driver (`Bridge-B7`, 20261006-galass-driver-multistop).
 - [ ] **Décision Papa sur le leg goldens** : `test/goldens/rider/` (10 PNG + harnais + fixtures) doit être fusionné sur la branche de référence pour que `--base origin/main` passe du `exit 2` (bootstrap) au vert. Ce run ne pousse ni ne fusionne rien — un commit local existe côté Rider, rien n'est parti sur le remote.
-- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert.
-- [ ] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé n'a pas été réécrit (le garde d'écriture ISA refuse les caractères du texte d'origine) — à reformuler au prochain passage.
-- [ ] Bloqué — ISC-EMU-1 reste bloqué** : le contrat de clé/sémantique du repère stable n'est pas écrit, et il dépend d'ISC-F4-22 (code produit Rider, interdit par la garde de ce run) plus de l'équivalent Driver. Ne pas implémenter à l'aveugle.
+- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) et l'ISC-EMU-4 reste ouvert tant qu'aucun run CI vert n'est nommé.
+- [x] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé a été reformulé le 2026-11-28 via ISATool (remplacements ciblés).
+- [ ] Repère invisible (ISC-EMU-1) reste ouvert** : le repère stable invisible n'existe pas (E1 : textes visibles, aucun Semantics galass.driver.*), et il dépend d'ISC-F4-22 (code produit Rider, interdit par la garde de ce run) plus de l'équivalent Driver. Ne pas deviner un nom de clé côté harnais.
 - [ ] Non livré — ISC-EMU-3 non livré** : aucun e2e ce run (interdit par le cadrage), donc pas de verdict global à collecter.
 - [ ] **Driver** : l'emplacement `test/goldens/driver/` n'existe pas ; la porte sort en `exit 2` avec « aucun golden » — c'est documenté, pas un bug.
 - [ ] **Une fois F1-F4 livrés** : Bridge final vers Rider (`Bridge-B7`, 20261006-galass-rider-multistop) et Driver (`Bridge-B7`, 20261006-galass-driver-multistop).
+- [ ] Planche e2e branche-vs-main (ISC-EMU-2) non livrée — aucune planche e2e branche-vs-main : `e2e/report.py` agrège un run unique, et `goldens/board.py` est la planche de la porte golden, pas la comparaison des captures e2e de deux runs. À construire après stabilisation des captures.
+- [ ] Absorber #15 (`cursor/artemis-visible-markers-e410`, tip `68af0c2`) dans #14 : delta de 2 fichiers (retrait de `Destination` du marqueur stop2, assertions `galass.driver` absentes). Non fait ce tour (scope ISATool).
 
