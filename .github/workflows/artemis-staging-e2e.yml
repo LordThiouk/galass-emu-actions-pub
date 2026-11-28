@@ -29,6 +29,10 @@ on:
         options:
           - multistop
           - lot
+      harness_only:
+        description: "true = job court tests harnais seulement (pas d'émulateur / Artemis)"
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,7 +42,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Papa 12:15 : job court dédié — syntaxe + contrats, sans émulateur / APK / Artemis.
+  harness:
+    if: ${{ inputs.harness_only == true || inputs.harness_only == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Tests du harnais (syntaxe + contrats)
+        run: |
+          bash -n e2e/*.sh
+          python3 -m py_compile e2e/*.py
+          for t in e2e/tests/test_*.py; do echo "== $t"; python3 "$t"; done
+          echo "harness_only PASS"
+
   e2e:
+    if: ${{ inputs.harness_only != true && inputs.harness_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -299,15 +319,28 @@ jobs:
           ram-size: 6144
           cores: 3
           disable-animations: true
-          # Papa 10:00/10:20 : lane A = G1 angle_indirect ; lot = virtualscene (sinon none).
+          # Papa 12:15 : lot → G1 angle_indirect (pas seulement lane a) ; virtualscene via CLI + config.ini.
           # P0_DEFAULT / seuils inchangés — seul le backend GPU/caméra de l'AVD change.
           emulator-options: >-
             -no-window
-            -gpu ${{ inputs.lane == 'a' && 'angle_indirect' || 'swiftshader_indirect' }}
+            -gpu ${{ (inputs.lane == 'a' || inputs.scenario == 'lot') && 'angle_indirect' || 'swiftshader_indirect' }}
             -noaudio
             -no-boot-anim
             -camera-back ${{ inputs.scenario == 'lot' && 'virtualscene' || 'none' }}
             -no-snapshot
+          pre-emulator-launch-script: |
+            set -euo pipefail
+            AVD="${ANDROID_AVD_HOME:-$HOME/.android}/avd/test.avd"
+            CFG="$AVD/config.ini"
+            if [ "${{ inputs.scenario }}" = "lot" ] && [ -f "$CFG" ]; then
+              sed -i '/^hw\.camera\.back=/d' "$CFG"
+              sed -i '/^hw\.camera\.front=/d' "$CFG"
+              echo 'hw.camera.back=virtualscene' >> "$CFG"
+              echo 'hw.camera.front=emulated' >> "$CFG"
+              echo "pre-emu: patched $CFG → $(grep hw.camera "$CFG" | tr '\n' ' ')"
+            else
+              echo "pre-emu: skip virtualscene patch (scenario=${{ inputs.scenario }} cfg=$CFG)"
+            fi
           script: bash e2e/ci-opencode-run.sh run
 
       - name: Publier le diagnostic texte (non chiffré, sans captures)

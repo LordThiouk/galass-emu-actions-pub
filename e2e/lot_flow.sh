@@ -183,11 +183,28 @@ if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]
 fi
 mark emulator-boot PASS "$(adb shell getprop ro.build.version.release | tr -d '\r') / API $(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 
-# virtualscene sanity — if camera property is none, STOP signal for Papa
-CAM_BACK=$(adb shell getprop qemu.camera.back 2>/dev/null | tr -d '\r' || true)
-log "camera-back prop='${CAM_BACK:-unset}' (expect virtualscene for lot)"
-if [ "${CAM_BACK:-}" = "none" ]; then
-  mark lot-camera-backend FAIL "emulator still camera-back=none — virtualscene not active; STOP before retries"
+# virtualscene : qemu.camera.back reste souvent unset (mécanisme distinct de "emulated").
+# Preuve réelle = AVD config.ini hw.camera.back=virtualscene ET/OU dumpsys media.camera.
+AVD_CFG="${ANDROID_AVD_HOME:-$HOME/.android}/avd/${AVD_NAME:-test}.avd/config.ini"
+HW_CAM=""
+if [ -f "$AVD_CFG" ]; then
+  HW_CAM=$(grep -E '^hw\.camera\.back=' "$AVD_CFG" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' || true)
+fi
+CAM_PROP=$(adb shell getprop qemu.camera.back 2>/dev/null | tr -d '\r' || true)
+DUMP_VS=$(adb shell dumpsys media.camera 2>/dev/null | grep -ci virtualscene || true)
+log "camera: hw.camera.back='${HW_CAM:-missing}' qemu.camera.back='${CAM_PROP:-unset}' dumpsys_virtualscene_hits=${DUMP_VS:-0}"
+if [ "${HW_CAM:-}" = "virtualscene" ] || [ "${DUMP_VS:-0}" -ge 1 ]; then
+  mark lot-camera-backend PASS "virtualscene active (hw='${HW_CAM:-?}' dumpsys=${DUMP_VS:-0})"
+elif [ "${CAM_PROP:-}" = "none" ]; then
+  mark lot-camera-backend FAIL "camera-back=none — virtualscene inactive; STOP before retries"
+  flush_results
+  "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"
+  exit 1
+else
+  mark lot-camera-backend FAIL "virtualscene not proven (hw='${HW_CAM:-missing}' prop='${CAM_PROP:-unset}' dumpsys=0) — fail-fast"
+  flush_results
+  "$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"
+  exit 1
 fi
 
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1
@@ -195,11 +212,24 @@ adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1
 adb shell input keyevent 82 >/dev/null 2>&1
 adb shell svc power stayon true >/dev/null 2>&1
+adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1
 adb logcat -c >/dev/null 2>&1 || true
 LOG_FILE="$OUT/logcat/stream.log"
 : > "$LOG_FILE"
 command adb logcat -v threadtime > "$LOG_FILE" 2>&1 &
 LOGCAT_PID=$!
+
+# Stabilité : geler gms bruyants + attendre calme ANR avant L1 (évite Pixel Launcher ANR).
+emu_quiet_prepare
+if emu_wait_calm "$LOG_FILE" 60 240; then
+  mark emulator-calm PASS "aucun ANR pendant 60 s avant les tests lot"
+else
+  mark emulator-calm WARN "émulateur jamais calme (ANR continus) avant les tests lot"
+fi
+# Vider un éventuel dialogue ANR launcher déjà affiché (clear_sys lit UI_XML_PATH).
+ui_xml >/dev/null 2>&1 || true
+clear_sys || true
+tap_exact "Wait" >/dev/null 2>&1 || tap_exact "Close app" >/dev/null 2>&1 || true
 
 # ------------------------------------------------------------------ install
 ADB_TMO=600 adb install -r -t -g "$APK_RIDER" >/dev/null 2>&1 && r1=0 || r1=1
@@ -296,10 +326,15 @@ adb logcat -d -v threadtime >> "$LOG_FILE" 2>/dev/null || true
 cp "$LOG_FILE" "$OUT/logcat/full.log" 2>/dev/null || : > "$OUT/logcat/full.log"
 kill "$LOGCAT_PID" 2>/dev/null || true
 
-LOG_OUT=$(bash -c '. "$1"; log_scan "$2" "${3:-}" 200' _ e2e/logcheck.sh "$OUT/logcat/full.log" "${STAGING_HOST:-}" || true)
-case "$(printf '%s' "$LOG_OUT" | head -1)" in
-  0) mark no-prod-calls PASS "0 galassapp.com in logcat" ;;
-  *) mark no-prod-calls FAIL "logcat scan: $(printf '%s' "$LOG_OUT" | tr '\n' ' ')" ;;
+# Aligné sur run.sh : le code de sortie de log_scan est la vérité (stdout = détail).
+# Bug essai 3 : case sur head stdout (« bytes=… ») → FAIL malgré prod_hits=0.
+LOG_OUT=$(bash -c '. "$1"; log_scan "$2" "${3:-}" 200' _ e2e/logcheck.sh "$OUT/logcat/full.log" "${STAGING_HOST:-}")
+LOG_RC=$?
+case "$LOG_RC" in
+  0) mark no-prod-calls PASS "0 galassapp.com in logcat ($(printf '%s' "$LOG_OUT" | tr '\n' ' '))" ;;
+  3) mark no-prod-calls FAIL "galassapp.com in logcat: $(printf '%s' "$LOG_OUT" | tr '\n' ' ')" ;;
+  1) mark no-prod-calls FAIL "no evidence: logcat absent/vide/tronqué ($(printf '%s' "$LOG_OUT" | tr '\n' ' '))" ;;
+  *) mark no-prod-calls FAIL "scan logcat rc=$LOG_RC: $(printf '%s' "$LOG_OUT" | tr '\n' ' ')" ;;
 esac
 
 flush_results
