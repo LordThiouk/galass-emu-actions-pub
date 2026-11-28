@@ -3,6 +3,13 @@ name: artemis-staging-e2e
 on:
   workflow_dispatch:
     inputs:
+      lane:
+        description: "Lane isolée (a|b) — concurrency + comptes Rider/Driver distincts (>900000)"
+        default: "a"
+        type: choice
+        options:
+          - a
+          - b
       rider_ref:
         description: "Branche Galass_Rider"
         default: "fix/multistop-close"
@@ -15,24 +22,52 @@ on:
         description: "Modèle CLI opencode (opencode/*-free, sans clé API)"
         default: "opencode/deepseek-v4.1-flash-free"
         type: string
+      scenario:
+        description: "Scénario e2e : multistop (P0_DEFAULT) | lot (P0_LOT caméra/KYC)"
+        default: "multistop"
+        type: choice
+        options:
+          - multistop
+          - lot
+      harness_only:
+        description: "true = job court tests harnais seulement (pas d'émulateur / Artemis)"
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: artemis-staging-e2e
+  group: artemis-staging-e2e-${{ inputs.lane }}-${{ inputs.scenario }}
   cancel-in-progress: false
 
 jobs:
+  # Papa 12:15 : job court dédié — syntaxe + contrats, sans émulateur / APK / Artemis.
+  harness:
+    if: ${{ inputs.harness_only == true || inputs.harness_only == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Tests du harnais (syntaxe + contrats)
+        run: |
+          bash -n e2e/*.sh
+          python3 -m py_compile e2e/*.py
+          for t in e2e/tests/test_*.py; do echo "== $t"; python3 "$t"; done
+          echo "harness_only PASS"
+
   e2e:
+    if: ${{ inputs.harness_only != true && inputs.harness_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
-      # Comptes de test staging (>900000) — jamais 106/23 (canaux Pusher prod).
-      RIDER_ID: "900106"
-      DRIVER_ID: "900023"
-      OUT: e2e-out
+      # Comptes staging >900000 — posés au step « IDs staging » (lane × scenario).
+      # multistop a: 900106/900023 ; b: 900206/900123
+      # lot a: 900306/900223 ; b: 900406/900323
+      OUT: e2e-out-${{ inputs.lane }}-${{ inputs.scenario }}
+      SCENARIO: ${{ inputs.scenario }}
       # Chaîne des échéances (vérifiée par e2e/tests) : watchdog 90 < step 100 < job 150.
       # Le harnais rend son verdict partiel AVANT que le step soit coupé, et le step
       # coupe AVANT que le job meure — les étapes `if: always()` (preuves) survivent.
@@ -57,6 +92,16 @@ jobs:
           h="${BASE#*://}"; h="${h%%[:/]*}"; echo "::add-mask::$h"
           echo "STAGING_HOST=$h" >> "$GITHUB_ENV"
           echo "GALASS_STAGING_URL=$BASE" >> "$GITHUB_ENV"
+      - name: IDs staging (lane × scenario, >900000)
+        run: |
+          case "${{ inputs.scenario }}-${{ inputs.lane }}" in
+            multistop-a) echo "RIDER_ID=900106" >> "$GITHUB_ENV"; echo "DRIVER_ID=900023" >> "$GITHUB_ENV" ;;
+            multistop-b) echo "RIDER_ID=900206" >> "$GITHUB_ENV"; echo "DRIVER_ID=900123" >> "$GITHUB_ENV" ;;
+            lot-a)       echo "RIDER_ID=900306" >> "$GITHUB_ENV"; echo "DRIVER_ID=900223" >> "$GITHUB_ENV" ;;
+            lot-b)       echo "RIDER_ID=900406" >> "$GITHUB_ENV"; echo "DRIVER_ID=900323" >> "$GITHUB_ENV" ;;
+            *) echo "::error::combo scenario/lane inconnu"; exit 1 ;;
+          esac
+          echo "scenario=${{ inputs.scenario }} lane=${{ inputs.lane }}"
       - uses: actions/checkout@v4
         with: {repository: LordThiouk/Galass_Rider, ref: "${{ inputs.rider_ref }}", token: "${{ secrets.GALASS_REPO_TOKEN }}", path: src/rider, persist-credentials: false}
       - uses: actions/checkout@v4
@@ -263,7 +308,7 @@ jobs:
           # Toute nouvelle spec e2e/tests/test_*.py tourne ici sans édition du workflow.
           for t in e2e/tests/test_*.py; do echo "== $t"; python3 "$t"; done
 
-      - name: E2E multistop (opencode + API fallback)
+      - name: E2E ${{ inputs.scenario }} (opencode + API fallback)
         timeout-minutes: 100
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -274,7 +319,28 @@ jobs:
           ram-size: 6144
           cores: 3
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          # Papa 12:15 : lot → G1 angle_indirect (pas seulement lane a) ; virtualscene via CLI + config.ini.
+          # P0_DEFAULT / seuils inchangés — seul le backend GPU/caméra de l'AVD change.
+          emulator-options: >-
+            -no-window
+            -gpu ${{ (inputs.lane == 'a' || inputs.scenario == 'lot') && 'angle_indirect' || 'swiftshader_indirect' }}
+            -noaudio
+            -no-boot-anim
+            -camera-back ${{ inputs.scenario == 'lot' && 'virtualscene' || 'none' }}
+            -no-snapshot
+          pre-emulator-launch-script: |
+            set -euo pipefail
+            AVD="${ANDROID_AVD_HOME:-$HOME/.android}/avd/test.avd"
+            CFG="$AVD/config.ini"
+            if [ "${{ inputs.scenario }}" = "lot" ] && [ -f "$CFG" ]; then
+              sed -i '/^hw\.camera\.back=/d' "$CFG"
+              sed -i '/^hw\.camera\.front=/d' "$CFG"
+              echo 'hw.camera.back=virtualscene' >> "$CFG"
+              echo 'hw.camera.front=emulated' >> "$CFG"
+              echo "pre-emu: patched $CFG → $(grep hw.camera "$CFG" | tr '\n' ' ')"
+            else
+              echo "pre-emu: skip virtualscene patch (scenario=${{ inputs.scenario }} cfg=$CFG)"
+            fi
           script: bash e2e/ci-opencode-run.sh run
 
       - name: Publier le diagnostic texte (non chiffré, sans captures)

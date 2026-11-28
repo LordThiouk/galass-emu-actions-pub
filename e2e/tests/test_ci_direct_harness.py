@@ -291,9 +291,13 @@ def run_script(tmpdir, env_extra=None):
                 "OC_REPAIR_BUDGET_MIN", "OC_REPAIR_BUDGET_S",
                 "OC_REPAIR_MODEL_MAX_S", "E2E_STEP_BUDGET_MIN",
                 "E2E_PRE_SCRIPT_MIN", "E2E_PRE_SCRIPT_ALLOW_S",
-                "E2E_FLUSH_MARGIN_MIN", "E2E_SAFETY_MARGIN_MIN"):
+                "E2E_FLUSH_MARGIN_MIN", "E2E_SAFETY_MARGIN_MIN",
+                "SCENARIO"):
         env.pop(key, None)
     env["ARTEMIS_DISABLE"] = "1"
+    # Papa 10:20 : le job Artemis peut exporter SCENARIO=lot ; ces specs
+    # unitaires ciblent le harnais multistop (faux run.sh uniquement).
+    env["SCENARIO"] = "multistop"
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
@@ -686,7 +690,11 @@ def test_script_budget_defaults_stay_in_sync_with_the_workflow():
     with open(SCRIPT, encoding="utf-8") as fh:
         script = fh.read()
     wf = workflow_text()
-    step = int(re.search(r"- name: E2E multistop \([^)]+\)\n\s+timeout-minutes: (\d+)", wf).group(1))
+    # Step renommé Papa 10:20 : « E2E ${{ inputs.scenario }} (opencode + API fallback) ».
+    step = int(re.search(
+        r"- name: E2E \$\{\{ inputs\.scenario \}\} \([^)]+\)\n\s+timeout-minutes: (\d+)",
+        wf,
+    ).group(1))
     wf_deadline = int(re.search(r'RUN_DEADLINE_MIN: "(\d+)"', wf).group(1))
     script_step = int(re.search(r'E2E_STEP_BUDGET_MIN:-(\d+)', script).group(1))
     script_cap = int(re.search(r'RUN_DEADLINE_CAP="\$\{RUN_DEADLINE_MIN:-(\d+)\}"', script).group(1))
