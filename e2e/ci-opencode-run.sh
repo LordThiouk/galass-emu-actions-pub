@@ -508,9 +508,14 @@ cmd_run() {
   # partiels. Aucune assertion n'est relâchée : derive_verdict lit toujours
   # report.json/verdict.txt que report.py produit.
   if [ "$eff" -gt 0 ]; then
-    log "harnais déterministe direct (bash e2e/run.sh) — budget ${eff}min"
+    # Papa 10:20 : SCENARIO=lot → lot_flow.sh (P0_LOT). Défaut / multistop → run.sh (P0_DEFAULT).
+    HARNESS="e2e/run.sh"
+    if [ "${SCENARIO:-multistop}" = "lot" ]; then
+      HARNESS="e2e/lot_flow.sh"
+    fi
+    log "harnais déterministe direct (bash $HARNESS scenario=${SCENARIO:-multistop}) — budget ${eff}min"
     set +e
-    bash e2e/run.sh
+    bash "$HARNESS"
     rc=$?
     set -e
     log "harnais direct: rc=$rc"

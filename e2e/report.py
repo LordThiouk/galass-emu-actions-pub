@@ -59,6 +59,15 @@ driver-offer-with-stops driver-accepted-details driver-pickup-arrived driver-run
 driver-stop1-done driver-stop2-done driver-cash-request driver-cash-confirmed driver-summary
 backend-flow no-prod-calls""".split()
 
+# Scénario lot (Papa 10:20) — liste SÉPARÉE. Ne jamais fusionner dans P0_DEFAULT.
+# Utilisée uniquement par e2e/lot_flow.sh via report.py --p0.
+P0_LOT = """api-preflight apk-base-url emulator-boot apk-install
+lot-rider-camera-ok lot-rider-camera-denied
+lot-driver-camera-profile lot-driver-camera-permit lot-driver-camera-vehicle
+lot-driver-camera-denied
+lot-kyc-refresh lot-rider-kyc-refresh
+no-prod-calls""".split()
+
 # Every P0 point whose truth claim rests on a screenshot.
 UI_POINTS = {
     "rider-home-loaded", "rider-destination-selected", "rider-stop-picker",
@@ -69,6 +78,11 @@ UI_POINTS = {
     "driver-offer-with-stops", "driver-accepted-details", "driver-pickup-arrived",
     "driver-running-stop1", "driver-stop1-done", "driver-stop2-done",
     "driver-cash-request", "driver-cash-confirmed", "driver-summary",
+    # Lot camera / KYC captures (P0_LOT only — never gate multistop).
+    "lot-rider-camera-ok", "lot-rider-camera-denied",
+    "lot-driver-camera-profile", "lot-driver-camera-permit",
+    "lot-driver-camera-vehicle", "lot-driver-camera-denied",
+    "lot-kyc-refresh", "lot-rider-kyc-refresh",
 }
 
 
