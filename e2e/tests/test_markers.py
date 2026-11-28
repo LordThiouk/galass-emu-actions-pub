@@ -365,7 +365,7 @@ DRIVER_OFFER = _xml("Accueil", "Accepter la course", "REFUSER",
                     "Prix recommandé : 2 000 FCFA, distance environ 3.2 km",
                     "Consignes du client:")
 DRIVER_STOP1_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course", "Medina, Dakar, Senegal", "Fann, Dakar, Senegal")
-DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Destination", "Terminer la course", "Fann, Dakar, Senegal")
+DRIVER_STOP2_DONE = _xml("Arrêt 1", "Arrêt 2", "Terminer la course", "Fann, Dakar, Senegal")
 
 
 def compose_body():
@@ -570,7 +570,11 @@ def test_driver_stop_done_markers_use_arret_n_not_counter():
     assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé")) != 0
     assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) != 0
     assert "+1/2" not in m["driver_stop1_done"] and "+2/2" not in m["driver_stop2_done"]
-    assert "Arrêt 1" in m["driver_stop1_done"] and "Destination" in m["driver_stop2_done"]
+    assert "Arrêt 1" in m["driver_stop1_done"] and "Arrêt 2" in m["driver_stop2_done"]
+    # Papa 28/11 : Destination n'est plus exigée (textes visibles Arrêt N / Terminer).
+    assert "Destination" not in m["driver_stop2_done"]
+    assert "galass.driver" not in m["driver_stop1_done"]
+    assert "galass.driver" not in m["driver_stop2_done"]
 
 
 @case
