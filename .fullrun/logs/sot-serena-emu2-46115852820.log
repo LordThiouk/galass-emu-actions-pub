@@ -532,3 +532,1919 @@ def test_driver_stop_retry_precedes_the_api_fallback():
     fn = ui[ui.index("driver_stop_confirm_ui() {"):ui.index("rider_leave_rating() {")]
     assert "for attempt in 1 2 3" in fn and "stop_one" not in fn, fn
 
+$ grep -rn "ISC-EMU" . --exclude-dir=.git | head -50; echo '---'; grep -rn "ISC-EMU" MEMORY .github goldens e2e 2>/dev/null | wc -l
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:69:- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22 Rider / ISC-F5-14 Driver) à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Bloqué** : le contrat exact de la clé (nom, portée, valeur) doit être fixé avec les ISA Rider/Driver avant d'écrire le marqueur harnais — ne pas deviner le nom de clé côté harnais avant que le code app existe. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend d'un contrat app · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:73:- [ ] ISC-EMU-2: le rapport de run (`e2e/report.py` ou équivalent) produit une planche comparant les captures e2e de la branche de travail aux captures d'un run équivalent sur `main`, par écran/état. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité · preuve: artefact planche généré sur 1 run de test]
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:77:- [ ] ISC-EMU-3: un verdict e2e unique couvre (a) la progression des arrêts (via ISC-EMU-1), (b) les contrats d'écran Rider (`ISC-F4-29`) et Driver (`ISC-F5-17`) — présence des éléments obligatoires capturée en e2e, pas seulement en widget test local — et (c) zéro écart golden non accepté (dépend de F4/porte CI). [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend ISC-F4-29/F5-17 + porte CI · preuve: 1 run e2e vert couvrant les 3 volets]
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:81:- [x] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Bloqué** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) non confirmé par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:87:| ISC-EMU-1 | bash | `e2e/run.sh` — les 4 marqueurs `*_stop1_done`/`*_stop2_done` matchent le repère stable, pas le texte compteur | 4/4 marqueurs résolus sur un run avec compteur retiré | e2e run.sh sur build de test (ISC-F4-22/F5-14 livrés) | ISC-F4-22, ISC-F5-14 |
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:88:| ISC-EMU-2 | bash | génération de la planche branche-vs-main | artefact produit, non vide | python3 e2e/report.py (ou nouveau script planche) | literal |
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:89:| ISC-EMU-3 | integration | run e2e couvrant arrêts + contrats d'écran + zéro écart golden non accepté | verdict global PASS | galass-emu-actions-pub run | ISC-F4-29, ISC-F5-17, ISC-EMU-4 |
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:90:| ISC-EMU-4 | integration | porte CI golden-diff sur PR de test | rouge sur écart volontaire, vert sinon | workflow CI (dépôt à confirmer) | literal — emplacement à confirmer |
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:99:- **Critère maintenant** : ISC-EMU-4 exige la porte **plus** ses trois invariants ; ISC-EMU-3 (verdict e2e global) reste non livré et ne peut pas être coché par cette porte seule.
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:104:- ISC-EMU-4: preuve locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:109:- [ ] Fixer le contrat exact du repère invisible stable avec les ISA Rider (ISC-F4-22) et Driver (ISC-F5-14) avant d'écrire ISC-EMU-1 dans le harnais.
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:113:- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert.
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:114:- [ ] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé n'a pas été réécrit (le garde d'écriture ISA refuse les caractères du texte d'origine) — à reformuler au prochain passage.
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:115:- [ ] Bloqué — ISC-EMU-1 reste bloqué** : le contrat de clé/sémantique du repère stable n'est pas écrit, et il dépend d'ISC-F4-22 (code produit Rider, interdit par la garde de ce run) plus de l'équivalent Driver. Ne pas implémenter à l'aveugle.
+./MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md:116:- [ ] Non livré — ISC-EMU-3 non livré** : aucun e2e ce run (interdit par le cadrage), donc pas de verdict global à collecter.
+---
+15
+
+$ git log --all --oneline --grep='ISC-EMU' | head -30; echo '--- show branch commits'; git log --oneline --decorate -3 HEAD; git log --oneline --decorate -3 origin/cursor/artemis-visible-markers-e410
+308decf wip: vera - porter ISA harnais + fixer contrat ISC-EMU-1 content-desc
+b4b0c91 feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+bfabf60 docs(isa): scaffold harnais emu — repère invisible stable + planche goldens + porte CI (ISA-only)
+--- show branch commits
+6f8dba0 (HEAD -> cursor/artemis-f427-pusher-e410, origin/cursor/artemis-f427-pusher-e410) fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+bda239b fix(artemis): F4-27 Arrêt N + filet compose-API (preuve 460606)
+68af0c2 (origin/cursor/artemis-visible-markers-e410) fix(e2e): marqueurs Driver stop1/stop2 sur textes visibles uniquement
+6f8dba0 (HEAD -> cursor/artemis-f427-pusher-e410, origin/cursor/artemis-f427-pusher-e410) fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+0041e3e fix(artemis): marqueurs Driver stop = frise Arrêt N (plus x/N)
+
+$ git show --stat 308decf; echo '--- branches containing'; git branch -a --contains 308decf 2>/dev/null; echo '--- diff ISA'; git show 308decf -- MEMORY | head -200
+commit 308decff761c010515e231ad0833f54f66be8589
+Author: Nix <nix@galass.local>
+Date:   Mon Nov 23 22:38:35 2026 +0000
+
+    wip: vera - porter ISA harnais + fixer contrat ISC-EMU-1 content-desc
+
+ .../ISA.md                                         | 119 +++++++++++++++++++++
+ 1 file changed, 119 insertions(+)
+--- branches containing
+  remotes/origin/feat/multistop-e2e-2026-11-15
+--- diff ISA
+commit 308decff761c010515e231ad0833f54f66be8589
+Author: Nix <nix@galass.local>
+Date:   Mon Nov 23 22:38:35 2026 +0000
+
+    wip: vera - porter ISA harnais + fixer contrat ISC-EMU-1 content-desc
+
+diff --git a/MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md b/MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+new file mode 100644
+index 0000000..1e460b9
+--- /dev/null
++++ b/MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+@@ -0,0 +1,119 @@
++---
++task: "Galass emu — harnais e2e : repère invisible stable + planche goldens + porte CI anti-régression"
++slug: 20261123-galass-emu-golden-anti-regression
++project: galass-emu-actions-pub
++isa_kind: task
++phase: plan
++progress: 1/4
++algorithm: 8.20.2
++isa_spec: 2.21.0
++started: 2026-11-23T12:00:00Z
++updated: 2026-11-23T06:23:46.563Z
++parent: null
++principal_stated_goal: "Méthode anti-régression UI multistop — harnais emu : repère invisible stable (remplace les compteurs x/N textuels), planche e2e branche vs main, validation finale multistop (arrêts + contrats d'écran + zéro écart golden non accepté)"
++principal_stated_goal_source: principal
++principal_stated_goal_signal: 5
++principal_stated_goal_locked: 2026-11-23T12:00:00Z
++context_sufficient: true
++interview_invoked: false
++isa_stamp: hmac-sha256:[REDACTED:hex64]
++---
++
++## Problem
++
++Le harnais e2e (`e2e/run.sh`) détecte la progression des arrêts par **texte affiché** : `MARK_rider_stop1_done='+1/2 arrêts? terminés?&...'`, `MARK_rider_stop2_done='+2/2 arrêts? terminés?&...'`, `MARK_driver_stop1_done='+1/2 arrêts? terminés?|...'`, `MARK_driver_stop2_done='+2/2 arrêts? terminés?|...'` (confirmé par lecture, `e2e/run.sh` l.117-118, l.145-146). Les ISA Rider (`ISC-F4-22`) et Driver (`ISC-F5-14`) retirent ce texte de l'UI (méthode anti-régression 2026-11-23) : une fois ce correctif livré, ces 4 marqueurs ne matcheront plus **rien**, et le harnais ne peut aujourd'hui pas distinguer « régression » de « marqueur devenu obsolète par un retrait volontaire ». Par ailleurs, aucune comparaison golden n'existe : la revue UI du 2026-11-23 (F10 Rider, F6 Driver) s'est faite à l'œil sur des captures e2e ponctuelles, sans référence stable ni porte bloquante par PR.
++
++## Vision
++
++Le harnais lit un repère **stable et invisible** (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22/F5-14) à la place du texte du compteur — la détection de progression des arrêts survit au retrait du compteur sans réécrire le harnais à chaque changement de libellé. Chaque PR sur Rider/Driver déclenche une comparaison de ses écrans aux **goldens officiels** (générés depuis `main`, commités dans `test/goldens/` de chaque app) ; tout écart fait échouer la porte, sans seuil caché, et une nouvelle référence ne s'accepte que par une commande ou un label nommé explicitement, avec planche avant/après en artefact. La validation finale du multistop est une e2e verte qui couvre les arrêts, les contrats d'écran (Rider `ISC-F4-29`, Driver `ISC-F5-17`) et zéro écart golden non accepté.
++
++## Out of Scope
++
++- Correctif des écrans produit Rider/Driver eux-mêmes (ISA Rider F11 / Driver F6 enrichi, pas ce dépôt).
++- Génération des fichiers golden image eux-mêmes (dépend de l'infra `test/goldens/` dans les repos Rider/Driver, pas encore construite — cf. Decisions).
++- Changement du secret/token CI, des runners, ou du plan GitHub Actions.
++- `galass-ci` (dépôt séparé, hors périmètre de cette ISA sauf référence en Language/Decisions).
++
++## Language
++
++- **repère invisible stable** — `Key`/`Semantics` posé sur le nœud actif ou l'état course par l'app (ISC-F4-22 Rider, ISC-F5-14 Driver), lisible par `uiautomator dump` sans dépendre du texte affiché. *Avoid* : confondre avec un simple `Key` de debug non garanti en prod.
++- **golden** — capture de référence officielle d'un écran dans un état donné, générée depuis `main` dans un worktree séparé, avec données de test fixes et appareil fixe ; commitée dans `test/goldens/<app>/` avec une ligne README (écran, état, commit `main` d'origine).
++- **porte CI golden-diff** — job public qui compare les écrans d'une PR aux goldens et échoue la PR sur tout écart, sans seuil de tolérance caché ; une nouvelle référence ne s'accepte que par commande/label nommé, avec planche avant/après en artefact.
++
++## Constraints
++
++- Pas d'Actions GitHub sur les dépôts privés (`Galass_Rider`, `Galass_Driver`, `Galass_backend`) — toute porte CI tourne sur un dépôt public (`galass-emu-actions-pub` et/ou `galass-ci`), jamais sur le dépôt cible.
++- Aucun secret recopié dans ce dépôt ni dans l'ISA — lecture du bundle evidence déchiffré autorisée, jamais sa recopie.
++- Aucune phase changée à la main, aucun ISC coché sans preuve, aucun gate affaibli.
++- `gitleaks` avant chaque push ; push sur la branche nommée uniquement, sans merge, **sans e2e** pour ce tour (2026-11-23).
++
++## Goal
++
++Un harnais qui (1) survit au retrait des compteurs x/N sans perdre la détection de progression des arrêts, (2) peut comparer toute PR Rider/Driver à une planche golden officielle sans seuil caché, et (3) donne un verdict final multistop unique qui couvre arrêts + contrats d'écran + zéro écart golden non accepté.
++
++## Decisions
++
++- **2026-11-23 — Scaffold initial (Papa, méthode anti-régression UI, ISA-only, aucun code produit).** Grounding : `e2e/run.sh` l.117-118 (Rider) et l.145-146 (Driver) confirment que `MARK_*_stop1_done`/`MARK_*_stop2_done` matchent aujourd'hui le texte « x/2 arrêt(s) terminé(s) » que les ISA Rider (ISC-F4-22) et Driver (ISC-F5-14) retirent — sans ce leg, le retrait casserait silencieusement la détection e2e des arrêts. Aucune ISA n'existait pour ce dépôt (`MEMORY/WORK/` absent avant ce tour) ; slug et structure alignés sur le format des ISA Rider/Driver/backend pour cohérence inter-dépôts, bien qu'aucune convention locale n'existe encore ici.
++- **2026-11-23 — Porte CI golden-diff : emplacement non tranché, décision à confirmer par Papa.** Deux dépôts publics existent déjà : `galass-ci` (déclenche des jobs opencode/FullRun sur les dépôts Galass via `GALASS_TOKEN`, lit `opencode/tests/` + gitleaks sur lui-même) et `galass-emu-actions-pub` (héberge l'e2e émulateur, `artemis-staging-e2e.yml`, déclenché par `galass-ci`). **Inférence non construite** : la porte golden-diff s'intègre le plus naturellement comme un nouveau job dans `galass-emu-actions-pub` (où les captures d'écran existent déjà), déclenché par PR Rider/Driver via le même mécanisme que `galass-ci` utilise déjà pour FullRun — mais ceci n'a pas été construit ni confirmé ce tour : écrire le workflow YAML, le déclencheur cross-repo et les secrets sans validation de Papa risquerait de consommer des minutes CI sur une architecture non voulue. **Point à trancher avec Papa avant tout code CI.**
++- **2026-11-23 — Infra goldens (`test/goldens/`) : non construite ce tour.** Aucun `golden_toolkit` ni `test/goldens/` n'existe dans `Galass_Rider` ni `Galass_Driver` (confirmé par recherche dans les deux repos) — construire les harnais widget-test à données/appareil fixes pour ~8 écrans × 2 apps est un effort de plusieurs légs, pas fait dans cette passe ISA-only. Documenté ici comme dépendance plutôt que bâti à la hâte sans worktree `main` séparé ni confirmation de portée (quels écrans en premier).
++- **2026-11-23 — Porte golden-diff construite et prouvée (run CI build-only, branche `feat/multistop-rider-close-2026-11-20`).** Emplacement confirmé par Papa : `galass-emu-actions-pub`. Trois pièces : `goldens/gate.sh` (la porte), `goldens/board.py` (planche avant/après autonome + `summary.md` + `gaps.json`), `.github/workflows/golden-diff.yml` (`workflow_dispatch` + `repository_dispatch`, `permissions: contents: read`, job `timeout-minutes: 30`). L'app porte ses goldens dans `test/goldens/<app>/` — pour Rider, 10 PNG générés depuis `origin/main` (`7984da7`) dans un worktree séparé, commités avec harnais et fixtures synthétiques.
++- **2026-11-23 — Deux propriétés de non-falsifiabilité ajoutées après mesure, pas par principe.** (1) Référence : les PNG sont relus depuis la branche de base, et un PNG/`*.dart` modifié, supprimé ou ajouté par la branche fait désormais échouer le run (`exit 1`) au lieu d'être seulement signalé — mesuré : `cp accueil.png choix_service.png` dans l'arbre évalué → ROUGE avec la ligne `M test/goldens/rider/choix_service.png` et comparaison faite contre la référence restaurée. (2) Harnais : les `*.dart` du dossier golden sont eux aussi relus depuis la base. Sans ça la porte était contournable en une ligne — mesuré : les trois tests remplacés par `void main() {}` donnent `flutter test` = « No tests ran » (0 test, 0 écart, donc VERT sans qu'aucune capture ne soit comparée) ; avec la restauration, 10 tests tournent et le run sort ROUGE pour harnais modifié.
++- **2026-11-23 — Amorçage (bootstrap) : la porte ne peut pas être verte sans goldens sur la référence.** `--base origin/main` sur Rider sort en `exit 2` (« aucun golden sur origin/main dans test/goldens/rider ») tant que le leg goldens n'est pas fusionné — c'est voulu : une référence absente n'est pas une absence d'écart. Les trois chemins documentés (`goldens/README.md` § Amorçage) : branche portant les goldens, worktree `main` + goldens en commit détaché, puis `origin/main` après fusion. Le workflow reçoit `base_ref` en paramètre pour couvrir les deux premiers.
++- **2026-11-23 — Preuve à deux runs (Flutter 3.44.8, surface 412×915@2, `fr_SN`).** Base = `origin/main` `7984da7` + goldens (commit détaché `08cc8cd` dans un worktree séparé) : **VERT 10/10, 0 écart**. Branche Rider `feat/multistop-rider-close-2026-11-20` (`47a2ee2`) : **ROUGE 5/10** — `course_en_cours_stop1_actif` 27,33 %, `tous_arrets_faits` 27,33 %, `stop1_fait` 27,31 %, `course_en_cours_simple` 19,20 %, `course_terminee` 8,31 %. `--accept` sur le run rouge exporte 5 nouvelles références dans `accepted-goldens/` sans toucher la référence (exit 0, aucune écriture dans `test/goldens/`).
++- **2026-11-23 — Le rouge ne nomme qu'une des quatre régressions attendues, et c'est une mesure, pas un choix.** Les goldens venant de `main`, ils figent l'état de `main`. Contrat d'écran Rider (`test/widget/course_en_cours_contract_test.dart`, mêmes fixtures) mesuré sur les deux arbres : ISC-F4-25 PASS sur `main` / FAIL sur la branche (régression introduite par la branche → c'est elle que l'écart pixel de `course_en_cours_simple` révèle) ; ISC-F4-26 FAIL/FAIL et ISC-F4-27 FAIL/FAIL (défauts **préexistants** sur `main`, donc figés par la référence, invisibles en diff) ; ISC-F4-28 PASS/PASS (aucune disparition du SOS mesurée en `RIDE_RUNNING` — l'écart Papa/code porte donc sur un autre état que RUNNING). Conséquence écrite dans les deux README : « vert = zéro écart vs la référence », jamais « aucune régression ».
++
++## Features
++
++### F1 · Repère invisible stable (remplace les marqueurs texte x/N)
++
++- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Contrat fixé 2026-11-23 (leg Vera, portée sur cette branche)** : Rider pose UN nœud `Semantics` invisible, `content-desc` exact `galass.rider.stops=<done>/<total>`, monté seulement si `ride.stops` non vide (`ISC-F4-22`). Driver pose le miroir `galass.driver.stops=<done>/<total>` (`ISC-F5-14`). Harnais lit `content-desc` via `uiautomator dump` (un `Key` Flutter seul ne suffit pas). **Bloqué implémentation** : les apps n'exposent pas encore ce repère ; aucun code `e2e/run.sh` modifié dans ce leg Vera. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, contrat fixé, implémentation bloquée · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
++
++### F2 · Planche e2e branche vs main
++
++- [ ] ISC-EMU-2: le rapport de run (`e2e/report.py` ou équivalent) produit une planche comparant les captures e2e de la branche de travail aux captures d'un run équivalent sur `main`, par écran/état. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité · preuve: artefact planche généré sur 1 run de test]
++
++### F3 · Validation finale multistop
++
++- [ ] ISC-EMU-3: un verdict e2e unique couvre (a) la progression des arrêts (via ISC-EMU-1), (b) les contrats d'écran Rider (`ISC-F4-29`) et Driver (`ISC-F5-17`) — présence des éléments obligatoires capturée en e2e, pas seulement en widget test local — et (c) zéro écart golden non accepté (dépend de F4/porte CI). [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend ISC-F4-29/F5-17 + porte CI · preuve: 1 run e2e vert couvrant les 3 volets]
++
++### F4 · Porte CI golden-diff (dépôt à confirmer)
++
++- [x] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Bloqué** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) non confirmé par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
++
++## Test Strategy
++
++| isc | type | check | threshold | tool | anchors_to |
++|-----|------|-------|-----------|------|------------|
++| ISC-EMU-1 | bash | `e2e/run.sh` — les 4 marqueurs `*_stop1_done`/`*_stop2_done` matchent le repère stable, pas le texte compteur | 4/4 marqueurs résolus sur un run avec compteur retiré | e2e run.sh sur build de test (ISC-F4-22/F5-14 livrés) | ISC-F4-22, ISC-F5-14 |
++| ISC-EMU-2 | bash | génération de la planche branche-vs-main | artefact produit, non vide | python3 e2e/report.py (ou nouveau script planche) | literal |
++| ISC-EMU-3 | integration | run e2e couvrant arrêts + contrats d'écran + zéro écart golden non accepté | verdict global PASS | galass-emu-actions-pub run | ISC-F4-29, ISC-F5-17, ISC-EMU-4 |
++| ISC-EMU-4 | integration | porte CI golden-diff sur PR de test | rouge sur écart volontaire, vert sinon | workflow CI (dépôt à confirmer) | literal — emplacement à confirmer |
++
++## Learning
++
++(Aucune entrée — scaffold initial.)
++- **Conjecture** : une porte qui compare des captures suffit à faire respecter les contrats d'écran.
++- **Réfuté par** : deux mesures. (1) Le contrat d'écran Rider a été joué sur les deux arbres, mêmes fixtures, même surface : sur `main` déjà, ISC-F4-26 et ISC-F4-27 échouent. Un golden généré depuis `main` fige donc ces défauts, et la porte reste verte dessus à jamais. (2) Les trois tests ont été remplacés par `void main() {}` dans l'arbre évalué : `flutter test` sort « No tests ran », zéro comparaison, et la porte d'alors affichait vert. Une porte dont la référence ET le harnais sont modifiables par la branche ne mesure rien.
++- **Appris** : la valeur d'une porte anti-régression ne vient pas du pixel mais de trois invariants — référence lue hors de la branche, harnais lu hors de la branche, et échec explicite quand la référence est absente (`exit 2`, jamais 0). Corollaire qui change la façon de lire un rouge : la porte nomme un **changement**, pas un défaut. Le partage « ce que le rouge révèle » (F4-25) contre « ce que la référence fige » (F4-26/27) doit être écrit dans le README de l'app, sinon le premier rouge sera lu comme « la porte invente un bug ».
++- **Appris** : l'écart rapporté par Papa (SOS / notes / profil absents) n'est pas reproductible en `RIDE_RUNNING` pour le SOS (PASS sur les deux arbres). La branche n'a cassé que la tuile notes. Chercher le reste ailleurs que dans la feuille de course évite de « corriger » un écran intact.
++- **Critère maintenant** : ISC-EMU-4 exige la porte **plus** ses trois invariants ; ISC-EMU-3 (verdict e2e global) reste non livré et ne peut pas être coché par cette porte seule.
++
++## Verification
++
++(Aucune entrée — aucun ISC fermé à ce tour.)
++- ISC-EMU-4: preuve locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
++
++## Remaining Work
++
++- [ ] Confirmer avec Papa l'emplacement de la porte CI golden-diff (`galass-emu-actions-pub` vs `galass-ci`) avant d'écrire le moindre workflow YAML.
++- [ ] Fixer le contrat exact du repère invisible stable avec les ISA Rider (ISC-F4-22) et Driver (ISC-F5-14) avant d'écrire ISC-EMU-1 dans le harnais.
++- [ ] Construire l'infra `test/goldens/` dans Rider et Driver (worktree séparé sur `main`, données/appareil fixes) — dépendance bloquante pour F2/F4, non construite ce tour.
++- [ ] Une fois F1-F4 livrés : Bridge final vers Rider (`Bridge-B7`, 20261006-galass-rider-multistop) et Driver (`Bridge-B7`, 20261006-galass-driver-multistop).
++- [ ] **Décision Papa sur le leg goldens** : `test/goldens/rider/` (10 PNG + harnais + fixtures) doit être fusionné sur la branche de référence pour que `--base origin/main` passe du `exit 2` (bootstrap) au vert. Ce run ne pousse ni ne fusionne rien — un commit local existe côté Rider, rien n'est parti sur le remote.
++- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert.
++- [ ] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé n'a pas été réécrit (le garde d'écriture ISA refuse les caractères du texte d'origine) — à reformuler au prochain passage.
++- [ ] Bloqué — ISC-EMU-1 reste bloqué** : le contrat de clé/sémantique du repère stable n'est pas écrit, et il dépend d'ISC-F4-22 (code produit Rider, interdit par la garde de ce run) plus de l'équivalent Driver. Ne pas implémenter à l'aveugle.
++- [ ] Non livré — ISC-EMU-3 non livré** : aucun e2e ce run (interdit par le cadrage), donc pas de verdict global à collecter.
++- [ ] **Driver** : l'emplacement `test/goldens/driver/` n'existe pas ; la porte sort en `exit 2` avec « aucun golden » — c'est documenté, pas un bug.
++- [ ] **Une fois F1-F4 livrés** : Bridge final vers Rider (`Bridge-B7`, 20261006-galass-rider-multistop) et Driver (`Bridge-B7`, 20261006-galass-driver-multistop).
++
+
+$ git log --all --oneline --grep='content-desc\|Semantics\|E1\|marqueurs visibles' -i | head -30
+308decf wip: vera - porter ISA harnais + fixer contrat ISC-EMU-1 content-desc
+0eae2d1 fix(e2e): la nav porte son libellé en content-desc, pas en text (run 44674958244)
+2001a15 ci(e2e): ajoute flutter test (rider+driver) avant le build APK
+0c21018 fix(e2e): whitelist batterie driver, tap Rider par nœud vérifié, détection d'émulateur instable
+671dae3 e2e: plan B tape place_prediction_0 / confirm_location par resource-id (Semantics.identifier), retrait du tap aveugle sous le champ, noeuds du picker journalisés après saisie ; workflow patrol-pilot séparé et non bloquant (run 40850814924)
+
+$ ls /home/runner/work/lifeos-ci/lifeos-ci/lifeos; ls /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY 2>/dev/null | head; find /home/runner/work/lifeos-ci/lifeos-ci/lifeos -maxdepth 3 -iname '*galass*' 2>/dev/null | head -20
+CLAUDE.md
+ISA.md
+LIFEOS
+MEMORY
+README.md
+Workflows
+agents
+bun.lock
+commands
+hooks
+opencode
+package.json
+rules
+scripts
+secrets
+settings.template.json
+skills
+skills-shared
+WORK
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-dashboard-499-loop-710204
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261002-galass-rider-dispatch-f3
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260730-galassdriver-kyc-submit-spinner
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-webview-payment-482910
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261002-galass-auto-dispatch
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-rider-store-submission-20260703
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-rider-security-complete-120712
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260730-galassdriver-vehicle-verification-submit
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261002-galass-driver-dispatch-f4
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-ride-payment-post-739201
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-phone-auth-876543
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-francisation-sn-840301
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-ios-recaptcha-crash-507205
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-rider-stable-final-110711
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260729-galass-seclists-offensive-pentest
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-vps-startup-storm-710203
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-version-release-docs-180716
+
+$ grep -rln "ISC-EMU\|galass-emu\|artemis-visible-markers\|f427-pusher" /home/runner/work/lifeos-ci/lifeos-ci/lifeos 2>/dev/null | head -40
+(no output)
+
+$ grep -rn "ISC-F5-14\|ISC-F4-22\|galass.driver\|galass.rider\|Arrêt N\|frise" /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md 2>/dev/null | head -60
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:3:slug: 20261006-galass-driver-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:31:- **Galass Rider** (F4 — ISA `20261006-galass-rider-multistop`).
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:70:- requires: 20261002-galass-driver-dispatch-f4 — flux offer/respond et course active inchangés.
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:133:| Anti-F5-2 | unit        | dispatch F4 tests still GREEN                    | exit 0            | flutter test test/unit/dispatch_f4_*                     | cross: 20261002-galass-driver-dispatch-f4 |
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:139:| ISC-F5-11 | manual      | CallKit Accept → app foreground + ride details   | app visible ≤3s   | device / ARTEMIS                                         | cross: 20261002-galass-driver-dispatch-f4 |
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md:229:- **2026-10-09** — Principal: **CallKit in ISA** — F5 + ISC-F5-11 / Anti-F5-3 (auto-open post-accept) ; sonnerie CallKit déjà OK device ; cross `20261002-galass-driver-dispatch-f4` GAP-1.
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md:3:slug: 20261006-galass-rider-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md:31:- **Galass Driver** (F5 — ISA `20261006-galass-driver-multistop`).
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md:62:- requires: 20261002-galass-rider-dispatch-f3 — flux post-create dispatch auto inchangé (pas de bid).
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md:119:| Anti-F4-2 | unit | dispatch F3 tests still GREEN | exit 0 | flutter test test/unit/dispatch_f3_* | cross: 20261002-galass-rider-dispatch-f3 |
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:19:  - 20261006-galass-rider-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:20:  - 20261006-galass-driver-multistop
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:75:- downstream: 20261006-galass-rider-multistop — consomme contrat `stops[]` ; bridge Bridge-B3.
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:76:- downstream: 20261006-galass-driver-multistop — affiche stops API ; bridge Bridge-B4.
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:86:- [ ] Bridge-B3: Bridge: payload `stops[]` envoyé par rider = persistance backend ordonnée (cross: 20261006-galass-rider-multistop).
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:87:- [x] Bridge-B4: Bridge: détail course driver affiche les mêmes stops que `GET ride` backend (cross: 20261006-galass-driver-multistop). *(driver COMPLETE 18/18 ; device principal 2026-10-09)*
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:264:**Enfant** : `20261006-galass-rider-multistop` · repo `/Users/macbook/Galass_Rider` · `parent: 20261006-galass-regression-multistop`
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:277:**Enfant** : `20261006-galass-driver-multistop` · repo `/Users/macbook/Galass_Driver` · `parent: 20261006-galass-regression-multistop` · **COMPLETE 18/18** (2026-10-09)
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:344:- ISC-F4-5: test -f + grep parent Galass_Rider/MEMORY/WORK/20261006-galass-rider-multistop/ISA.md (2026-10-06)
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:345:- ISC-F5-4: test -f + grep parent Galass_Driver/MEMORY/WORK/20261006-galass-driver-multistop/ISA.md (2026-10-06)
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md:355:- [x] **Driver enfant** — `20261006-galass-driver-multistop` COMPLETE 18/18 (2026-10-09) ; Bridge-B4/B6 + CallKit F5-11 CLOSED.
+
+$ ls -la /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/; sed -n '1,80p' /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md
+total 40
+dr-xr-xr-x  2 runner runner  4096 Nov 28 06:16 .
+dr-xr-xr-x 46 runner runner  4096 Nov 28 06:16 ..
+-r--r--r--  1 runner runner 30108 Nov 28 06:16 ISA.md
+---
+task: "Galass — anti-régression, deploy staging/rollback, multi-stop"
+slug: 20261006-galass-regression-multistop
+project: Galass_backend
+isa_kind: task
+phase: climbing
+progress: 71/73
+algorithm: 8.20.2
+isa_spec: 2.19.0
+started: 2026-10-06T00:20:00Z
+updated: 2026-10-10T01:28:00Z
+principal_stated_goal: "met en place system anti regression et multi stop course"
+principal_stated_goal_source: prompt
+principal_stated_goal_signal: 4
+principal_stated_goal_locked: 2026-10-06T00:20:00Z
+context_sufficient: true
+interview_invoked: true
+children:
+  - 20261006-galass-rider-multistop
+  - 20261006-galass-driver-multistop
+---
+
+## Problem
+
+L’ISA dispatch auto (`20261002-galass-auto-dispatch`) est **COMPLETE** (74/74) mais a reporté des hill-climbs ouverts : (1) **garde anti-régression CI** — tests PHPUnit existent mais **aucune gate** ; (2) **courses multi-arrêts** E2E backend + mobile ; (3) **déploiement fragile** — `.github/workflows/deploy.yml` pousse **direct en prod** (`git reset --hard` sur VPS) sans staging, sans smoke check, sans rollback documenté ni SHA « last good ». Un deploy raté = prod down jusqu’intervention manuelle.
+
+## Vision
+
+Chaque release suit **tests → staging → validation → prod**, avec **rollback en une commande** vers le dernier SHA sain. Le rider commande **2 à N arrêts** ; le driver **confirme chaque escale** (style Uber « CONFIRM STOP ») puis navigue vers la suivante ; le rider voit la progression en temps réel. Euphoric surprise : deploy sans stress + parcours multi-escales aussi fluide qu'Uber.
+
+## Out of Scope
+
+- **Pool / ride-sharing / multi-rider** dans une même course.
+- **Refonte pricing surge** dynamique.
+- **E2E ARTEMIS multi-driver cascade** (defer v2 dispatch).
+- **Modification des 33 routes IPN** Wave/OM.
+- **Tests de charge / perf prod** au-delà des seuils sqlite PHPUnit documentés.
+- **Migration rétroactive** des courses historiques vers multi-stop.
+- **Détail d’implémentation Flutter** — vit dans les **ISAs enfants**.
+- **Blue/green multi-node** ou **Kubernetes** — v1 = VPS unique, staging + prod paths ; rollback git SHA.
+- **Deploy mobile stores** (TestFlight/Play) — runbook backend seulement ; apps = handoff enfants.
+
+## Principles
+
+- **Red before green** : chaque claim = probe PHPUnit, workflow CI, ou test Flutter/ARTEMIS selon la couche.
+- **Seam probes** : tests aux frontières API/service/UI, pas aux internals.
+- **Backward compatible** : course pickup+destination seule reste le chemin par défaut ; `stops[]` optionnel côté API **et** apps.
+- **Chirurgical** : pas de refactor dispatch/paiement hors périmètre.
+- **Parent → enfants** : contrat API figé (F2+F3) avant build mobile ; contraintes parent héritées par les enfants.
+- **Staging before prod** : aucune promotion prod sans passage staging + smoke.
+- **Rollback is a feature** : dernier SHA sain enregistré à chaque deploy réussi.
+- **Dual-write ISA** : repo + LifeOS ; doc avant code.
+- **Integration first** : parcours API bout-en-bout (fare → create → dispatch → GET) couverts par `@group integration` en CI.
+
+## Constraints
+
+- Backend : Laravel `core/` ; header `dev-token` inchangé.
+- CSRF `ipn/*`, `DeveloperToken`, `CRON_SECRET` intacts.
+- Pas de secrets PSP en git ; config admin `gateway_parameter`.
+- SQL prod préféré en `.sql` manuel VPS ; migrations PHP = référence.
+- Auth Firebase emails `*@galass.sn` inchangée.
+- Pusher canaux existants conservés ; nouveaux champs API documentés **avant** scaffold enfants.
+- Pipeline deploy : **test → staging → smoke → prod auto** si smoke GREEN ; **ISC-21 actif seulement après F2+F3 GREEN**.
+- Staging DB **isolée** de prod (`.env.staging` distinct, pas de données prod).
+- Secrets GitHub : `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` ; staging = path `/var/www/galass-staging`.
+- Migrations prod : `--isolated` conservé ; rollback = **git SHA only** ; si migration `ride_stops` déjà appliquée, rollback code seul (doc ISC-29).
+- Tarif multi-stop : appels Google **mockés en CI** (`Http::fake`) ; prod/staging = API réelle.
+- Zone stop intermédiaire : chaque stop doit être dans une **zone active du même pays** que le pickup (sinon 422).
+- Mobile : repos `Galass_Rider` / `Galass_Driver` ; ISAs enfants avec `parent: 20261006-galass-regression-multistop`.
+
+## Dependencies
+
+- requires: 20261002-galass-auto-dispatch — dispatch auto en prod, tests dispatch réutilisables.
+- requires: Galass_backend — `docs/APP_FLOW_END_TO_END.md` mis à jour (Bridge-B1).
+- downstream: 20261006-galass-rider-multistop — consomme contrat `stops[]` ; bridge Bridge-B3.
+- downstream: 20261006-galass-driver-multistop — affiche stops API ; bridge Bridge-B4.
+
+## Goal
+
+« met en place system anti regression et multi stop course » : à la clôture parent, **pipeline deploy complet** ; API multi-stop **V2 stop-by-stop** (`complete-stop`, `STOP_COMPLETED`, END gated) ; ISAs enfants rider/driver **complete** avec ack driver ; parcours single-stop inchangé.
+
+$ grep -rn "E1\b\|Emu\|emu" /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md | head -30
+(no output)
+
+$ grep -rn "F4-22\|F5-14\|F4-29\|F5-17" /home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY 2>/dev/null | head -40
+(no output)
+
+$ sed -n '1,240p' goldens/gate.sh
+#!/usr/bin/env bash
+# Porte CI golden-diff — compare les écrans d'une branche aux goldens officiels
+# de sa branche de base, sans seuil de tolérance.
+#
+#   goldens/gate.sh <app_dir> [--name Galass_Rider] [--goldens test/goldens/rider]
+#                   [--base main] [--accept] [--out board]
+#
+# Règles :
+#   * la référence est TOUJOURS celle de la branche de base (`origin/<base>`),
+#     jamais la copie de la branche évaluée — une PR ne peut pas affaiblir sa
+#     propre référence ; tout PNG golden modifié/supprimé/ajouté par la branche
+#     est signalé, et un golden absent de la base compte comme nouvelle
+#     référence (donc échec sans acceptation explicite) ;
+#   * le harnais de comparaison (`*.dart` du dossier golden) est lui aussi relu
+#     depuis la branche de base : une branche ne peut pas neutraliser sa propre
+#     porte en réécrivant le test qui compare ;
+#   * aucun seuil : `flutter test` compare en égalité stricte des pixels ;
+#   * sortie : code 0 = VERT, 1 = ROUGE, 2 = échec de compilation/exécution ;
+#     planche avant/après dans `$OUT/index.html` dans tous les cas.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="${1:?usage: gate.sh <app_dir> [options]}"; shift
+APP_NAME="Galass_Rider"
+GOLDEN_SUBDIR="test/goldens/rider"
+BASE_REF="origin/main"
+ACCEPT="false"
+OUT="board"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) APP_NAME="$2"; shift 2 ;;
+    --goldens) GOLDEN_SUBDIR="$2"; shift 2 ;;
+    --base) BASE_REF="$2"; shift 2 ;;
+    --accept) ACCEPT="true"; shift ;;
+    --out) OUT="$2"; shift 2 ;;
+    *) echo "option inconnue: $1" >&2; exit 2 ;;
+  esac
+done
+
+cd "$APP_DIR" || { echo "app_dir introuvable: $APP_DIR" >&2; exit 2; }
+mkdir -p "$OUT"
+LOG="$OUT/flutter-golden.log"
+REF="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)"
+SHA="$(git rev-parse --short HEAD 2>/dev/null || echo inconnu)"
+BASE_SHA="$(git rev-parse --short "$BASE_REF" 2>/dev/null || echo inconnu)"
+
+echo "== golden-diff $APP_NAME =="
+echo "branche évaluée: $REF @ $SHA"
+echo "référence      : $BASE_REF @ $BASE_SHA"
+
+if ! git rev-parse --verify --quiet "$BASE_REF" >/dev/null; then
+  echo "GOLDEN-GATE: ERREUR — $BASE_REF absent (fetch manquant)" | tee "$OUT/verdict.txt"
+  exit 2
+fi
+
+# 1. Référence de vérité : les PNG de la branche de base.
+BASE_LIST="$(git ls-tree -r --name-only "$BASE_REF" -- "$GOLDEN_SUBDIR" | grep '\.png$' || true)"
+if [ -z "$BASE_LIST" ]; then
+  echo "GOLDEN-GATE: ERREUR — aucun golden sur $BASE_REF dans $GOLDEN_SUBDIR" | tee "$OUT/verdict.txt"
+  exit 2
+fi
+
+TAMPERED="$(git diff --name-status "$BASE_REF" -- "$GOLDEN_SUBDIR" | grep '\.png' || true)"
+if [ -n "$TAMPERED" ]; then
+  echo "!! goldens modifiés par la branche (référence restaurée depuis $BASE_REF) :"
+  echo "$TAMPERED" | sed 's/^/   /'
+fi
+
+for f in $BASE_LIST; do
+  mkdir -p "$(dirname "$f")"
+  git show "$BASE_REF:$f" > "$f"
+done
+# Golden ajouté par la branche sans équivalent en base → nouvelle référence.
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  printf '%s\n' "$BASE_LIST" | grep -qxF "$f" || {
+    echo "!! golden absent de $BASE_REF: $f (nouvelle référence)"
+    rm -f "$f"
+  }
+done <<< "$(find "$GOLDEN_SUBDIR" -name '*.png' 2>/dev/null || true)"
+
+# 1bis. Le harnais de comparaison lui-même est relu depuis la branche de base.
+#       Sans ça une branche pourrait affaiblir sa propre porte (remplacer
+#       `matchesGoldenFile` par une écriture, changer la surface, retirer un
+#       test) et passer verte sans qu'aucune capture ne soit comparée : la
+#       référence PNG serait intacte et la comparaison vide.
+BASE_DART="$(git ls-tree -r --name-only "$BASE_REF" -- "$GOLDEN_SUBDIR" | grep '\.dart$' || true)"
+if [ -z "$BASE_DART" ]; then
+  echo "GOLDEN-GATE: ERREUR — aucun harnais (.dart) sur $BASE_REF dans $GOLDEN_SUBDIR" | tee "$OUT/verdict.txt"
+  exit 2
+fi
+HARNESS_DIFF="$(git diff --name-status "$BASE_REF" -- "$GOLDEN_SUBDIR" | grep '\.dart' || true)"
+if [ -n "$HARNESS_DIFF" ]; then
+  echo "!! harnais golden modifié par la branche (version de $BASE_REF restaurée) :"
+  echo "$HARNESS_DIFF" | sed 's/^/   /'
+fi
+for f in $BASE_DART; do
+  mkdir -p "$(dirname "$f")"
+  git show "$BASE_REF:$f" > "$f"
+done
+# Fichier de test/fixture ajouté par la branche : hors référence, ignoré.
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  printf '%s\n' "$BASE_DART" | grep -qxF "$f" || {
+    echo "!! harnais absent de $BASE_REF: $f (ignoré)"
+    rm -f "$f"
+  }
+done <<< "$(find "$GOLDEN_SUBDIR" -name '*.dart' 2>/dev/null || true)"
+
+rm -rf "$GOLDEN_SUBDIR/failures"
+
+# 2. Comparaison stricte.
+set +e
+flutter test "$GOLDEN_SUBDIR" --reporter expanded >"$LOG" 2>&1
+TEST_EXIT=$?
+set -e
+grep -E '^(✅|[0-9]+:[0-9]+ \+)' "$LOG" | tail -20 || true
+
+DIFFS="$(grep -c 'Pixel test failed' "$LOG" || true)"
+MISSING="$(grep -c 'Golden file does not exist' "$LOG" || true)"
+GAPS=$((DIFFS + MISSING))
+
+# 3. Planche avant/après (toujours produite, même verte).
+REF_MUTATED="false"
+if [ -n "$TAMPERED$HARNESS_DIFF" ]; then REF_MUTATED="true"; fi
+if [ "$GAPS" -gt 0 ] || [ "$REF_MUTATED" = "true" ]; then
+  VERDICT_SRC="ROUGE"
+else
+  VERDICT_SRC="VERT"
+fi
+printf '%s\n' "$VERDICT_SRC" > "$OUT/verdict-src.txt"
+python3 "$SCRIPT_DIR/board.py" \
+  --failures "$GOLDEN_SUBDIR/failures" \
+  --goldens "$GOLDEN_SUBDIR" \
+  --out "$OUT" \
+  --app "$APP_NAME" \
+  --ref "$REF@$SHA" \
+  --base "$BASE_REF@$BASE_SHA" \
+  --log "$LOG" || true
+
+if [ "$TEST_EXIT" -ne 0 ] && [ "$GAPS" -eq 0 ] && [ "$REF_MUTATED" = "false" ]; then
+  echo "GOLDEN-GATE: ERREUR — flutter test a échoué hors comparaison golden (compilation?)" | tee "$OUT/verdict.txt"
+  tail -40 "$LOG"
+  exit 2
+fi
+
+# La référence et le harnais ne changent JAMAIS par la branche : les toucher est
+# une tentative d'acceptation implicite, donc un échec même si la comparaison
+# (faite contre la référence restaurée) est verte.
+if [ "$REF_MUTATED" = "true" ]; then
+  {
+    echo "GOLDEN-GATE: ROUGE — référence/harnais golden modifiés par la branche :"
+    [ -n "$TAMPERED" ] && echo "$TAMPERED" | sed 's/^/   /'
+    [ -n "$HARNESS_DIFF" ] && echo "$HARNESS_DIFF" | sed 's/^/   /'
+    echo "La comparaison a tourné contre la version de $BASE_REF (planche: $OUT/index.html)."
+    echo "Une nouvelle référence se commite sur la branche de base après revue — jamais ici."
+  } | tee "$OUT/verdict.txt"
+  exit 1
+fi
+
+if [ "$GAPS" -gt 0 ]; then
+  if [ "$ACCEPT" = "true" ]; then
+    mkdir -p "$OUT/accepted-goldens"
+    for img in "$GOLDEN_SUBDIR"/failures/*_testImage.png; do
+      [ -e "$img" ] || continue
+      base="$(basename "$img" _testImage.png)"
+      cp "$img" "$OUT/accepted-goldens/$base.png"
+    done
+    echo "GOLDEN-GATE: ACCEPTE — $GAPS nouvelle(s) référence(s) exportée(s) dans $OUT/accepted-goldens (à committer explicitement)" | tee "$OUT/verdict.txt"
+    echo "RAPPEL: la référence ne change que par un commit de test/goldens/ revu — jamais par un run." | tee -a "$OUT/verdict.txt"
+    exit 0
+  fi
+  echo "GOLDEN-GATE: ROUGE — $GAPS écart(s) vs $BASE_REF (planche: $OUT/index.html)" | tee "$OUT/verdict.txt"
+  exit 1
+fi
+
+echo "GOLDEN-GATE: VERT — aucun écart vs $BASE_REF" | tee "$OUT/verdict.txt"
+exit 0
+
+$ ls -la .github/workflows goldens e2e; echo '--- report.py'; sed -n '1,200p' e2e/report.py
+.github/workflows:
+total 44
+drwxr-xr-x 2 runner runner  4096 Nov 28 06:16 .
+drwxr-xr-x 3 runner runner  4096 Nov 28 06:16 ..
+-rw-r--r-- 1 runner runner 16892 Nov 28 06:16 artemis-staging-e2e.yml
+-rw-r--r-- 1 runner runner  5753 Nov 28 06:16 golden-diff.yml
+-rw-r--r-- 1 runner runner  7350 Nov 28 06:16 stop-confirm-probe.yml
+
+e2e:
+total 300
+drwxr-xr-x 4 runner runner  4096 Nov 28 06:16 .
+drwxr-xr-x 8 runner runner  4096 Nov 28 06:16 ..
+drwxr-xr-x 3 runner runner  4096 Nov 28 06:16 _ephemeral
+-rwxr-xr-x 1 runner runner 18262 Nov 28 06:16 api_flow.py
+-rw-r--r-- 1 runner runner  2954 Nov 28 06:16 b3_order.py
+-rw-r--r-- 1 runner runner  1441 Nov 28 06:16 base_guard.py
+-rwxr-xr-x 1 runner runner 22542 Nov 28 06:16 ci-opencode-run.sh
+-rw-r--r-- 1 runner runner  3483 Nov 28 06:16 compose_order.py
+-rw-r--r-- 1 runner runner  3260 Nov 28 06:16 crash_summary.py
+-rw-r--r-- 1 runner runner 13373 Nov 28 06:16 device_prep.sh
+-rw-r--r-- 1 runner runner  3848 Nov 28 06:16 diag_assign.py
+-rw-r--r-- 1 runner runner  2758 Nov 28 06:16 dump_diag.py
+-rw-r--r-- 1 runner runner  2941 Nov 28 06:16 emu_sampler.py
+-rw-r--r-- 1 runner runner  1586 Nov 28 06:16 logcheck.sh
+-rw-r--r-- 1 runner runner  2159 Nov 28 06:16 notif.py
+-rw-r--r-- 1 runner runner  1745 Nov 28 06:16 probe_close_rides.py
+-rwxr-xr-x 1 runner runner  4359 Nov 28 06:16 probe_stop_confirm.sh
+-rw-r--r-- 1 runner runner 21323 Nov 28 06:16 report.py
+-rwxr-xr-x 1 runner runner 75430 Nov 28 06:16 run.sh
+-rw-r--r-- 1 runner runner  7153 Nov 28 06:16 sanitize.py
+-rw-r--r-- 1 runner runner  1381 Nov 28 06:16 set_model.py
+-rw-r--r-- 1 runner runner  1075 Nov 28 06:16 smoke_log.sh
+-rwxr-xr-x 1 runner runner   902 Nov 28 06:16 stop_hook.sh
+-rw-r--r-- 1 runner runner  4600 Nov 28 06:16 tap_node.py
+drwxr-xr-x 2 runner runner  4096 Nov 28 06:16 tests
+-rw-r--r-- 1 runner runner 48263 Nov 28 06:16 ui.sh
+
+goldens:
+total 32
+drwxr-xr-x 2 runner runner 4096 Nov 28 06:16 .
+drwxr-xr-x 8 runner runner 4096 Nov 28 06:16 ..
+-rw-r--r-- 1 runner runner 6939 Nov 28 06:16 README.md
+-rwxr-xr-x 1 runner runner 7364 Nov 28 06:16 board.py
+-rwxr-xr-x 1 runner runner 7238 Nov 28 06:16 gate.sh
+--- report.py
+#!/usr/bin/env python3
+"""Strict E2E verdict for the Galass staging harness.
+
+Input  : $OUT/results-raw.txt (point|result|detail, written by run.sh)
+         $OUT/screens/*.json   (one sidecar per capture)
+Output : results.txt (aggregated, one row per point), results-raw.txt,
+         report.json, summary.md
+
+Rules
+  * worst-wins per point: FAIL > SKIP > WARN > PASS
+  * a P0 point that never ran is FAIL "not attempted (harness)"
+  * a P0 UI point with no MATCH capture is FAIL, even if a row claimed PASS
+  * a capture with no usable PNG, an empty-file hash, or the wrong foreground
+    app is INVALID and cannot close a P0 point
+  * a capture whose dump repeats an earlier capture is FAIL "duplicate-state"
+    (the stale-dump false positive) unless it is the explicit revisited pair
+  * B2 needs two distinct Driver captures (offer vs in-ride), else FAIL
+"""
+import argparse
+import glob
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+
+# INCONCLUSIVE = l'émulateur a planté pendant le point (jamais un FAIL de l'app). Pour un
+# point P0 c'est un non-PASS : il fait échouer le verdict comme un FAIL, sans être imputé à l'app.
+RANK = {"PASS": 1, "WARN": 2, "INCONCLUSIVE": 3, "SKIP": 4, "FAIL": 5}
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+RIDER_PKG = "sn.galass.galassrider"
+DRIVER_PKG = "sn.galass.galassdriver"
+# A screen the run legitimately visits twice (start and end of the same flow), or
+# a deliberately re-timed capture of the same UI state whose evidence is non-XML.
+REVISITED = {
+    ("rider-home-loaded", "rider-home-after"),
+    # Même écran RUNNING jambe 1 par design : 21 = départ, 22 = carte horodatée
+    # en cours de jambe 1. Les pins/polyline ne sont pas visibles en XML (seule la
+    # carte/PNG les porte, preuve pixel archivée GPG) et les marqueurs textuels sont
+    # identiques ; l'état XML peut donc être le même sans invalider la capture 22.
+    ("rider-running-start", "rider-stop1-active"),
+    # 35b (in-ride, post-accept) et 37 (running stop 1, post-start) sont le même
+    # écran Driver : B2 compare offre vs in-ride, pas deux captures in-ride.
+    ("driver-inride-stops", "driver-running-stop1"),
+    # 29 (itinéraire final) capturé sur l'écran 27 (cash-waiting) avant Pusher
+    # CASH_PAYMENT qui navigue le rider vers Avis : même écran, intention différente.
+    ("rider-cash-waiting", "rider-final-itinerary"),
+}
+B2_POINTS = ("driver-offer-with-stops", "driver-inride-stops")
+
+# Declared here and mirrored verbatim in run.sh (test_p0_default_matches_run_sh).
+P0_DEFAULT = """api-preflight apk-base-url emulator-boot apk-install
+rider-home-loaded rider-destination-selected rider-stop-picker rider-multistop-summary
+rider-driver-assigned rider-running-start rider-stop1-active rider-stop1-done
+rider-stop2-done rider-destination-arrived rider-cash-methods rider-cash-waiting
+rider-final-itinerary rider-rating rider-home-after
+driver-offer-with-stops driver-accepted-details driver-pickup-arrived driver-running-stop1
+driver-stop1-done driver-stop2-done driver-cash-request driver-cash-confirmed driver-summary
+backend-flow no-prod-calls""".split()
+
+# Every P0 point whose truth claim rests on a screenshot.
+UI_POINTS = {
+    "rider-home-loaded", "rider-destination-selected", "rider-stop-picker",
+    "rider-multistop-summary", "rider-driver-assigned", "rider-running-start",
+    "rider-stop1-active", "rider-stop1-done", "rider-stop2-done",
+    "rider-destination-arrived", "rider-cash-methods", "rider-cash-waiting",
+    "rider-final-itinerary", "rider-rating", "rider-home-after",
+    "driver-offer-with-stops", "driver-accepted-details", "driver-pickup-arrived",
+    "driver-running-stop1", "driver-stop1-done", "driver-stop2-done",
+    "driver-cash-request", "driver-cash-confirmed", "driver-summary",
+}
+
+
+def parse_rows(text):
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|", 2)
+        if len(parts) < 2:
+            continue
+        point, result = parts[0].strip(), parts[1].strip().upper()
+        detail = parts[2] if len(parts) > 2 else ""
+        if result not in RANK:
+            result, detail = "FAIL", f"unknown result {result!r}: {detail}"
+        rows.append({"point": point, "result": result, "detail": detail})
+    return rows
+
+
+def aggregate(rows):
+    """Collapse rows to one per point, worst-wins, first-seen order."""
+    out, index = [], {}
+    for row in rows:
+        point = row["point"]
+        if point not in index:
+            index[point] = len(out)
+            out.append(dict(row))
+            continue
+        cur = out[index[point]]
+        if RANK[row["result"]] > RANK[cur["result"]]:
+            cur["result"], cur["detail"] = row["result"], row["detail"]
+    return out
+
+
+def read_sidecars(out_dir):
+    caps = []
+    for path in sorted(glob.glob(os.path.join(out_dir, "screens", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cap = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        cap.setdefault("name", os.path.basename(path)[:-5])
+        cap.setdefault("status", "UNKNOWN")
+        cap.setdefault("marker", "")
+        cap.setdefault("dump_sha256", "")
+        cap.setdefault("labels", [])
+        cap.setdefault("node_count", 0)
+        caps.append(cap)
+    return caps
+
+
+def expected_pkg(point):
+    if str(point).startswith("rider-"):
+        return RIDER_PKG
+    if str(point).startswith("driver-"):
+        return DRIVER_PKG
+    return ""
+
+
+# Une capture ne peut être "invalidée" que si elle prétend être une preuve. Une capture
+# TIMEOUT/ACTION_MISS n'est déjà pas une preuve : sa raison doit dire ce qui a échoué
+# (le marqueur, le tap), pas "foreground … != package" — c'était le faux positif du run
+# 44354825315, où six points P0 semblaient casser le harnais alors que l'app était à l'écran.
+EVIDENCE_STATUS = "MATCH"
+
+
+def capture_reason(cap):
+    """Short, true reason for a capture that is not evidence."""
+    status = str(cap.get("status") or "UNKNOWN")
+    parts = [status]
+    if status == "ACTION_MISS" and cap.get("action") and not cap.get("action_ok"):
+        parts.append(f"tap « {cap.get('action')} » manqué")
+    failed = str(cap.get("failed_spec") or "").strip()
+    if failed:
+        parts.append(f"marqueur absent: {failed}")
+    fg = str(cap.get("fg_pkg") or "").strip()
+    if fg and fg not in ("", "UNKNOWN"):
+        parts.append(f"fg={fg} ({cap.get('fg_source') or 'dumpsys'})")
+    return f"{cap.get('name')} ({' ; '.join(parts)})"
+
+
+def validate_captures(out_dir, caps):
+    """B4: a sidecar is only evidence when the pixels exist and the app is the right one.
+
+    Applied to evidence-grade captures (MATCH). A capture that never claimed the screen
+    keeps its own status and is reported through `capture_reason`, so a FAIL always names
+    the step that failed.
+    """
+    for cap in caps:
+        if cap.get("status") != EVIDENCE_STATUS:
+            continue
+        reasons = []
+        png = os.path.join(out_dir, "screens", f"{cap.get('name')}.png")
+        try:
+            size = os.path.getsize(png)
+        except OSError:
+            size = -1
+        if size < 0:
+            reasons.append("png missing")
+        elif size < 8:
+            reasons.append(f"png {size}B < 8B")
+        if (cap.get("png_sha256") or "") in ("", EMPTY_SHA256):
+            reasons.append("png_sha256 empty")
+        want = expected_pkg(cap.get("point") or "")
+        fg = cap.get("fg_pkg") or ""
+        if want and fg not in ("", "UNKNOWN", want):
+            reasons.append(f"foreground {fg} != {want}")
+        if reasons:
+            cap["invalid_reason"] = "; ".join(reasons)
+            cap["status"] = "INVALID"
+    return caps
+
+
+# Unité de temps : le seul jeton dont les chiffres tichent tout seuls.
+_TIME_UNIT = (r"(?:min|mins|minute|minutes|s|sec|secs|seconde|secondes"
+              r"|h|heure|heures|j|jour|jours)")
+
+
+def _norm_label(label):
+    """Normalise un libellé pour comparer deux écrans.
+
+    Seuls les jetons qui tichent sont masqués (durée, horloge) : un minuteur qui avance ne
+    doit pas masquer une copie d'écran. Un compteur de progression reste entier.
+
+    Mesure run 44441344957 : masquer *tous* les chiffres faisait passer « 1/2 arrêt
+    terminé » pour une copie de « 0/2 arrêt terminé » alors que les pixels diffèrent
+    (driver-stop1-done en duplicate-state, png=diff). Un compteur qui change est un état
+
+$ sed -n '520,640p' e2e/tests/test_markers.py
+rep = t.index('"$PY" e2e/report.py "$OUT" --p0 "$P0_CSV"')
+    diag = t.index("diag final pickup:", rep)
+    assert 'start_status=${PICKUP_START_STATUS:-inconnu}' in t[diag:diag + 400]
+    # le diag ne touche aucun point P0 ni aucun verdict
+    p0 = re.search(r'P0_POINTS="([^"]+)"', t, re.S).group(1)
+    assert "pickup-backend-status" not in p0
+
+
+@case
+def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
+    """Galass_Driver my_strings.confirmStop = « Confirmer l'arrêt » ; aucun « Terminer l'arrêt »."""
+    t = run_text()
+    ui = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui.sh")).read()
+    assert '"Confirmer l\'arrêt")' in ui[ui.index("driver_stop_confirm_ui() {"):], "tap du bouton réel (parent cliquable)"
+    assert 'driver_stop_confirm_ui "$DRIVER_PKG" "$n"' in t
+    assert "Terminer l'arrêt" not in t.replace("Terminer l'arrêt » n'existe", "").replace("« Terminer l'arrêt »", ""), \
+        "plus de tap sur un bouton « Terminer l'arrêt » inexistant"
+    assert "wait_ui \"$DRIVER_PKG\" 45 '+Confirmer l.arrêt'" in t, "attente du bouton avant le tap"
+
+
+DRIVER_ACTIVE = _xml("Arrêt 1", "E2E Stop 1 Médina", "Arrêt 2", "E2E Stop 2 Fann",
+                     "0/2 arrêt terminé", "Prise en charge du client", "Annuler la course")
+DRIVER_RUNNING = _xml("Arrêt 1", "E2E Stop 1 Médina", "0/2 arrêt terminé",
+                      "Confirmer l'arrêt", "Terminer la course")
+DRIVER_HOME = _xml("En ligne", "Accueil", "Activité", "Courses")
+
+
+@case
+def test_driver_running_stop1_requires_the_stop_button_not_the_active_screen():
+    spec = markers()["driver_running_stop1"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    # L'écran ACTIVE réel (run 44192999654) montre déjà « Arrêt 1 » et le compteur.
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, spec
+    assert "Terminer l.arrêt" not in spec, spec
+
+
+@case
+def test_driver_inride_marker_rejects_active_screen():
+    spec = markers()["driver_inride_stops"]
+    assert spec_ok(spec, DRIVER_RUNNING) == 0, spec
+    assert spec_ok(spec, DRIVER_ACTIVE) != 0, "« Arrêt 1 » seul ne prouve pas la course démarrée"
+
+
+@case
+def test_driver_stop_done_markers_use_arret_n_not_counter():
+    """Papa 27/11 : plus de x/N — frise Arrêt N + Terminer (F5-14)."""
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0
+    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0
+    # Anciens compteurs seuls : FAIL (négatifs -1/2|-2/2 dans le spec)
+    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé")) != 0
+    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) != 0
+    assert "+1/2" not in m["driver_stop1_done"] and "+2/2" not in m["driver_stop2_done"]
+    assert "Arrêt 1" in m["driver_stop1_done"] and "Destination" in m["driver_stop2_done"]
+
+
+@case
+def test_driver_summary_is_the_home_screen_the_app_really_shows():
+    spec = markers()["driver_summary"]
+    assert spec_ok(spec, DRIVER_HOME) == 0, spec
+    assert spec_ok(spec, DRIVER_RUNNING) != 0, spec
+    assert spec_ok(spec, _xml("En ligne", "Reçois le paiement")) != 0, spec
+    assert "Gains" not in spec and "Résumé" not in spec, "l'app n'a pas d'écran de résumé"
+
+
+@case
+def test_l1_driver_stop_done_markers_require_arret_n_frise():
+    m = markers()
+    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0, m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0, m["driver_stop2_done"]
+    # « Arrêt 2 » seul / écran fin : faux PASS
+    assert spec_ok(m["driver_stop1_done"], _xml("Arrêt 2", "Terminer la course")) != 0, \
+        m["driver_stop1_done"]
+    assert spec_ok(m["driver_stop2_done"], _xml("Arrivée", "Vous êtes arrivé", "Terminer la course")) != 0, \
+        m["driver_stop2_done"]
+    for name in ("driver_stop1_done", "driver_stop2_done"):
+        assert spec_ok(m[name], DRIVER_OFFER) != 0, (name, m[name])
+
+
+@case
+def test_l1_driver_offer_accepts_home_navbar_under_the_toast():
+    spec = markers()["driver_offer_with_stops"]
+    assert spec_ok(spec, DRIVER_OFFER) == 0, spec
+    # The four labels are ALTERNATIVES: an offer without the instruction block is still
+    # an offer, and « Accueil » is expected under the toast (dashboard stays visible).
+    assert spec_ok(spec, _xml("Accueil", "Accepter la course")) == 0, spec
+    assert spec_ok(spec, _xml("Accueil")) != 0, spec
+
+
+@case
+def test_l1_composition_is_unconditional_after_api_reset():
+    text = run_text()
+    reset = text.index("api reset")
+    pick = text.index("api pick >>", reset)
+    window = text[reset:pick]
+    assert "compose_ride_ui" in window, window
+    assert "has_open" not in window, "la composition reste conditionnée à api has_open"
+    assert "artemis_run rider-" not in text, "les étapes Artemis rider-* sont encore sur le chemin"
+    for name in ("artemis-rider-destination", "artemis-rider-stop1", "artemis-rider-stop2"):
+        assert re.search(rf'mark {name} SKIP "[^"]+"', text), name
+    assert "ui_compose" in text, "ui_compose absent"
+
+
+@case
+def test_l1_compose_emits_the_picker_and_summary_captures():
+    body = compose_body()
+    for name in ("15-rider-destination-selected", "16-rider-stop-picker",
+                 "17-rider-multistop-summary"):
+        assert name in body, (name, body)
+    # 16 is taken right after the tap that opens the picker, before any typing.
+    assert body.index('"Ajouter un arrêt"') < body.index("16-rider-stop-picker"), body
+    # 17 is taken once both stops are set, before the request is sent.
+    assert body.index("17-rider-multistop-summary") < body.index('"Trouver un chauffeur"'), body
+
+
+@case
+def test_l1_ui_compose_failure_cannot_pass_ride_composed():
+    text = run_text()
+    block = re.search(r'if \[ "\$\{ui_compose:-0\}" != "1" \].*?\nfi', text, re.S)
+    assert block, "garde ui_compose introuvable avant ride-composed"
+    assert 'mark ride-composed FAIL "api fallback: compose"' in block.group(0), block.group(0)
+
+$ grep -n "def test_.*stop\|def test_.*marker\|rider_stop1_done\|rider_stop2_done\|driver_stop1_done\|driver_stop2_done\|visible" e2e/tests/test_markers.py
+82:  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+83:    <node index="1" text="Où allez-vous ?" content-desc="" visible-to-user="true" bounds="[100,200][900,300]" />
+84:    <node index="2" text="Accepter la&#10;course" content-desc="" visible-to-user="true" bounds="[100,800][600,1000]" />
+85:    <node index="3" text="Accepter" content-desc="" visible-to-user="true" bounds="[700,800][900,900]" />
+86:    <node index="4" text="Chargement..." content-desc="" visible-to-user="false" bounds="[100,1500][600,1600]" />
+87:    <node index="5" text="Arrêt 1" content-desc="" visible-to-user="true" bounds="[0,0][0,0]" />
+108:def test_every_cap_point_has_a_marker():
+118:def test_every_marker_has_a_positive_spec():
+129:def test_no_generic_only_marker():
+153:def test_b3_no_stop_requirement_on_final_itinerary():
+159:def test_b2_markers_exist():
+161:    for name in ("driver_offer_with_stops", "driver_accepted_details", "driver_stop1_done",
+162:                 "driver_stop2_done", "driver_accepted_details"):
+168:def test_hypothesis_markers_are_the_nine_driver_screens():
+174:                "driver_running_stop1", "driver_stop1_done", "driver_stop2_done",
+207:def test_driver_stop_retry_precedes_the_api_fallback():
+256:def test_spec_ok_ignores_invisible_and_zero_area_nodes_for_negatives():
+263:def test_spec_ok_requires_visible_for_positives():
+264:    """B1: a positive must be visible-to-user too — an invisible node is not a screen."""
+265:    assert spec_ok("+Chargement") == 1, "un noeud invisible ne peut pas satisfaire un positif"
+266:    # area stays optional for positives: a visible zero-area node still counts
+273:  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+274:    <node index="1" text="Arrêt 1" content-desc="" visible-to-user="true" bounds="[50,600][900,700]" />
+275:    <node index="2" text="Arrêt 2" content-desc="" visible-to-user="true" bounds="[50,800][900,900]" />
+276:    <node index="3" text="Destination" content-desc="" visible-to-user="true" bounds="[50,1000][900,1100]" />
+277:    <node index="4" text="Ajouter un arrêt" content-desc="" visible-to-user="true" bounds="[50,1200][900,1300]" />
+278:    <node index="5" text="Confirmer la course" content-desc="" visible-to-user="true" bounds="[50,1500][900,1600]" />
+285:  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+286:    <node index="1" text="Terminer la course" content-desc="" visible-to-user="true" bounds="[50,2000][900,2100]" />
+287:    <node index="2" text="Arrêt 1" content-desc="" visible-to-user="true" bounds="[50,600][900,700]" />
+288:    <node index="3" text="Destination" content-desc="" visible-to-user="true" bounds="[50,800][900,900]" />
+295:  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+296:    <node index="1" text="Point de prise en charge" content-desc="" visible-to-user="true" bounds="[50,600][900,700]" />
+297:    <node index="2" text="Arrêt 1" content-desc="" visible-to-user="true" bounds="[50,800][900,900]" />
+304:def test_p0_markers_do_not_match_prestate_screens():
+310:        "rider_stop2_done": SUMMARY_FIXTURE,
+312:        "driver_stop1_done": RUNNING_FIXTURE,
+313:        "driver_stop2_done": RUNNING_FIXTURE,
+331:    """uiautomator dump with one visible, non-empty node per label."""
+333:        '    <node index="%d" text="%s" content-desc="" visible-to-user="true" '
+338:            '  <node index="0" text="" content-desc="" visible-to-user="true" '
+363:# Driver: offer toast above the dashboard, navbar « Accueil » still visible.
+378:def test_l1_rider_stop_picker_matches_real_picker_labels():
+397:def test_l1_rider_stop1_active_matches_f427_two_stops():
+407:def test_l1_rider_stop1_active_gated_by_api_state():
+420:def test_rider_stop1_done_matches_f427_arret_n():
+422:    spec = markers().get("rider_stop1_done")
+433:def test_l1_rider_stop2_done_matches_f427_frise_not_end_screen():
+434:    spec = markers()["rider_stop2_done"]
+443:def test_l1_rider_stop2_done_rejects_old_bandeaux_alone():
+445:    spec = markers()["rider_stop2_done"]
+451:def test_rider_rating_marker_is_avis_screen():
+480:def test_rider_home_after_marker_is_the_real_home_screen():
+499:def test_driver_pickup_dialog_confirmed_before_waiting_marker():
+529:def test_driver_stop_button_is_confirmer_l_arret_not_terminer_l_arret():
+548:def test_driver_running_stop1_requires_the_stop_button_not_the_active_screen():
+557:def test_driver_inride_marker_rejects_active_screen():
+564:def test_driver_stop_done_markers_use_arret_n_not_counter():
+567:    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0
+568:    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0
+570:    assert spec_ok(m["driver_stop1_done"], _xml("1/2 arrêt terminé")) != 0
+571:    assert spec_ok(m["driver_stop2_done"], _xml("2/2 arrêts terminés")) != 0
+572:    assert "+1/2" not in m["driver_stop1_done"] and "+2/2" not in m["driver_stop2_done"]
+573:    assert "Arrêt 1" in m["driver_stop1_done"] and "Destination" in m["driver_stop2_done"]
+586:def test_l1_driver_stop_done_markers_require_arret_n_frise():
+588:    assert spec_ok(m["driver_stop1_done"], DRIVER_STOP1_DONE) == 0, m["driver_stop1_done"]
+589:    assert spec_ok(m["driver_stop2_done"], DRIVER_STOP2_DONE) == 0, m["driver_stop2_done"]
+591:    assert spec_ok(m["driver_stop1_done"], _xml("Arrêt 2", "Terminer la course")) != 0, \
+592:        m["driver_stop1_done"]
+593:    assert spec_ok(m["driver_stop2_done"], _xml("Arrivée", "Vous êtes arrivé", "Terminer la course")) != 0, \
+594:        m["driver_stop2_done"]
+595:    for name in ("driver_stop1_done", "driver_stop2_done"):
+604:    # an offer, and « Accueil » is expected under the toast (dashboard stays visible).
+776:  <node index="0" text="" content-desc="" visible-to-user="true" bounds="[0,0][1080,2400]">
+777:    <node index="1" text="Confirmer l'arrêt" content-desc="" visible-to-user="true" bounds="[50,1800][900,1900]" />
+1002:def test_api_flow_uses_subprocess_for_stop_hook():
+
+$ git show --stat c6a782e; echo '---'; git show --stat b4b0c91 | head -30
+commit c6a782eaae624f57a52a5956bfa7a508e84ed69f
+Author: Nix <nix@galass.local>
+Date:   Mon Nov 23 04:58:56 2026 +0000
+
+    wip(autosave): arbre de travail
+
+ .github/workflows/golden-diff.yml | 142 ++++++++++++++++++++++++++++++
+ goldens/README.md                 |  72 +++++++++++++++
+ goldens/board.py                  | 180 ++++++++++++++++++++++++++++++++++++++
+ goldens/gate.sh                   | 128 +++++++++++++++++++++++++++
+ 4 files changed, 522 insertions(+)
+---
+commit b4b0c912ff87135607a562845de683a129b245cd
+Author: Nix <nix@galass.local>
+Date:   Mon Nov 23 06:23:55 2026 +0000
+
+    feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+    
+    - gate.sh: les *.dart du dossier golden sont relus depuis --base et les
+      .dart absents de la base sont supprimes avant flutter test; REF_MUTATED
+      (PNG ou .dart) sort en exit 1 meme si la comparaison restauree est verte
+    - README: garanties reecrites (reference + harnais non falsifiables), section
+      amorcage (exit 2 tant qu'aucun golden sur la reference), limites explicites
+      (vert = zero ecart vs reference, pas zero regression), acceptation, Driver
+    - workflow: commentaire bootstrap (base_ref/accept_new_goldens)
+    - ISA: decisions + learning + Verification, ISC-EMU-4 cochee sur preuve locale
+
+ .github/workflows/golden-diff.yml                  |  5 ++
+ .../ISA.md                                         | 26 ++++++-
+ goldens/README.md                                  | 82 +++++++++++++++++++---
+ goldens/gate.sh                                    | 55 ++++++++++++++-
+ 4 files changed, 155 insertions(+), 13 deletions(-)
+
+$ git log --oneline --follow -- goldens/gate.sh | head; echo '---'; git log --oneline --follow -- .github/workflows/golden-diff.yml | head; echo '--- files changed after c6a782e'; git log --oneline c6a782e..HEAD -- goldens .github/workflows/golden-diff.yml; echo '--- c6a782e ancestry'; git rev-list --count c6a782e..HEAD
+b4b0c91 feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+c6a782e wip(autosave): arbre de travail
+---
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+b4b0c91 feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+c6a782e wip(autosave): arbre de travail
+--- files changed after c6a782e
+737325b fix(artemis): pin Flutter 3.50.1 (align goldens)
+b4b0c91 feat(goldens): gate.sh restaure reference et harnais depuis la base (refus de toute falsification)
+--- c6a782e ancestry
+12
+
+$ ls /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS; ls /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS 2>/dev/null | head -50
+ALGORITHM
+ATLAS
+CORTEX_INDEX_POLICY.json
+DOCUMENTATION
+HERMES
+LIFEOS_SYSTEM_PROMPT.md
+LIFEOS_StatusLine.sh
+PULSE
+RULES
+TOOLS
+USER
+USER_TEMPLATES
+VERSION
+Workflows
+freellmapi_models.json
+ActivateImports.ts
+ActivityParser.ts
+AddBg.ts
+AgentSkillRouter.test.ts
+AgentSkillRouter.ts
+AgentTokenRollup.ts
+AgentWatchdog.ts
+AlgoPhase.ts
+AlgorithmPhaseReport.ts
+AmberCapture.ts
+AppleHealthImport.ts
+ApproveCurrentStateEntries.ts
+ArchDecisionHarvest.ts
+ArchitectureSummaryGenerator.ts
+AskFidelity.ts
+Banner.ts
+BannerMatrix.ts
+BannerNeofetch.ts
+BannerPrototypes.ts
+BannerRetro.ts
+BannerTokyo.ts
+BillingPathAssertion.ts
+BlockMessageGate.ts
+BlogDiscovery.ts
+BookmarkSweep.ts
+BridgeVerify.ts
+BudgetCheck.ts
+CaptureEnvelope.ts
+CarrierProbe.ts
+CheckCompleteness.test.ts
+CheckCompleteness.ts
+CheckFileBoundary.ts
+Checkpoint.ts
+ClipSource.ts
+CodexUpdate.ts
+CommitmentDetect.ts
+CommitmentLog.ts
+CommitmentSweep.ts
+ComputeGap.ts
+ConfigEvalOnChange.ts
+ContextAudit.ts
+Conveyor
+Cortex.ts
+CortexAdapter.ts
+CortexBenchmark.ts
+CortexHealth.ts
+CostTracker.ts
+CreateUpdate.ts
+CrossVendorAudit.ts
+CursorSessionBind.ts
+
+$ find /home/runner/work/lifeos-ci/lifeos-ci/lifeos -maxdepth 4 -iname '*isa*' -type f | head -40; echo '---'; grep -rln "isa_stamp\|ISA.md\|progress:" /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS /home/runner/work/lifeos-ci/lifeos-ci/lifeos/TOOLS 2>/dev/null | head -30
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAHtmlMirror.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISASystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaHtmlMirror.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAFormat.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaFormat.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAHierarchy.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaHierarchy.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/IsaFeatures.test.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISARender.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/IsaReconcile.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/IsaFeatures.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISATool.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISAGate.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/IsaFrontier.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISAToolScopeLog.test.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/fixtures/ISA-goal-smoke.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISAToolHumanTick.test.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/skills-shared/cmux/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/skills-shared/isa/Examples/canonical-isa.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/opencode/plugins/lib/isa-guard.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/opencode/tests/isa-guard.test.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/skills/CMUX/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/skills/ISA/Examples/canonical-isa.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISARenderOnStop.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISAGate.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/lib/isa-template.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/lib/isa-utils.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISAStaleWriteGuard.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISACloseGate.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISAFoldGate.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/hooks/ISASync.hook.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260823-030234_vision-m3-health-score/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261006-galass-regression-multistop/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/cursor-algo-follow-test-20260728/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/galass-dashboard-499-loop-710204/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260825-012317_drizzle-content-sot/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260815-archstudio-lego-catalog/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20261002-galass-rider-dispatch-f3/ISA.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/MEMORY/WORK/20260730-galassdriver-kyc-submit-spinner/ISA.md
+---
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/PULSE/lib/telegram-proposals.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/HERMES/bunker.config.ts
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAHtmlMirror.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISASystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaHtmlMirror.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAFormat.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/IsaFormat.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Amber/AmberSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/SystemUserBoundary.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Atlas/AtlasSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Hooks/HookSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Work/WorkSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Pulse/PulseMetadata.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Pulse/PulseSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Pulse/TerminalTabs.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Bunker/BunkerSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/LifeosSystemArchitecture.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Memory/MemorySystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Memory/CurationCoverage.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Security/NpmRapidResponse.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Synapse/SynapseSystem.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/USER/WORK/Galass_Driver/DRIVER_STATUS.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/USER/WORK/Galass_Rider/RIDER_STATUS.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/USER/CONFIG/settings.user.json
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/USER/CONFIG/COLLAB_PLAYBOOK.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/USER/CONFIG/OPERATIONAL_RULES.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/RULES/SelfHealing.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/ALGORITHM/v8.4.0.md
+/home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/ALGORITHM/changelog.md
+
+$ sed -n '1,160p' /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAFormat.md
+---
+version: 1.10.1
+last_updated: 2026-08-13T23:30:00Z
+last_updated_by: da
+convention: pai-freshness-v1
+---
+
+# LifeOS ISA Format Specification v2.21.0 (Algorithm v8.20.0)
+
+> **v2.21.0 — dependency edges + the frontier.** A claim may declare intra-ISA ordering as a **trailing `(after: ID, ID)` parenthetical** at the end of its description (optionally before a final period). Semantics: the claim is not *takeable* until every named blocker is resolved (checked, or tombstoned `[DROPPED…]` — a killed claim never blocks forever). The deterministic reader is `LIFEOS/TOOLS/IsaFrontier.ts` (`frontier`/`claim`/`release`/`status`/`validate`): it computes the takeable set (open ∧ blockers resolved ∧ no fresh lock), validates edges loudly (cycles, unknown IDs, self-reference, duplicates), and gives **concurrent sessions** an atomic per-claim lock protocol — `wx`-create lock files under `MEMORY/STATE/isa-locks/<sha1(path)>/`, 2h stale TTL, stale locks surfaced and takeable. Three invariants: (1) **the tool never writes the ISA** — the AI stays sole writer, lock state lives centrally and never beside the ISA or in project repos; (2) **compatibility is structural** — the edge rides inside the free-text description every existing parser (isa-utils, ISAGate, Bunker `cells[0..6]`) already treats as opaque, and backticked syntax mentions / mid-line parentheticals never bind (only the trailing form is an edge); (3) **edges are optional forever** — no gate requires or counts them; most ISAs need none. This is the adopted half of the 2026-07-16 F2/F10 findings (blocking graph + frontier query + parallel-session claim protocol), built inside the one-artifact model rather than externalized to a tracker. Full section: § *Dependency edges and the frontier*.
+
+> **v2.20.0 — verifier classes + execution tiers.** Every claim closes through one of three **verifier classes**, derived from the existing `type` column (no new field): **deterministic** (a tool says no — `bun-test`/`bun-property`/`bash`/`curl`/`screenshot`), **judged** (a rubric-bound model says no — `eval`, run via the Evals skill's EvalRunner), **attested** (the principal says no — `manual`). Failure semantics are class-scoped: only deterministic rows may ever block a gate; a judged failure flips the claim open and raises a finding; attested rows carry a dated verdict plus evidence pointer, are tracked for staleness, and are never auto-failed. Prose sections (Problem/Vision/Principles/Out of Scope/fog) carry no class and can never fail — which is what lets one schema span watercolor to Workers: the class mix varies by domain, the schema never. `## Test Strategy` gains an optional eighth column **`tier`** (`deep`, or blank = fast): fast rows (seconds, deterministic) are the only blocking surface (dev loop + deploy gate); deep rows (minutes-to-hours — soak, load, full sweeps, multi-sample eval suites) run on Bunker's clock — the monitor leg and the cloud-scheduler leg are both live (2026-08-11, Bunker ISC-24) — and a deep failure alerts and opens the claim, never blocks work. Additive-safe: `Bunker/src/isa.ts` (private implementation — the concept ships, the code is release-excluded) reads `cells[0..6]` only and ignores the new column (verified 2026-08-09). An unavailable verifier means DEFER per `LIFEOS/RULES/Verification.md` — an ISA never breaks; it shows honest state. Full doctrine: § *Verifier classes and execution tiers*.
+
+> **v2.19.0 — the remaining-work section.** Body grows to **seventeen** sections: **`## Remaining Work`** (position 17, after `## Verification`) is the sanctioned home for concrete work an ISA still owes that was never an ISC of *this* run — follow-ups, handoffs, things noticed at close. Two semantics carry it: **recording an item there is a complete disposition** (no card, issue, or tracker row also required — a format that accepts the line and still demands a card has removed no work), and an ISA's **backlog is the union of its unchecked ISCs and its unchecked Remaining Work items**, so "what does this ISA still owe" is answerable from the artifact alone. Unchecked ISCs stay in `## Claims`/`## Criteria` (the ID-Stability Rule forbids moving them; a criterion that migrates into a prose list stops being a criterion); Remaining Work is only for work that was never a claim of this run. Distinct from `## Not yet specified` (fog = in-scope questions too dim to be claims). **Advisory and omit-when-empty**, never gated — a mandatory remaining-work section would manufacture make-work, the same Bitter-Pill line the unclaimed-work check holds. Ported from public PR #1617, @anikinsasha; the gap it names was real (instances were already improvising `## TODO`/`## Open`/`## Next` headings no other reader sees), and the port was written against our current sixteen-section order rather than the PR's stale fourteen. `CheckCompleteness` carries the backlog union; `ISAGate` does NOT hard-block on it.
+
+> **v2.18.0 — the language section + two close-time conventions.** Body grows to **sixteen** sections: **`## Language`** (position 4, conditional, project ISAs) is the project's ubiquitous language — each term, what it excludes (`Avoid:`), the relationships between terms, and any ambiguity resolved. Glossary only; it never holds implementation detail, claims, or scratch notes. **Entry rule (ours, not the source's): a term enters only after it has actually caused a confusion** — a wrong name shipped, two things called one thing, a term meaning different things to the principal and the model. That makes every entry a verified gotcha rather than a speculative dictionary, and it is what keeps the section bounded; the source builds his proactively during interview, which is the version we did not take. Domain-general by construction (a story bible's canon terms, a brand's naming rules, an album's section names, a project's domain nouns are all the same artifact). Two conventions land with **no new structure**: **pre-build probe run** — before building, run the deterministic probes for claims that could plausibly already hold; a probe that passes before the work exists means either the claim was already true (delete it) or the probe cannot fail (fix it), and both are cheap to learn early. It is scoped to deterministic probe types and is never applied to `manual`/experiential ISCs, where a falsifying observation is ceremony (principal's call, 2026-07-27: falsifiability is already the bar for *being* a claim, so demanding a demonstration of it on every ISC is too strict). **Unclaimed-work check** — at close, the diff is read against the claim set for additions no claim asked for; an ISA can only check the claims it has, so scope creep is structurally invisible to it. Advisory in `ISAGate`, never blocking, because a mandatory anti-claim manufactures its own count. Adapted from Matt Pocock's `domain-modeling`/`CONTEXT.md`, the red-before-green rule in his `tdd`, and the two-axis non-reranking `code-review` (github.com/mattpocock/skills, MIT), generalized past software. The deep-module vocabulary and the wayfinder ticket-type enum from the same suite remain BPE-cut and are not revisited here.
+
+> **v2.17.0 (2026-07-26) — probe severity.** `## Test Strategy` gains an optional seventh column, **`severity`** (`critical` or blank/`normal`), after `anchors_to`. A failing `critical` probe means the app is DOWN in both Bunker planes even when every other probe passes — for claims asserting the app does its JOB, not merely that it answers. Cause: Surface served HTTP 200 for 24h over a dead content pipeline while every probe stayed green. Slot 6 is read as severity only when it is a single bare word, so rows whose unescaped shell pipe shifted `anchors_to` rightward keep parsing, and a single-word value that is not a valid severity is dropped loudly rather than silently downgraded. (Documented retroactively at v2.18.0 — the change shipped into the section table and `Bunker/src/isa.ts` (private implementation) without its own changelog block.)
+
+> **v2.16.0 — feature blocks: features become first-class, each with its own ideal-state.** Still ONE ISA — this is an organizing layer inside it, not a tree of files. When the work has distinct features, `## Features` stops being a pointer table and becomes the home of the claims: each feature is a `### F<n> · <name>` block with a one-line **`Why:`** (its ideal-state purpose — why this feature exists, what done means for it) and its ISCs nested directly underneath. The old `name | satisfies: [ISC-N] | depends_on | parallelizable` **pointer table is deleted** — a feature now *contains* its claims instead of pointing at them. **`F0 · Cross-cutting`** is the reserved block for claims that span features (security, deploy, data-integrity invariants). An ISA uses EITHER a flat `## Claims` section (trivial/small work with no distinct features) OR `## Features` blocks — never both. **ISC IDs stay global and stable** (`ISC-N`), so `## Test Strategy` still keys by ISC and Bunker is unaffected. Three cheap wins fall out of the structure: you can see *why* each feature exists, you can query what features a product has (parse the `### F<n>` headings + `Why:` lines), and doc-generation is feature-organized for free (`ISARender.ts`). **BPE guard:** no new completeness gate, no new tool, no feature-vision-vs-ideal-state taxonomy — one `Why:` line per feature, and it must say what the name and claims don't (a restating why is noise, cut it). The `Why:` earns its place as real, non-derivable intent; the machinery to *enforce* it does not. Parser: `hooks/lib/isa-utils.ts` (`## Features` added to the criteria-heading regex); renderer groups ISCs under feature headings.
+
+> **v2.15.0 (Algorithm v8.7.3) — the retirements land in the file shape.** Three system-level retirements now reflect in the format: (1) **Effort tiers are gone** (retired 2026-07-11) — `effort:` / `effort_source:` are no longer written; the Tier Completeness Gate is replaced by the **substance-scaled Completeness Gate** (trivial work = Goal + Claims minimum; substantial work = the full structural set; project ISAs always full). (2) **The 8-station phase enum is gone** (retired 2026-07-14) — `phase:` is a **minimal lifecycle value**: an active value at run start (`scoping` / `climbing`; `starting` before scaffold settles), `learn` on reopen, `complete` at close, updated in between only when it genuinely changes. Legacy station names (`observe`…`verify`) still parse everywhere. (3) **The mode system is gone** (retired 2026-07-11) — `mode:` and the optimize/ideate frontmatter blocks are legacy, tolerated on old ISAs, never written on new ones. Additionally the **Claims vocabulary** is canonical (Algorithm v8): the criteria section may be headed `## Claims` (current convention) or `## Criteria` / `## ISC Criteria` (legacy, still parsed); claim IDs may be `ISC-N` or short-form (`C1`, `A3`, `EQ-12` — `A`-prefixed short IDs are anti-claims); the separator may be `:` or an em-dash; anti-claims may live inline (`Anti:` prefix) or in a dedicated `## Anti-claims` section; the per-run provenance log may be headed `## Verification` or `## Log`. Frontmatter is **minimal**: `phase` + `progress` are the load-bearing pair; `slug` derives from the directory and `task` from the H1 when omitted. Parser: `hooks/lib/isa-utils.ts` (2026-07-22 claims-vocabulary fix); renderer: `LIFEOS/TOOLS/ISARender.ts`.
+
+> **v2.14.0 (Algorithm v8.5.0) — the fog section + two probe conventions.** The body grows to **fifteen** sections: `## Not yet specified` (after Criteria) is the conditional home for **fog** — in-scope questions too dim to be claims yet. The test (fog vs claim): *can you state the question precisely now — not answer it, state it?* Sharp enough to name its falsifier → an ISC (even if blocked); statable but not yet probe-able → a fog entry; beyond the vision → Out of Scope. Fog **graduates**: when work sharpens an entry, it becomes an ISC (or a Decisions row killing it) and leaves the section. Corollary: **the Coverage Gate is assessed at close, not at scaffold** — genuinely foggy work scaffolds only the claims it can state precisely and holds the rest as fog; forcing speculative ISCs at OBSERVE to satisfy coverage is the failure the section exists to prevent. Domain-general by construction (a research question, an album's unresolved track order, an unpicked venue are all fog). Two probe conventions also land in Test Strategy doctrine: the **seam rule** (probe placement) and **prototype-as-probe** (design questions). Adapted from Matt Pocock's wayfinder fog-of-war doctrine (github.com/mattpocock/skills, MIT), generalized past software; adopted after adversarial verification.
+
+> **v2.13.0 (Algorithm v6.25.0) — ISA scale + a real deletion.** The body grows from twelve sections to **fourteen**: `## Dependencies` (after Constraints) declares cross-ISA needs machine-readably; `## Bridge Criteria` (after Criteria) holds cross-ISA integration ISCs verified at VERIFY across the seam. New optional frontmatter `parent:` / `children:` links ISAs into a tree with **constraint inheritance** (a child cannot violate an ancestor Constraint). **The hard numeric ISC count floors (≥16/≥32/≥128/≥256) are DELETED** and replaced by the **Coverage Gate** — every subsystem named in Vision/Goal has a container ISC decomposed via the Splitting Test to single-probe leaves; coverage is the gate, count never is. Full doctrine in Algorithm v6.25.0 § *ISA Hierarchy & Cross-ISA Integration* and § *ISC Quality System*. The harness executor (`isa run`, reads `## Test Strategy`) is the paired build, tracked separately.
+
+> **LifeOS moves people from current state to ideal state** by writing down what done looks like as testable claims, then refining the writing until every claim survives every test it can be subjected to. The ISA is that written record — the LifeOS loop (`LIFEOS/DOCUMENTATION/LifeOs/LifeOsThesis.md`) at single-artifact scale.
+
+> **The ISA — Ideal State Artifact — is the universal primitive with five identities: ideal state articulation, test harness, build verification, done condition, and system of record. Its ISCs are the testable claims that decompose it. The artifact is universal: same primitive whether the unit is software, science, philosophy, art, life, an application, a CLI tool, a library, infrastructure — anything whose ideal state we're articulating.**
+
+> **Every ISA shares one meta-ideal-state above its specific one: euphoric surprise in the human using the system.** The specific ideal state varies with the work; the general one never does. `## Vision` (section 2) is where the universal target takes specific shape — what euphoric surprise looks like for this work — which is why the canonical example writes it as a concrete scene, not a feature list. The claims verify the specific summit; the Vision keeps the universal one in view.
+
+> **See also:** `LIFEOS/DOCUMENTATION/ISA/ISASystem.md` for the system-architecture doc (five identities, three guardrails, six workflows, two homes, subsystem relationships). This file is the file-shape contract; that file is the conceptual frame. They are siblings, not duplicates.
+
+The ISA is the single source of truth for the thing being articulated.
+The AI writes all ISA content directly using Write/Edit tools and the ISA skill workflows. Hooks only read ISAs to sync state.
+
+**v2.7 (Algorithm v6.2.0+, still current at v6.3.0):** the body grew from six sections to **twelve in fixed order**: Problem, Vision, Out of Scope, Principles, Constraints, Goal, Criteria, Test Strategy, Features, Decisions, Changelog, Verification. Three-guardrail taxonomy locks the conceptual surface (Principles bind thinking, Constraints bind solution space, Out of Scope binds vision, Anti-criteria bind test surface). Tier Completeness Gate is HARD at every tier (E1 = Goal+Criteria; E5 = all twelve + active Interview). New ID-stability rule prevents ISC renumbering on edit. New `## Changelog` section uses Deutsch conjecture/refutation/learning format. Empty sections never appear. The ISA Skill at `~/.claude/skills/ISA/` owns the canonical template and six workflows; Algorithm at OBSERVE invokes `Skill("ISA", "scaffold from prompt at tier T")` at E2+. Full skeleton, tier gate table, three-guardrail table, and ID-stability rule live in the skill's SKILL.md and `Examples/canonical-isa.md`. The Append workflow gates the Changelog format and refuses partial entries (all four pieces — `conjectured`, `refuted by`, `learned`, `criterion now` — are required).
+
+**v2.6 (Algorithm v6.0.0+):** Two ISA homes are now canonical:
+- **Project ISAs** at `<project>/ISA.md` — for any thing with persistent identity (applications, CLI tools, libraries, content pipelines, infrastructure, the Algorithm itself). Lives in the project's repo as system of record. Tasks operating on the project read/modify/extend this single file.
+- **Task ISAs** at `MEMORY/WORK/{slug}/ISA.md` — for ad-hoc work that doesn't belong to a persistent thing. One-shot tasks, system-design sessions, ephemeral investigations.
+
+The format is identical for both; the lifecycle differs. Project ISAs grow continuously across many tasks; task ISAs are created at OBSERVE and archived at `phase: complete`. v6.0.x mechanics for `<project>/ISA.md` parser support, OBSERVE/PLAN inheritance resolver, Pulse rendering, and project-ISA seeding migration are forthcoming patches.
+
+## What an ISA Is
+
+**The ISA is one primitive with five identities** (Algorithm v6.0.0+):
+
+1. **Ideal state articulation** — the written hard-to-vary explanation of "done" (Deutsch sense)
+2. **Test harness** — ISCs ARE the tests, with named probes; for complex projects the ISCs cover application logic, performance, security, RBAC, build, deploy
+3. **Build verification** — passing the ISCs verifies what was built
+4. **Done condition** — task complete when all ISCs pass
+5. **System of record** — for the thing being articulated (the application, the library, the algorithm itself, etc.)
+
+LifeOS moves people from current state to ideal state by writing down what done looks like as testable claims, then refining the writing until every claim survives every test it can be subjected to. The ISA is that written record. The same primitive applies in any domain — code, science, art, philosophy, life decisions, business strategy, applications, CLI tools, libraries, infrastructure.
+
+**Don't invent parallel artifacts.** No `acceptance.yaml`, no `acceptance.ts`, no separate test specs. The ISA covers this surface. For complex apps with rich application logic, the ISA naturally has many more ISCs because the ideal state of a complex app includes API behavior, performance budgets, security model, RBAC/visibility, auth flow, and data integrity invariants alongside task-specific deliverables. They aren't "in addition to" the ISA — they ARE the ISA.
+
+Each ISC is a testable claim — one part of the explanation that can be tried against reality and either pass or fail. Hard-to-variability and testability are the same property: an ISC is hard-to-vary **if and only if** you can name a test that would falsify it. If you can't say what failure looks like, the ISC isn't hard-to-vary; it can be satisfied with anything. The whole ISA is hard-to-vary when removing or weakening any part changes what "done" actually means.
+
+**The ISA is a living explanation.** It tightens through pursuit. The Goal sharpens, claims split or merge, decompositions clarify — driven by your feedback, by tool outputs, by signal returning from research, by claims failing verification. The ISA at scaffold captures the best initial articulation; by close it has been refined by everything the work surfaced. Hard-to-variability is the **outcome** of the algorithmic process, not its precondition. "Done" includes "the explanation became hard-to-vary enough that we know we hit it" — not just checkbox completion.
+
+**Worked example.** Same goal, two ISC framings:
+
+```
+Goal: ship the H3 onboarding email with paid-tier confirmation.
+
+Fluff:        - [ ] ISC-N: Email is delivered to the user.
+              (Trivially passable — almost any send path satisfies it. You can't
+              name a test that would distinguish "delivered" from "delivered to spam.")
+
+Load-bearing: - [ ] ISC-N: Email arrives in primary inbox (not Promotions/Spam) within 60s.
+              (Names a specific test that would fail; removing it lets a "delivered
+              to spam" outcome pass; goal mutates from "user sees the confirmation"
+              to "Postmark logged a send.")
+```
+
+The fluff version can be satisfied with anything because no test would catch its variation. The load-bearing version names a falsifiable claim. That's the operational core of the doctrine — the Hard-to-Vary ISC Quality Gate (Algorithm) and the granularity rule (one binary tool probe per ISC) are the same rule viewed from epistemic and operational angles.
+
+## Filename and Location
+
+**Two canonical homes (v2.6 / Algorithm v6.0.0+):**
+
+- **Project ISAs:** an `ISA.md` at the project root — for things with persistent identity. The project's repo is the system of record. Tasks targeting the project read/modify/extend this single file. Iteration on the project IS iteration on this file. Examples: human3, Surface, and the Algorithm repo each carry a project-root ISA.
+- **Task ISAs:** `MEMORY/WORK/{slug}/ISA.md` — for ad-hoc, one-shot work that doesn't belong to a persistent thing. System-design sessions, ephemeral investigations, exploratory tasks.
+
+**v6.0.x mechanics (SHIPPED):** `ISASync.hook.ts`, `CheckpointPerISC.hook.ts`, and `hooks/lib/isa-utils.ts` discover `<project>/ISA.md` alongside `MEMORY/WORK/` paths; Pulse renders both homes; for deployed applications the project ISA is also the Bunker health contract (`bunker test` re-runs its probes).
+
+**Backwards-compat (HISTORICAL — fully removed):** Through Algorithm v4.1.x hooks read `ISA.md` first and fell back to legacy `PRD.md` when present. The `PRD.md` fallback was removed at Algorithm v4.2.0. Algorithm is now at v6.3.0; any remaining `PRD.md` files in `MEMORY/WORK/` are inert legacy artifacts and are not read by any hook or skill.
+
+## Frontmatter (YAML)
+
+**Minimal by design (v2.15.0).** Two load-bearing fields, the rest recommended or conditional:
+
+```yaml
+---
+phase: climbing                           # REQUIRED — minimal lifecycle value (see Field Rules)
+progress: 3/8                             # REQUIRED — closed claims / total claims
+task: "8 word task description"           # recommended — falls back to the H1 title when omitted
+slug: YYYYMMDD-HHMMSS_kebab-task          # recommended — falls back to the directory name when omitted
+started: 2026-07-23T02:00:00Z             # recommended (ISO 8601)
+updated: 2026-07-23T02:00:00Z             # recommended (ISO 8601)
+---
+```
+
+**Retired fields (2026-07-11 tiers/modes retirement — never written on new ISAs, tolerated on legacy ones):** `effort:`, `effort_source:` (effort tiers are gone; spend is discovered from the work, Algorithm §Spend), `mode:` plus the entire optimize/ideate `algorithm_config` block (the mode system is gone; the blocks below are preserved for parsing legacy ISAs only), `response_mode:` / `algorithm_mode:` (retired 2026-07-11 with `TheRouter.hook.ts`).
+
+Optional field (added on rework/continuation):
+
+```yaml
+iteration: 2                              # Incremented when revisiting a completed task
+resumed_at: 2026-07-23T02:00:00Z          # hook-written on reopen
+resumed_from_phase: complete              # hook-written on reopen
+frozen: true                              # opt-out: body edits do NOT rewind a completed ISA
+```
+
+Optional fields (NEW v2.13.0 / Algorithm v6.25.0 — ISA hierarchy):
+
+```yaml
+parent: 20260706-tolkien-world            # slug of the parent ISA (omit for a root/standalone ISA)
+children:                                 # slugs of child ISAs this one rolls up (omit for a leaf)
+  - 20260706-combat-system
+  - 20260706-magic-system
+```
+
+**Semantics:** `parent`/`children` link ISAs into a tree. A child **inherits every ancestor `## Constraints`** — an inherited Constraint cannot be violated by a child ISC; overriding one is a parent-level renegotiation logged in the parent's `## Decisions`, never a silent child override. A parent's `progress:` may roll up its children (`3/5 children closed`). Both fields are omitted for a standalone single-ISA task (the common case). A change to any linked ISA triggers the Algorithm's blast-radius pass (v6.25.0) which lists downstream ISCs to re-verify; **conflict detection is automated, resolution stays human.**
+
+Optional fields (NEW v2.8 / Algorithm v6.4.0+ — Principal-Stated Goal):
+
+```yaml
+principal_stated_goal: "verbatim user quote, byte-for-byte"   # NEVER paraphrased
+principal_stated_goal_source: prompt                          # prompt | conversation | explicit-revision
+principal_stated_goal_signal: 2                               # 1-4 — which detection signal fired
+principal_stated_goal_locked: 2026-05-12T17:23:56Z            # ISO-8601 timestamp of capture
+```
+
+**Required-when:** OBSERVE goal-detection fired AND minimum-content rule passed (≥ 6 tokens AND propositional content present). Otherwise omitted entirely.
+
+**Lifecycle:** the four fields are immutable across phases unless the user explicitly revises the literal. Revision is recorded as a `## Decisions` row with `refined: principal_stated_goal: was "<old>" now "<new>"`; frontmatter updates only on that explicit revision, and `principal_stated_goal_source` flips to `explicit-revision`.
+
+**Detection signals (the four in v6.4.0):**
+
+| # | Signal | Pattern |
+|---|--------|---------|
+| 1 | Named metric + threshold | quantitative target ("p95 < 200ms", "70k subscribers") |
+| 2 | Explicit outcome assertion | "I want X" / "achieve X" / "do this" |
+| 3 | Completion condition | "until X" / "such that X" |
+| 4 | Structural/design directive | explicit verb-object on the system ("absorb", "replace", "unify") |
+
+**Fail-closed:** if the candidate literal is < 6 tokens OR contains no propositional content ("make it good"), `principal_stated_goal: null` and the candidate is logged to Decisions.
+
+**Multi-literal:** if a prompt contains multiple candidate literals, the first detected wins as `principal_stated_goal:`; the others demote to derived Constraints.
+
+Optional fields (NEW v2.9 / Algorithm v6.5.0+ — Density × Tier Gate at OBSERVE):
+
+```yaml
+density_score: 0.42                    # 0..1 — Stage-2 density computed at Scaffold preflight
+interview_invoked: true                # whether Stage-2 fired the interview
+
+$ grep -n "progress\|ISC\|checkbox\|\[x\]\|preuve\|proof" /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/DOCUMENTATION/Isa/ISAFormat.md | head -60
+12:> **v2.20.0 — verifier classes + execution tiers.** Every claim closes through one of three **verifier classes**, derived from the existing `type` column (no new field): **deterministic** (a tool says no — `bun-test`/`bun-property`/`bash`/`curl`/`screenshot`), **judged** (a rubric-bound model says no — `eval`, run via the Evals skill's EvalRunner), **attested** (the principal says no — `manual`). Failure semantics are class-scoped: only deterministic rows may ever block a gate; a judged failure flips the claim open and raises a finding; attested rows carry a dated verdict plus evidence pointer, are tracked for staleness, and are never auto-failed. Prose sections (Problem/Vision/Principles/Out of Scope/fog) carry no class and can never fail — which is what lets one schema span watercolor to Workers: the class mix varies by domain, the schema never. `## Test Strategy` gains an optional eighth column **`tier`** (`deep`, or blank = fast): fast rows (seconds, deterministic) are the only blocking surface (dev loop + deploy gate); deep rows (minutes-to-hours — soak, load, full sweeps, multi-sample eval suites) run on Bunker's clock — the monitor leg and the cloud-scheduler leg are both live (2026-08-11, Bunker ISC-24) — and a deep failure alerts and opens the claim, never blocks work. Additive-safe: `Bunker/src/isa.ts` (private implementation — the concept ships, the code is release-excluded) reads `cells[0..6]` only and ignores the new column (verified 2026-08-09). An unavailable verifier means DEFER per `LIFEOS/RULES/Verification.md` — an ISA never breaks; it shows honest state. Full doctrine: § *Verifier classes and execution tiers*.
+14:> **v2.19.0 — the remaining-work section.** Body grows to **seventeen** sections: **`## Remaining Work`** (position 17, after `## Verification`) is the sanctioned home for concrete work an ISA still owes that was never an ISC of *this* run — follow-ups, handoffs, things noticed at close. Two semantics carry it: **recording an item there is a complete disposition** (no card, issue, or tracker row also required — a format that accepts the line and still demands a card has removed no work), and an ISA's **backlog is the union of its unchecked ISCs and its unchecked Remaining Work items**, so "what does this ISA still owe" is answerable from the artifact alone. Unchecked ISCs stay in `## Claims`/`## Criteria` (the ID-Stability Rule forbids moving them; a criterion that migrates into a prose list stops being a criterion); Remaining Work is only for work that was never a claim of this run. Distinct from `## Not yet specified` (fog = in-scope questions too dim to be claims). **Advisory and omit-when-empty**, never gated — a mandatory remaining-work section would manufacture make-work, the same Bitter-Pill line the unclaimed-work check holds. Ported from public PR #1617, @anikinsasha; the gap it names was real (instances were already improvising `## TODO`/`## Open`/`## Next` headings no other reader sees), and the port was written against our current sixteen-section order rather than the PR's stale fourteen. `CheckCompleteness` carries the backlog union; `ISAGate` does NOT hard-block on it.
+16:> **v2.18.0 — the language section + two close-time conventions.** Body grows to **sixteen** sections: **`## Language`** (position 4, conditional, project ISAs) is the project's ubiquitous language — each term, what it excludes (`Avoid:`), the relationships between terms, and any ambiguity resolved. Glossary only; it never holds implementation detail, claims, or scratch notes. **Entry rule (ours, not the source's): a term enters only after it has actually caused a confusion** — a wrong name shipped, two things called one thing, a term meaning different things to the principal and the model. That makes every entry a verified gotcha rather than a speculative dictionary, and it is what keeps the section bounded; the source builds his proactively during interview, which is the version we did not take. Domain-general by construction (a story bible's canon terms, a brand's naming rules, an album's section names, a project's domain nouns are all the same artifact). Two conventions land with **no new structure**: **pre-build probe run** — before building, run the deterministic probes for claims that could plausibly already hold; a probe that passes before the work exists means either the claim was already true (delete it) or the probe cannot fail (fix it), and both are cheap to learn early. It is scoped to deterministic probe types and is never applied to `manual`/experiential ISCs, where a falsifying observation is ceremony (principal's call, 2026-07-27: falsifiability is already the bar for *being* a claim, so demanding a demonstration of it on every ISC is too strict). **Unclaimed-work check** — at close, the diff is read against the claim set for additions no claim asked for; an ISA can only check the claims it has, so scope creep is structurally invisible to it. Advisory in `ISAGate`, never blocking, because a mandatory anti-claim manufactures its own count. Adapted from Matt Pocock's `domain-modeling`/`CONTEXT.md`, the red-before-green rule in his `tdd`, and the two-axis non-reranking `code-review` (github.com/mattpocock/skills, MIT), generalized past software. The deep-module vocabulary and the wayfinder ticket-type enum from the same suite remain BPE-cut and are not revisited here.
+20:> **v2.16.0 — feature blocks: features become first-class, each with its own ideal-state.** Still ONE ISA — this is an organizing layer inside it, not a tree of files. When the work has distinct features, `## Features` stops being a pointer table and becomes the home of the claims: each feature is a `### F<n> · <name>` block with a one-line **`Why:`** (its ideal-state purpose — why this feature exists, what done means for it) and its ISCs nested directly underneath. The old `name | satisfies: [ISC-N] | depends_on | parallelizable` **pointer table is deleted** — a feature now *contains* its claims instead of pointing at them. **`F0 · Cross-cutting`** is the reserved block for claims that span features (security, deploy, data-integrity invariants). An ISA uses EITHER a flat `## Claims` section (trivial/small work with no distinct features) OR `## Features` blocks — never both. **ISC IDs stay global and stable** (`ISC-N`), so `## Test Strategy` still keys by ISC and Bunker is unaffected. Three cheap wins fall out of the structure: you can see *why* each feature exists, you can query what features a product has (parse the `### F<n>` headings + `Why:` lines), and doc-generation is feature-organized for free (`ISARender.ts`). **BPE guard:** no new completeness gate, no new tool, no feature-vision-vs-ideal-state taxonomy — one `Why:` line per feature, and it must say what the name and claims don't (a restating why is noise, cut it). The `Why:` earns its place as real, non-derivable intent; the machinery to *enforce* it does not. Parser: `hooks/lib/isa-utils.ts` (`## Features` added to the criteria-heading regex); renderer groups ISCs under feature headings.
+22:> **v2.15.0 (Algorithm v8.7.3) — the retirements land in the file shape.** Three system-level retirements now reflect in the format: (1) **Effort tiers are gone** (retired 2026-07-11) — `effort:` / `effort_source:` are no longer written; the Tier Completeness Gate is replaced by the **substance-scaled Completeness Gate** (trivial work = Goal + Claims minimum; substantial work = the full structural set; project ISAs always full). (2) **The 8-station phase enum is gone** (retired 2026-07-14) — `phase:` is a **minimal lifecycle value**: an active value at run start (`scoping` / `climbing`; `starting` before scaffold settles), `learn` on reopen, `complete` at close, updated in between only when it genuinely changes. Legacy station names (`observe`…`verify`) still parse everywhere. (3) **The mode system is gone** (retired 2026-07-11) — `mode:` and the optimize/ideate frontmatter blocks are legacy, tolerated on old ISAs, never written on new ones. Additionally the **Claims vocabulary** is canonical (Algorithm v8): the criteria section may be headed `## Claims` (current convention) or `## Criteria` / `## ISC Criteria` (legacy, still parsed); claim IDs may be `ISC-N` or short-form (`C1`, `A3`, `EQ-12` — `A`-prefixed short IDs are anti-claims); the separator may be `:` or an em-dash; anti-claims may live inline (`Anti:` prefix) or in a dedicated `## Anti-claims` section; the per-run provenance log may be headed `## Verification` or `## Log`. Frontmatter is **minimal**: `phase` + `progress` are the load-bearing pair; `slug` derives from the directory and `task` from the H1 when omitted. Parser: `hooks/lib/isa-utils.ts` (2026-07-22 claims-vocabulary fix); renderer: `LIFEOS/TOOLS/ISARender.ts`.
+24:> **v2.14.0 (Algorithm v8.5.0) — the fog section + two probe conventions.** The body grows to **fifteen** sections: `## Not yet specified` (after Criteria) is the conditional home for **fog** — in-scope questions too dim to be claims yet. The test (fog vs claim): *can you state the question precisely now — not answer it, state it?* Sharp enough to name its falsifier → an ISC (even if blocked); statable but not yet probe-able → a fog entry; beyond the vision → Out of Scope. Fog **graduates**: when work sharpens an entry, it becomes an ISC (or a Decisions row killing it) and leaves the section. Corollary: **the Coverage Gate is assessed at close, not at scaffold** — genuinely foggy work scaffolds only the claims it can state precisely and holds the rest as fog; forcing speculative ISCs at OBSERVE to satisfy coverage is the failure the section exists to prevent. Domain-general by construction (a research question, an album's unresolved track order, an unpicked venue are all fog). Two probe conventions also land in Test Strategy doctrine: the **seam rule** (probe placement) and **prototype-as-probe** (design questions). Adapted from Matt Pocock's wayfinder fog-of-war doctrine (github.com/mattpocock/skills, MIT), generalized past software; adopted after adversarial verification.
+26:> **v2.13.0 (Algorithm v6.25.0) — ISA scale + a real deletion.** The body grows from twelve sections to **fourteen**: `## Dependencies` (after Constraints) declares cross-ISA needs machine-readably; `## Bridge Criteria` (after Criteria) holds cross-ISA integration ISCs verified at VERIFY across the seam. New optional frontmatter `parent:` / `children:` links ISAs into a tree with **constraint inheritance** (a child cannot violate an ancestor Constraint). **The hard numeric ISC count floors (≥16/≥32/≥128/≥256) are DELETED** and replaced by the **Coverage Gate** — every subsystem named in Vision/Goal has a container ISC decomposed via the Splitting Test to single-probe leaves; coverage is the gate, count never is. Full doctrine in Algorithm v6.25.0 § *ISA Hierarchy & Cross-ISA Integration* and § *ISC Quality System*. The harness executor (`isa run`, reads `## Test Strategy`) is the paired build, tracked separately.
+30:> **The ISA — Ideal State Artifact — is the universal primitive with five identities: ideal state articulation, test harness, build verification, done condition, and system of record. Its ISCs are the testable claims that decompose it. The artifact is universal: same primitive whether the unit is software, science, philosophy, art, life, an application, a CLI tool, a library, infrastructure — anything whose ideal state we're articulating.**
+39:**v2.7 (Algorithm v6.2.0+, still current at v6.3.0):** the body grew from six sections to **twelve in fixed order**: Problem, Vision, Out of Scope, Principles, Constraints, Goal, Criteria, Test Strategy, Features, Decisions, Changelog, Verification. Three-guardrail taxonomy locks the conceptual surface (Principles bind thinking, Constraints bind solution space, Out of Scope binds vision, Anti-criteria bind test surface). Tier Completeness Gate is HARD at every tier (E1 = Goal+Criteria; E5 = all twelve + active Interview). New ID-stability rule prevents ISC renumbering on edit. New `## Changelog` section uses Deutsch conjecture/refutation/learning format. Empty sections never appear. The ISA Skill at `~/.claude/skills/ISA/` owns the canonical template and six workflows; Algorithm at OBSERVE invokes `Skill("ISA", "scaffold from prompt at tier T")` at E2+. Full skeleton, tier gate table, three-guardrail table, and ID-stability rule live in the skill's SKILL.md and `Examples/canonical-isa.md`. The Append workflow gates the Changelog format and refuses partial entries (all four pieces — `conjectured`, `refuted by`, `learned`, `criterion now` — are required).
+52:2. **Test harness** — ISCs ARE the tests, with named probes; for complex projects the ISCs cover application logic, performance, security, RBAC, build, deploy
+53:3. **Build verification** — passing the ISCs verifies what was built
+54:4. **Done condition** — task complete when all ISCs pass
+59:**Don't invent parallel artifacts.** No `acceptance.yaml`, no `acceptance.ts`, no separate test specs. The ISA covers this surface. For complex apps with rich application logic, the ISA naturally has many more ISCs because the ideal state of a complex app includes API behavior, performance budgets, security model, RBAC/visibility, auth flow, and data integrity invariants alongside task-specific deliverables. They aren't "in addition to" the ISA — they ARE the ISA.
+61:Each ISC is a testable claim — one part of the explanation that can be tried against reality and either pass or fail. Hard-to-variability and testability are the same property: an ISC is hard-to-vary **if and only if** you can name a test that would falsify it. If you can't say what failure looks like, the ISC isn't hard-to-vary; it can be satisfied with anything. The whole ISA is hard-to-vary when removing or weakening any part changes what "done" actually means.
+63:**The ISA is a living explanation.** It tightens through pursuit. The Goal sharpens, claims split or merge, decompositions clarify — driven by your feedback, by tool outputs, by signal returning from research, by claims failing verification. The ISA at scaffold captures the best initial articulation; by close it has been refined by everything the work surfaced. Hard-to-variability is the **outcome** of the algorithmic process, not its precondition. "Done" includes "the explanation became hard-to-vary enough that we know we hit it" — not just checkbox completion.
+65:**Worked example.** Same goal, two ISC framings:
+70:Fluff:        - [ ] ISC-N: Email is delivered to the user.
+74:Load-bearing: - [ ] ISC-N: Email arrives in primary inbox (not Promotions/Spam) within 60s.
+80:The fluff version can be satisfied with anything because no test would catch its variation. The load-bearing version names a falsifiable claim. That's the operational core of the doctrine — the Hard-to-Vary ISC Quality Gate (Algorithm) and the granularity rule (one binary tool probe per ISC) are the same rule viewed from epistemic and operational angles.
+89:**v6.0.x mechanics (SHIPPED):** `ISASync.hook.ts`, `CheckpointPerISC.hook.ts`, and `hooks/lib/isa-utils.ts` discover `<project>/ISA.md` alongside `MEMORY/WORK/` paths; Pulse renders both homes; for deployed applications the project ISA is also the Bunker health contract (`bunker test` re-runs its probes).
+100:progress: 3/8                             # REQUIRED — closed claims / total claims
+128:**Semantics:** `parent`/`children` link ISAs into a tree. A child **inherits every ancestor `## Constraints`** — an inherited Constraint cannot be violated by a child ISC; overriding one is a parent-level renegotiation logged in the parent's `## Decisions`, never a silent child override. A parent's `progress:` may roll up its children (`3/5 children closed`). Both fields are omitted for a standalone single-ISA task (the common case). A change to any linked ISA triggers the Algorithm's blast-radius pass (v6.25.0) which lists downstream ISCs to re-verify; **conflict detection is automated, resolution stays human.**
+209:- `current_state` / `ideal_state`: optional one-line summaries for the Pulse Journey Strip. Populated when the Algorithm can produce a clean one-liner during OBSERVE (most multi-file work qualifies). If both are absent, the Journey Strip falls back to ISC progress count.
+215:- `current_state`: immutable once written. The "before" snapshot doesn't change as work progresses.
+300:- `progress`: Format `M/N` where M = closed claims, N = total claims. Updated immediately when a claim closes (don't batch at the end).
+310:**Seventeen sections in fixed order** (grown from twelve at v2.7 → fourteen at v2.13 → fifteen at v2.14 → sixteen at v2.18 → seventeen at v2.19). Each appears only when populated — never create empty placeholder sections (Bitter Pill discipline preserved). The substance-scaled Completeness Gate (below) determines which sections are required for a given piece of work. **Section-name note (v2.15.0 / Algorithm v8):** the criteria section may be headed `## Claims` (current convention) or `## Criteria` / `## ISC Criteria` (legacy — both parse); anti-claims may live inline via the `Anti:` prefix or in a dedicated `## Anti-claims` section; the provenance section may be headed `## Verification` or `## Log`. "Written At" uses lifecycle vocabulary — scoping (articulation), climbing (build + verification), learning (close).
+322:| 9 | `## Claims` | **Feature-less mode** — the flat home for atomic claims/ISCs (one binary tool probe each) when the work has no distinct features (trivial/small ISAs, most task ISAs). Includes derived `Anti:` / `Antecedent:`. Heading `## Claims` is current (v8); `## Criteria` / `## ISC Criteria` legacy, still parse. When the work HAS distinct features, omit this section and put the claims in `## Features` blocks instead (§13) | scoping → climbing |
+323:| 10 | `## Not yet specified` | **NEW v2.14.0 (v8.5.0)** — fog: in-scope questions too dim to be claims. One line each: `- fog: <the question as precisely as it can currently be stated> — <what must resolve before it sharpens>`. Graduates to an ISC (or dies via Decisions) as work sharpens it; never checked, never counted by coverage. Omit when the work has no fog (most tasks). | scoping → any point |
+324:| 11 | `## Bridge Criteria` | **NEW v2.13.0 (v6.25.0)** — cross-ISA integration ISCs: `- [ ] ISC-N: Bridge: <what must hold across the seam>`, with `anchors_to: cross: <slug>` in Test Strategy. Verified as a distinct pass after leaf claims. Omit when the ISA integrates with no siblings. | scoping → climbing |
+325:| 12 | `## Test Strategy` | Per-ISC verification — the harness contract Bunker's parser reads. **Column order (parser truth, `Bunker/src/isa.ts` — private implementation, release-excluded): `isc \| type \| check \| threshold \| tool \| anchors_to \| severity`** (`anchors_to` and `severity` both optional, in that order). `anchors_to` traces to `literal`, `derived: <sub-claim>`, or **`cross: <slug>`** (v2.13.0, bridge ISCs). ⚠️ This order is the contract — the parser reads `cells[1]=type … cells[5]=anchors_to`, `cells[6]=severity`; a table in any other order mis-probes or drops. **`severity`** (v2.17.0, 2026-07-26) is `critical` or blank/`normal`: a failing `critical` probe means the app is DOWN in both Bunker planes even when everything else passes — for probes asserting the app does its JOB, not just that it answers (Surface served 200 for 24h over a dead content pipeline while every probe stayed green). Slot 6 is read as severity only when it is a single bare word, so rows whose unescaped shell pipe shifted `anchors_to` rightward keep parsing; a single-word value that is not a valid severity is dropped loudly rather than silently downgraded. **Backticks around a `tool` command are stripped as markdown formatting** — before that, a backticked command silently failed to compile into a cloud check and fell back to local-only. Keep this line byte-synced to `isa.ts`. **`tier`** (v2.20.0) is an optional eighth column (`deep`, blank = fast) the current parser ignores (`cells[0..6]` only) — see § *Verifier classes and execution tiers*. | scoping |
+326:| 13 | `## Features` | **Feature mode (v2.16.0)** — when the work has distinct features, this section holds the claims. Each feature is a `### F<n> · <name>` block: a one-line **`Why:`** (its ideal-state purpose) then its ISCs nested underneath. `F0 · Cross-cutting` holds spanning claims (security, deploy, data-integrity). The old `name \| satisfies` **pointer table is deleted** — a feature contains its claims. ISC IDs stay global + stable so `## Test Strategy` resolves. Use this OR flat `## Claims` (§9), never both. A feature may still deliver a **decision** rather than a build increment | scoping → climbing |
+330:| 17 | `## Remaining Work` | **NEW v2.19.0** — the home for concrete work this ISA still owes that was never an ISC of *this* run: follow-ups, handoffs, things noticed at close. One line each: `- [ ] <the work, stated concretely> — <why it's not an ISC of this run / who or what it waits on>`. **Recording an item here IS a complete disposition** — it does not also require a card, issue, or tracker row. **Advisory and omit-when-empty**: never gated, never counted toward coverage, and a mandatory version would manufacture make-work. Distinct from `## Not yet specified` (fog = in-scope questions too dim to be claims) and from unchecked ISCs (claims of this run, which stay in `## Claims`/`## Criteria` — the ID-Stability Rule forbids moving them here). Items graduate out: done → checked/removed, or promoted to an ISC or an external card when they become real scoped work. | learning |
+336:When the work has distinct features, `## Features` holds the claims as blocks. Each block is a `### F<n> · <name>` heading, a one-line `Why:`, then the ISCs:
+344:- [x] ISC-1: Every response carries HSTS + X-Content-Type-Options.
+345:- [x] ISC-2: All D1 access is parameterized — no SQL string interpolation of values.
+350:- [x] ISC-3: Checkout creates a Stripe session with server-side pricing.
+351:- [x] ISC-4: 16-day trial charges exactly once on day 16.
+352:- [ ] ISC-5: Anti: the webhook is idempotent on event.id.
+358:- **ISC IDs stay global and stable across the whole ISA** (`ISC-N`), never per-feature. This is what keeps `## Test Strategy` (ISC-keyed) and Bunker working, and preserves ID-stability for Reconcile. Moving an ISC between features never renumbers it.
+368:**Evidence collapses on close.** The moment a claim goes `[x]`, its `## Verification` entry is reduced to a **one-line provenance stub** — a commit hash, test name, or probe ref — never a retained paragraph. The proof lives in git and CI; the ISA points at it. A `## Verification` section that accumulates evidence paragraphs is the failure this convention prevents.
+380:\* `## Dependencies` and `## Bridge Criteria` are **conditional-required**: mandatory when the ISA has any `parent:`/`children:`/cross-ISA relationship, omitted (like any empty section) for a standalone single-ISA task. `## Not yet specified` appears only when the work genuinely has fog. `## Language` appears only when a term has actually been confused — it is never required by substance, and an empty or speculative glossary is worse than none. `## Remaining Work` is **never required at any tier** — it appears only when the ISA genuinely still owes work that was never an ISC of the run, and its absence is never a gate failure. A hierarchical ISA that omits Dependencies/Bridge fails the gate; a standalone one that omits them passes.
+384:**Mechanical structural gate (v2.16.0+, 2026-07-24).** The un-gameable structural subset is enforced deterministically at the close transition by `LIFEOS/TOOLS/ISAGate.ts` (wired via `hooks/ISAGate.hook.ts` in StopGates): writing `phase: complete` **hard-blocks** on (1) `progress:` that is not a mechanical `M/N` count, (2) unresolved lines in `## Not yet specified` (fog must be empty at close), and (3) a `## Test Strategy` row missing `anchors_to` when `principal_stated_goal` is set. Count-gameable checks (≥1 anti-claim, per-claim probe coverage, bundled-claim and event-claim heuristics) are **advisory only** — `ISAGate` surfaces them but never blocks, because a count-block manufactures the count (the Goodhart line the 2026-07-24 Forge audit drew). The gate is scoped to ISAs edited in the current turn, so legacy closed ISAs are never retroactively gated. The richer semantic set stays the model-run `Skill("ISA", "check completeness")` workflow. Run `bun LIFEOS/TOOLS/ISAGate.ts <isa>` to see hard + advisory findings for any ISA.
+388:Distinguished by *who they bind*: Principles bind the **thinking** (substrate-independent); Constraints bind the **solution space** (immovable); Out of Scope binds the **vision** (declarative anti-vision); Anti-criteria bind the **test surface** (granular `Anti:` ISCs derived from the first three).
+392:ISC IDs never re-number on edit. Splits become `ISC-N.M` (parent preserved); drops become tombstones (`- [ ] ISC-N: [DROPPED — see Decisions]`). Reconcile depends on this; renumbering breaks ephemeral feature reconciliation silently.
+394:### ISC Type Vocabulary (v2.12 / Algorithm v6.10.0 candidate)
+404:| `manual` | `check \| tool` | principal-recognizes-on-encounter | Experiential ISCs — design, voice, "feels right" |
+412:| ISC-N    | literal    | bun-property  | round-trip: parse(serialize(x)) ≡ x     | fc.record({...isa frontmatter schema}) | 1000 | bun test test/hooks/lib/isa-utils.property.test.ts -t "round-trips" |
+417:- `runs` — `numRuns` budget. Default 1000. 10000 for invariant-critical ISCs. 100 for slow generators.
+420:**On substantial work**, every pure-function ISC SHOULD have at least one `bun-property` row in `## Test Strategy`. **On core-surface or security surface** (hooks, the ISA/Bunker probe primitive, auth/secret/identity code, release gates), a pure-function ISC MUST name a probe stronger than a single example test — a `bun-property` row or a mutation check — because an example test on a security boundary proves one input, not the class (fast-check is installed and sanctioned; TestingDoctrine rule #11). When property form doesn't apply (impure function, infinite-state machine, externally-driven dependency), record the reason in `## Decisions`. See `skills/Hardening/Workflows/PropertyTest.md` for candidate detection logic and the ten property categories.
+422:**Anti-claims default to universal form on substantial work.** An Anti-ISC that says "API_KEY isn't in env" should be re-expressed as `∀ env-var-name. env-var-name !~ /API_KEY|AUTH_TOKEN/i in spawned env` — a property covering the failure-mode pattern, not the single instance. Example-shaped Anti-ISCs remain acceptable when the input domain is finite and small (named enums, fixed input sets), or when a `## Decisions` row records why universal form doesn't apply.
+445:Compatibility contract: `Bunker/src/isa.ts` (private implementation — the Bunker concept ships in DOCUMENTATION, the code is release-excluded) reads `cells[0..6]` only, so an eighth cell is ignored by all existing tooling (verified against source 2026-08-09). A row carrying `tier` writes the `severity` column too (blank when normal) so slots stay aligned — a bare `deep` landing in slot 6 is rejected loudly as an unknown severity, which is the intended failure. Scheduler execution of the deep tier is live in both planes (Bunker ISC-23/24): the local monitor runs deep rows on its schedule, and the cloud health worker runs `deep`-compiled checks on a top-of-hour cadence with the last verdict carried forward between runs. Deploy and close gates still run fast deterministic rows only, by doctrine.
+449:Match probe strictness to what the ISC touches, not to a uniform default. When an ISC touches **high-blast** surface — `.env`/secrets, auth, principal data, money movement, a push to a *public* remote, or a prod deploy — its `## Test Strategy` row must name a deterministic probe (`bash`/`bun-test`/`screenshot`, never `manual`) and the change satisfying it should land in a small, line-readable diff. **Low-blast** ISCs — static content, internal plumbing, anything reaching no network, DB, or principal data — can be verified empirically (test, output match, screenshot) without a line-by-line read, and tolerate large diffs.
+451:This adds no field and no section. It's a probe-selection convention layered on the granularity rule and Test Strategy: high-blast surface is the same surface the release containment gates, `SystemFileGuard`, and `settings.json` `permissions.deny` already protect — the convention just makes ISCs over that surface name their stricter probe explicitly, and frees trivial changes from ceremony they don't need.
+459:When an ISC hinges on an unresolved **design question** — how should this behave, what should this look like, does this model of the problem hold — the cheapest honest probe is a **throwaway concrete artifact to react to**: a sketch, an outline, a rough take, a stub, runnable code. Rules: the artifact is marked disposable and kept out of the main line (a scratch dir, a throwaway branch); only the *decision* it settles folds back — into the ISC it sharpens, a Decisions row, and (when a fragment encodes the decision more precisely than prose) that fragment inlined and attributed. The prototype answers the question and dies; the decision persists. *(Generalized from Pocock's prototype skill, MIT; adopted 2026-07-16.)*
+466:- [x] C1: Schema migrated to v2 with rollback script verified.
+472:**Syntax.** `(after: ID[, ID...])` as the LAST parenthetical of the description, optionally before a final period. IDs are claim IDs from the same ISA (any legal form — `ISC-N`, `ISC-2.1`, `C4`, `H-AVAIL`). Backticked code spans and mid-line parentheticals never parse as edges, so a claim can *quote* the syntax safely. Edges are intra-ISA only; cross-ISA needs stay in `## Dependencies`.
+496:When an ISC covers a surface that fills asynchronously — a panel, list, or view fed by a fetch, query, or job — "renders correctly" is not one state but four: **loading, error, empty, populated**. The ISC enumerates them (or splits to one leaf per state), and the probe names which state it captured. A check that only exercises the populated, fresh-load state leaves the other three unverified — which is how a broken loading skeleton, an unhandled fetch error, or a fixture rendering in place of a real empty set ships as "done."
+498:This adds no field and no section — it is the Splitting Test's "enumerate what 'all' means" applied to the one enumeration models skip by default. It fires only for async UI surfaces; a static ISC stays one probe. *(Dated pattern: happy-path-only VERIFY was the most recurrent low-sentiment reflection through mid-2026; the earlier "'should work' is banned" lexical rule did not close it, so the fix is structural — the ISC schema names the states.)*
+529:This is the operational form of the doctrine the format already states: an ISC is hard-to-vary if and only if you can name a test that would falsify it. Naming the falsifier is cheap; the pre-build run is the cheapest way to find out the falsifier was never real.
+531:**Scope — deterministic probe types only** (`bash`, `curl`, `bun-test`, `bun-property`, `screenshot`). It is **never** applied to `manual`/experiential ISCs. Demanding a falsifying observation of an ISC about how something feels is ceremony, and plenty of valuable claims are not falsifiable in that sense at all — those belong in `## Vision`, `## Principles`, or `## Not yet specified`, none of which are claims and none of which this convention touches (principal's call, 2026-07-27). It is a habit, not a gate: no field, no column, no block on close. *(Generalized from the red-before-green rule in Pocock's `tdd` and the Phase-1 gate in his `diagnosing-bugs`, MIT.)*
+
+$ sed -n '1,240p' /home/runner/work/lifeos-ci/lifeos-ci/lifeos/opencode/plugins/lib/isa-guard.ts
+// Garde ISA : un ISA.md ne s'écrit jamais à la main. Extrait de lifeos-hooks.ts pour être testable.
+// Sans skill ISA chargé dans la session : toute écriture refusée. Avec : seul ISATool.ts (outil du skill) passe ;
+// edit/write/patch directs restent refusés (règle « jamais à la main », SKILL.md ISA). ISAGate vérifie l'empreinte en HARD.
+
+export const ISATOOL = /^\s*(?:LIFEOS_SESSION_ID=\S+\s+)?bun\s+(?:~|\$HOME|\/home\/[^\/\s]+)\/\.claude\/LIFEOS\/TOOLS\/ISATool\.ts\s[^;&|`$<>\n\r]*$/;
+const ISA_IN = /ISA\.md\b/;
+const BASH_WRITE = /(>>?\s*['"]?[^\s'";&|]*ISA\.md|\btee\b[^|;&]*ISA\.md|\bsed\b[^|;&]*\s-[a-zA-Z]*i|\bperl\b[^|;&]*\s-[a-zA-Z]*i|\b(cp|mv|rsync|install|ln|dd|truncate|rm|unlink|patch|git\s+(checkout|restore|apply))\b|writeFile|Bun\.write|\bcurl\b[^|;&]*\s-[a-zA-Z]*o|\bwget\b|\bopen\([^)]*['"][wa]|write_text|awk\s+-i|\bex\b|\bvim?\b|\bnano\b)/;
+const isIsa = (f: any) => typeof f === "string" && /(^|\/)ISA\.md$/.test(f);
+
+const TOOL = "bun ~/.claude/LIFEOS/TOOLS/ISATool.ts";
+const FORBIDDEN = /[;&|`$<>\n\r]/;
+
+/** Premier opérateur de shell NON quoté d'une commande (nom lisible) — ce qui casse « commande seule ». */
+function unquotedOperator(cmd: string): { at: number; name: string } | null {
+  let q: string | null = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (q) { if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === "&") return { at: i, name: cmd[i + 1] === "&" ? "&&" : "&" };
+    if (c === "|") return { at: i, name: cmd[i + 1] === "|" ? "||" : "|" };
+    if (c === ";") return { at: i, name: ";" };
+    if (c === "`") return { at: i, name: "`" };
+    if (c === "$" && cmd[i + 1] === "(") return { at: i, name: "$(" };
+    if (c === ">") return { at: i, name: cmd[i + 1] === ">" ? ">>" : ">" };
+    if (c === "<") return { at: i, name: "<" };
+    if (c === "\n" || c === "\r") return { at: i, name: "saut de ligne" };
+  }
+  return null;
+}
+
+/** Caractères interdits placés ENTRE guillemets : le garde les refuse aussi (regex sans notion de quote). */
+function quotedForbidden(seg: string): string[] {
+  const out = new Set<string>();
+  let q: string | null = null;
+  for (const c of seg) {
+    if (q) { if (c === q) q = null; else if (FORBIDDEN.test(c)) out.add(c === "\n" || c === "\r" ? "saut de ligne" : c); continue; }
+    if (c === "'" || c === '"') q = c;
+  }
+  return [...out];
+}
+
+/** L'appel `bun …ISATool.ts <verbe> …` contenu dans une commande, coupé au premier opérateur non quoté, script normalisé en ~/.claude. */
+function isaToolCall(cmd: string): string | null {
+  const m = cmd.match(/\bbun\s+\S*ISATool\.ts["']?\s+(\S[\s\S]*)$/);
+  if (!m) return null;
+  const rest = m[1]!;
+  const op = unquotedOperator(rest);
+  const seg = (op ? rest.slice(0, op.at) : rest).trim();
+  return seg ? `${TOOL} ${seg}` : null;
+}
+
+/** Chemin de l'ISA visé : argument de l'outil, sinon premier mot `…ISA.md` de la commande/du patch. */
+function targetIsa(tool: string, a: any): string {
+  const f = a?.filePath ?? a?.file_path;
+  if (isIsa(f)) return f;
+  const blob = String(tool === "bash" ? a?.command ?? "" : a?.patchText ?? a?.patch ?? a?.input ?? "");
+  const m = blob.match(/(?:^|[\s'">=])((?:[^\s'">;&|<=]*\/)?ISA\.md)\b/);
+  return m?.[1] ?? "<chemin/ISA.md>";
+}
+
+/** Gestes exacts, prêts à copier, pour le fichier visé. */
+function recipes(path: string): string {
+  return [
+    `  ajouter du texte : ${TOOL} append ${path} --section "<Section>" --text "<texte>"`,
+    `  cocher (preuve ≥ 20 car.) : ${TOOL} tick ${path} --isc ISC-<n> --evidence "<commande → sortie>"`,
+    `  frontmatter : ${TOOL} set ${path} --field <champ> --value <valeur>`,
+    `  correction exacte : ${TOOL} replace ${path} --old "<ancien>" --new "<nouveau>"`,
+  ].join("\n");
+}
+
+const QUOTE_HINT = (chars: string[]) =>
+  `Le caractère ${chars.map((c) => `« ${c} »`).join(", ")} est refusé même entre guillemets (le garde lit la commande brute). Remplace-le dans la valeur (« puis » au lieu de « ; » ou « && », « → » au lieu de « | »), ou, pour append, écris le texte dans un fichier et passe --file <fichier>.`;
+
+export function isaGuard(tool: string, a: any, skillLoaded: boolean): string | null {
+  const f = a?.filePath ?? a?.file_path; const pt = a?.patchText ?? a?.patch ?? a?.input;
+  const direct = (["edit", "write", "multiedit"].includes(tool) && isIsa(f)) || (["patch", "apply_patch"].includes(tool) && typeof pt === "string" && ISA_IN.test(pt));
+  const viaBash =
+    (tool === "bash" && typeof a?.command === "string" && ISA_IN.test(a.command) && BASH_WRITE.test(a.command)) ||
+    (tool === "bash" && typeof a?.command === "string" && /ISATool\.ts["']?\s+(scaffold|append|tick|untick|set|replace|adopt)\b/.test(a.command));
+  const keyHit = [a?.filePath, a?.file_path, a?.path, a?.command, a?.pattern, a?.include].some((v: any) => typeof v === "string" && /isa-stamp-key/.test(v));
+  if (keyHit) return "LifeOS ISA: la clé d'empreinte ISA n'est accessible qu'à ISATool.ts.";
+  if (!direct && !viaBash) return null;
+  if (viaBash && /^\s*bun\s+\S*ISATool\.ts\s+verify\s[^;&|`$<>\n\r]*$/.test(a.command)) return null; // lecture seule (audit Vera/Max)
+  const path = targetIsa(tool, a);
+  if (!skillLoaded) {
+    const call = (viaBash && isaToolCall(a.command)) || `${TOOL} append ${path} --section "<Section>" --text "<texte>"`;
+    return `LifeOS ISA: écriture d'ISA.md refusée — le skill ISA n'est pas chargé dans cette session. Fais ceci, dans l'ordre :
+1. Appelle l'outil skill : skill(name="ISA") — une seule fois, il reste chargé pour la session.
+2. Relance l'écriture avec UNE commande seule :
+  ${call}`;
+  }
+  if (direct) return `LifeOS ISA: édition directe d'ISA.md refusée (jamais à la main) — l'outil pose l'empreinte vérifiée par ISAGate. Lance à la place UNE commande bash seule, par exemple :
+${recipes(path)}`;
+  if (!ISATOOL.test(a.command)) {
+    const call = isaToolCall(a.command);
+    const op = unquotedOperator(a.command);
+    if (call) {
+      const inQuotes = quotedForbidden(call.slice(TOOL.length));
+      if (inQuotes.length) return `LifeOS ISA: écriture shell d'ISA.md refusée — ${QUOTE_HINT(inQuotes)}\nCommande à relancer, seule, une fois la valeur corrigée :\n  ${call}`;
+      return `LifeOS ISA: écriture shell d'ISA.md refusée — ${op ? `l'enchaînement « ${op.name} »` : "la commande"} n'est pas autorisé : l'appel ISATool doit être la commande entière, sans chaînage ni redirection. Lance-le seul :
+  ${call}
+puis fais le reste (cd, rg, git…) dans des appels bash séparés.`;
+    }
+    return `LifeOS ISA: écriture shell d'ISA.md refusée${op ? ` (« ${op.name} »)` : ""} — un ISA.md ne s'écrit que via ISATool.ts, en commande seule, sans chaînage ni redirection. Lance, par exemple :
+${recipes(path)}`;
+  }
+  return null;
+}
+
+$ sed -n '1,200p' /home/runner/work/lifeos-ci/lifeos-ci/lifeos/LIFEOS/TOOLS/ISATool.ts
+#!/usr/bin/env bun
+// ISATool.ts — l'outil exécutable du skill ISA (Scaffold / Append / Tick / Set / Adopt / Verify).
+// Toute écriture d'un ISA.md passe ici : l'outil recalcule progress M/N puis pose une empreinte
+// HMAC-SHA256 (frontmatter `isa_stamp`) que ISAGate vérifie en HARD. Une édition à la main
+// (Edit/Write/sed) casse l'empreinte → ISAGate `provenance-*`.
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, chmodSync, realpathSync } from "node:fs";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { dirname, join } from "node:path";
+import { headShort } from "./FullRunBuildGuard";
+import { parseScopeTag } from "./IsaFeatures";
+const HOME = process.env.HOME!;
+const STATE = join(HOME, ".claude/LIFEOS/MEMORY/STATE");
+const KEY = join(STATE, ".isa-stamp-key");
+const LEDGER = join(STATE, "isa-provenance.jsonl");
+const SCOPE_LOG = join(STATE, "isa-scope-tags.jsonl");
+const STAMP_RE = /^isa_stamp:.*\n/m;
+
+function key(create = false): Buffer | null {
+  if (!existsSync(KEY)) { if (!create) return null; mkdirSync(STATE, { recursive: true }); writeFileSync(KEY, randomBytes(32).toString("hex")); chmodSync(KEY, 0o600); }
+  const k = Buffer.from(readFileSync(KEY, "utf8").trim(), "hex"); if (k.length < 32) throw new Error("clé d'empreinte ISA invalide (< 32 octets)"); return k;
+}
+// l'empreinte ne vit que dans le frontmatter : une ligne `isa_stamp:` du corps n'est ni retirée ni lue
+const fmSplit = (t: string) => { const m = t.match(/^---\n[\s\S]*?\n---/); return m ? [m[0], t.slice(m[0].length)] : ["", t]; };
+export const unstamped = (t: string) => { const [f, b] = fmSplit(t); return f.replace(STAMP_RE, "") + b; };
+export function computeStamp(text: string, k = key()): string | null {
+  return k ? "hmac-sha256:" + createHmac("sha256", k).update(unstamped(text)).digest("hex") : null;
+}
+export function verifyStamp(text: string): { ok: boolean; code?: string; message?: string } {
+  const m = fmSplit(text)[0].match(/^isa_stamp:\s*(\S+)/m);
+  if (!m) return { ok: false, code: "provenance-missing", message: "no isa_stamp — this ISA was not written by the ISA skill tools (ISATool.ts). Hand edits are forbidden: re-write via `bun ~/.claude/LIFEOS/TOOLS/ISATool.ts`." };
+  const k = key(); if (!k) return { ok: false, code: "provenance-key-missing", message: "stamp key absent — cannot verify provenance." };
+  const want = Buffer.from(computeStamp(text, k)!), got = Buffer.from(m[1]);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return { ok: false, code: "provenance-mismatch", message: "isa_stamp does not match content — the ISA was edited outside ISATool.ts (hand edit). Revert, or re-apply the change via ISATool.ts." };
+  return { ok: true };
+}
+function fmSet(t: string, f: string, v: string): string {
+  const m = t.match(/^---\n([\s\S]*?)\n---/); if (!m) return `---\n${f}: ${v}\n---\n` + t;
+  const re = new RegExp(`^${f}:.*$`, "m");
+  const body = re.test(m[1]) ? m[1].replace(re, `${f}: ${v}`) : `${m[1]}\n${f}: ${v}`;
+  return t.replace(m[0], `---\n${body}\n---`);
+}
+const progress = (t: string) => { const b = (t.match(/^\s*- \[[ xX]\] (?:\*\*)?ISC-/gm) ?? []).length; const d = (t.match(/^\s*- \[[xX]\] (?:\*\*)?ISC-/gm) ?? []).length; return `${d}/${b}`; };
+// Marqueur de périmètre build `[scope:…]` : il sort des claims de la porte build. Toute écriture qui en pose un
+// (ligne ajoutée/modifiée dans l'ISA, ou argument de la commande) est journalisée — l'agent ne peut pas s'exclure
+// des claims sans laisser de trace relisible par le principal.
+function logScopeTags(path: string, op: string, before: string, after: string) {
+  const had = new Set(before.split("\n").filter((l) => l.includes("[scope:")).map((l) => l.trim()));
+  const added = after.split("\n").map((l) => l.trim()).filter((l) => l.includes("[scope:") && !had.has(l));
+  const inArgs = args.filter((a) => a.includes("[scope:"));
+  if (!added.length && !inArgs.length) return;
+  mkdirSync(STATE, { recursive: true });
+  appendFileSync(SCOPE_LOG, JSON.stringify({ ts: new Date().toISOString(), op, path, by: process.env.LIFEOS_HOST ?? process.env.LIFEOS_SESSION_ID ?? "unknown", added: added.map((l) => l.slice(0, 300)), args: inArgs.map((a) => a.slice(0, 300)) }) + "\n");
+  console.error(`ISATool: marqueur [scope:] écrit (${op}) — journalisé dans ${SCOPE_LOG.replace(HOME, "~")} ; il n'a d'effet sur la porte build que s'il existait à l'ouverture du run.`);
+}
+function save(path: string, text: string, op: string, stampOnly = false) {
+  const k = key(true)!; let t = unstamped(text);
+  if (!stampOnly && /^---\n[\s\S]*?\n---/.test(t)) { t = fmSet(t, "progress", progress(t)); t = fmSet(t, "updated", new Date().toISOString()); }
+  t = fmSet(t, "isa_stamp", "PENDING"); const s = computeStamp(t, k)!; t = t.replace(/^isa_stamp:.*$/m, `isa_stamp: ${s}`);
+  logScopeTags(path, op, unstamped(existsSync(path) ? readFileSync(path, "utf8") : ""), t);
+  mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, t);
+  appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), op, path: realpathSync(path), stamp: s, by: process.env.LIFEOS_HOST ?? (process.env.LIFEOS_SESSION_ID?.startsWith("ses_") ? "opencode" : "claude"), session: process.env.LIFEOS_SESSION_ID ?? "" }) + "\n");
+  console.log(`ISATool ${op} ok → ${path} (progress ${progress(t)}, ${s.slice(0, 24)}…)`);
+}
+// ── human-tick : coche d'une claim `[scope:human — raison]` par le principal, signée ─────────────────────────
+// Une claim humaine (ratification, acte de Papa) n'est jamais cochée par un agent : `tick` la laisserait passer
+// pour une preuve outil. `human-tick` exige la clé ISA_STAMP_KEY dans l'ENVIRONNEMENT (secret du principal ou de
+// la CI, jamais lu sur disque) et signe { ISA, claim, justification, auteur, horodatage } en HMAC-SHA256. La ligne
+// de Verification porte la signature : `human-verify` (ou verifyHumanTick) la recontrôle. Codes : 3 clé absente ou
+// invalide, 4 claim non `[scope:human]`, 1 entrée invalide (claim introuvable, déjà cochée, justification faible).
+export const HUMAN_TICK_EXIT = { INPUT: 1, NO_KEY: 3, NOT_HUMAN: 4 } as const;
+const escRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Clé de signature humaine : hex, au moins 32 octets. `null` si absente, `"invalid"` si mal formée. */
+export function humanKeyFromEnv(env: Record<string, string | undefined> = process.env): Buffer | null | "invalid" {
+  const raw = (env.ISA_STAMP_KEY ?? "").trim();
+  if (!raw) return null;
+  if (!/^(?:[0-9a-fA-F]{2}){32,}$/.test(raw)) return "invalid";
+  return Buffer.from(raw, "hex");
+}
+/** La claim (ligne `idx`) est-elle `[scope:human — raison]`, sur sa ligne ou dans le titre `###` de son bloc ? */
+export function isHumanScoped(lines: string[], idx: number): boolean {
+  const own = parseScopeTag(lines[idx]!);
+  if (own) return "kind" in own && own.kind === "human";
+  for (let i = idx - 1; i >= 0; i--) {
+    const l = lines[i]!.trim();
+    if (/^```|^~~~/.test(l)) return false; // prudence : jamais de marqueur hérité à travers un bloc de code
+    if (/^###\s/.test(l)) { const tag = parseScopeTag(l); return !!tag && "kind" in tag && tag.kind === "human"; }
+    if (/^#{1,2}\s/.test(l)) return false;
+  }
+  return false;
+}
+const isaSlug = (t: string, p: string) =>
+  fmSplit(t)[0].match(/^slug:\s*(\S+)/m)?.[1] ?? fmSplit(t)[0].match(/^task:\s*(.+)$/m)?.[1]?.trim() ?? p.split("/").slice(-2, -1)[0] ?? "";
+export interface HumanTickPayload { v: 1; op: "human-tick"; isa: string; isc: string; claim: string; evidence: string; by: string; at: string }
+export const humanSig = (p: HumanTickPayload, k: Buffer) => "hmac-sha256:" + createHmac("sha256", k).update(JSON.stringify(p)).digest("hex");
+const HUMAN_LINE_RE = (isc: string) =>
+  new RegExp(`^- ${escRe(isc)}: HUMAIN — (.+) \\(par ([^,()\\[\\]\\n]{1,60}), (\\d{4}-\\d{2}-\\d{2}T[0-9:.]+Z)\\) \\[human-sig:(hmac-sha256:[0-9a-f]{64})\\]\\s*$`, "m");
+/** Recontrôle la coche humaine de `isc` : claim cochée, toujours `[scope:human]`, signature valide pour la clé. */
+export function verifyHumanTick(text: string, isc: string, k: Buffer, isaPath = ""): { ok: boolean; reason: string } {
+  const lines = text.split("\n");
+  const idx = lines.findIndex((l) => new RegExp(`^\\s*- \\[[xX]\\] (?:\\*\\*)?${escRe(isc)}\\b`).test(l));
+  if (idx < 0) return { ok: false, reason: `${isc} absente ou non cochée` };
+  if (!isHumanScoped(lines, idx)) return { ok: false, reason: `${isc} n'est pas [scope:human — raison]` };
+  const m = text.match(HUMAN_LINE_RE(isc));
+  if (!m) return { ok: false, reason: `${isc} : aucune ligne de Verification HUMAIN signée` };
+  const payload: HumanTickPayload = { v: 1, op: "human-tick", isa: isaSlug(text, isaPath), isc, claim: lines[idx]!.trim(), evidence: m[1]!, by: m[2]!, at: m[3]! };
+  const want = Buffer.from(humanSig(payload, k)), got = Buffer.from(m[4]!);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return { ok: false, reason: `${isc} : signature humaine invalide (claim, justification ou clé modifiée)` };
+  return { ok: true, reason: `${isc} : coche humaine signée par ${m[2]} le ${m[3]}` };
+}
+const args = process.argv.slice(2); const [cmd, path] = args;
+const opt = (n: string) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
+const need = (v: string | undefined, n: string) => { if (v === undefined) { console.error(`--${n} requis`); process.exit(1); } return v; };
+// Une preuve (ou une raison de décochage) tient en une phrase mesurable, pas en un jeton.
+const weakNote = (v: string) => { const s = v.trim(); return s.length < 20 || /^(?:todo|tbd|n\/?a|à faire|a faire|ok|done|passe|test|…)$/i.test(s); };
+const readIsa = () => { if (!existsSync(path)) { console.error(`introuvable: ${path}`); process.exit(1); } return readFileSync(path, "utf8"); };
+const fromFileOrText = () => opt("file") ? readFileSync(opt("file")!, "utf8") : need(opt("text"), "text");
+if (import.meta.main) {
+  if (!cmd || !path) { console.log(`usage: ISATool.ts <scaffold|append|tick|untick|set|replace|adopt|verify> <ISA.md> [opts]
+  scaffold --slug s --goal "…" [--title t]      crée l'ISA (sections Problem…Decisions)
+  append   --section "Claims" --text "…"|--file f  ajoute sous une section (créée si absente)
+  tick     --isc ISC-3 --evidence "…"           coche sur preuve outil mesurée (Verification)
+  untick   --isc ISC-3 --reason "…"             dé-coche avec la raison (refus de revue)
+  set      --field phase --value build          frontmatter
+  replace  --old "…" --new "…"                  remplacement exact unique (corrections)
+  adopt                                          tamponne un ISA hérité (après relecture)
+  verify                                         contrôle l'empreinte (exit 2 si KO)
+  human-tick --isc ISC-3 --evidence "…" [--by nom]  coche une claim [scope:human — raison], signée avec
+                                                 ISA_STAMP_KEY (env) ; exit 3 sans clé, 4 si non [scope:human]
+  human-verify --isc ISC-3                       recontrôle la signature humaine (env ISA_STAMP_KEY ; exit 2 si KO)`); process.exit(1); }
+  if (cmd === "scaffold") {
+    if (existsSync(path)) { console.error("existe déjà — utilise append/set"); process.exit(1); }
+    const slug = need(opt("slug"), "slug"), goal = need(opt("goal"), "goal");
+    save(path, `---\ntask: ${opt("title") ?? slug}\nslug: ${slug}\nphase: observe\nprogress: 0/0\nprincipal_stated_goal: ${JSON.stringify(goal)}\nstarted: ${new Date().toISOString()}\n---\n\n## Problem\n\n## Vision\n\n## Out of Scope\n\n## Constraints\n\n## Goal\n\n${goal}\n\n## Claims\n\n## Test Strategy\n\n| isc | type | check | threshold | tool | anchors_to |\n|-----|------|-------|-----------|------|------------|\n\n## Features\n\n## Decisions\n\n## Verification\n`, "scaffold");
+  } else if (cmd === "append") {
+    let t = readIsa(); const sec = need(opt("section"), "section"); const add = fromFileOrText().replace(/\n+$/, "");
+    const re = new RegExp(`(^## ${sec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$)([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m");
+    t = re.test(t) ? t.replace(re, (_m, h, b) => `${h}${b.replace(/\n+$/, "")}\n${add}\n\n`) : `${t.replace(/\n+$/, "")}\n\n## ${sec}\n\n${add}\n`;
+    save(path, t, `append:${sec}`);
+  } else if (cmd === "tick" || cmd === "untick") {
+    let t = readIsa(); const isc = need(opt("isc"), "isc"); const re = new RegExp(`^(\\s*- )\\[[ xX]\\]( (?:\\*\\*)?${isc}\\b)`, "m");
+    if (!re.test(t)) { console.error(`${isc} introuvable`); process.exit(1); }
+    const optName = cmd === "tick" ? "evidence" : "reason";
+    const note = need(opt(optName), optName);
+    if (weakNote(note)) { console.error(`--${optName} trop faible (${note.trim().length} car.) : cite la commande et sa sortie pour une coche, la constatation de revue pour un décochage.`); process.exit(1); }
+    t = t.replace(re, `$1[${cmd === "tick" ? "x" : " "}]$2`);
+    save(path, t, `${cmd}:${isc}`); t = readFileSync(path, "utf8");
+    const re2 = /(^## Verification\s*$)([\s\S]*?)(?=^## |(?![\s\S]))/m;
+    const sha = cmd === "tick" ? headShort(path) : null;
+    const line = cmd === "tick" ? `- ${isc}: ${note}${sha ? ` [@${sha}]` : ""}` : `- ${isc}: NON VALIDÉ — ${note}`;
+    t = re2.test(t) ? t.replace(re2, (_m, h, b) => `${h}${b.replace(/\n+$/, "")}\n${line}\n\n`) : `${t.trimEnd()}\n\n## Verification\n\n${line}\n`; save(path, t, `${cmd === "tick" ? "evidence" : "reason"}:${isc}`);
+  } else if (cmd === "human-tick" || cmd === "human-verify") {
+    const k = humanKeyFromEnv();
+    if (k === null) { console.error(`${cmd} refusé : ISA_STAMP_KEY absent de l'environnement — une coche humaine n'est jamais posée sans signature.`); process.exit(HUMAN_TICK_EXIT.NO_KEY); }
+    if (k === "invalid") { console.error(`${cmd} refusé : ISA_STAMP_KEY invalide (hexadécimal, au moins 32 octets attendus).`); process.exit(HUMAN_TICK_EXIT.NO_KEY); }
+    const isc = need(opt("isc"), "isc"); const t0 = readIsa();
+    if (cmd === "human-verify") { const r = verifyHumanTick(t0, isc, k, path); console.log(r.ok ? `✅ ${r.reason}` : `❌ ${r.reason}`); process.exit(r.ok ? 0 : 2); }
+    const evidence = need(opt("evidence"), "evidence").trim();
+    if (/[\r\n]/.test(evidence)) { console.error("--evidence tient sur une ligne."); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    if (weakNote(evidence)) { console.error(`--evidence trop faible (${evidence.length} car.) : dis ce que tu as constaté ou décidé, et où (document, réunion, revue).`); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    const by = (opt("by") ?? process.env.LIFEOS_PRINCIPAL ?? process.env.USER ?? "principal").trim();
+    if (!/^[^,()[\]\n]{1,60}$/.test(by)) { console.error("--by invalide (1 à 60 caractères, sans virgule, parenthèse ni crochet)."); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    const lines = t0.split("\n"); const re = new RegExp(`^(\\s*- )\\[([ xX])\\]( (?:\\*\\*)?${escRe(isc)}\\b.*)$`);
+    const idx = lines.findIndex((l) => re.test(l));
+    if (idx < 0) { console.error(`${isc} introuvable`); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    if (!isHumanScoped(lines, idx)) { console.error(`human-tick refusé : ${isc} n'est pas marquée [scope:human — raison] (sur sa ligne ou le titre ### de son bloc). Une claim de build se coche avec \`tick\` sur preuve outil.`); process.exit(HUMAN_TICK_EXIT.NOT_HUMAN); }
+    const m = lines[idx]!.match(re)!;
+    if (m[2] !== " ") { console.error(`${isc} est déjà cochée — rien à signer.`); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    lines[idx] = `${m[1]}[x]${m[3]}`;
+    let t = lines.join("\n"); const at = new Date().toISOString();
+    const payload: HumanTickPayload = { v: 1, op: "human-tick", isa: isaSlug(t, path), isc, claim: lines[idx]!.trim(), evidence, by, at };
+    const line = `- ${isc}: HUMAIN — ${evidence} (par ${by}, ${at}) [human-sig:${humanSig(payload, k)}]`;
+    const re2 = /(^## Verification\s*$)([\s\S]*?)(?=^## |(?![\s\S]))/m;
+    t = re2.test(t) ? t.replace(re2, (_m, h, b) => `${h}${b.replace(/\n+$/, "")}\n${line}\n\n`) : `${t.trimEnd()}\n\n## Verification\n\n${line}\n`;
+    save(path, t, `human-tick:${isc}`);
+  } else if (cmd === "set") { save(path, fmSet(readIsa(), need(opt("field"), "field"), need(opt("value"), "value")), `set:${opt("field")}`);
+  } else if (cmd === "replace") { const t = readIsa(), o = need(opt("old"), "old"); if (t.split(o).length !== 2) { console.error("old doit apparaître exactement une fois"); process.exit(1); } save(path, t.replace(o, need(opt("new"), "new")), "replace");
+  } else if (cmd === "adopt") { save(path, readIsa(), "adopt", true); // empreinte seule : contenu inchangé
+  } else if (cmd === "verify") { const r = verifyStamp(readIsa()); console.log(r.ok ? "✅ provenance ok" : `❌ [${r.code}] ${r.message}`); process.exit(r.ok ? 0 : 2);
+  } else { console.error(`commande inconnue: ${cmd}`); process.exit(1); }
+}
+
+$ cat /home/runner/work/_temp/oc/opencode.json 2>/dev/null; echo '--- log tail'; tail -20 /home/runner/work/_temp/oc/opencode.log 2>/dev/null
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "share": "disabled",
+  "mcp": {},
+  "permission": {
+    "doom_loop": "deny",
+    "read": {
+      "*": "allow"
+    },
+    "edit": {
+      "*": "allow"
+    },
+    "external_directory": {
+      "*": "allow",
+      "{env:HOME}/.ssh/*": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "git push*": "deny",
+      "git merge*": "deny",
+      "gh *": "deny",
+      "ssh *": "deny",
+      "scp *": "deny",
+      "sudo *": "deny",
+      "*sudo *": "deny",
+      "*git remote*": "deny",
+      "*http.extraheader*": "deny"
+    }
+  },
+  "agent": {
+    "Nix/LifeOS": {
+      "mode": "primary",
+      "description": "Nix — DA LifeOS de Papa. Agent principal par défaut : suit l Algorithm LifeOS v8.20.2 (OBSERVE→THINK→PLAN→BUILD→EXECUTE→VERIFY→LEARN), ISA/ISC, format de réponse LifeOS.",
+      "prompt": "{file:{env:HOME}/.local/share/opencode-lifeos/nix-lifeos.prompt.md}",
+      "color": "primary"
+    },
+    "Anvil": {
+      "description": "Moonshot-family code producer. Runs Kimi K2.6 (`kimi-k2.6`) via Moonshot's direct API with temperature 1 (reasoning-model default) and 256K context. Specialization — deliberate, context-wide code generation where the whole project matters. Invoked when {{PRINCIPAL_NAME}} names \"Anvil\", or as a Kimi-family alternative to Forge on coding tasks that benefit from long-context reasoning. Writes code; does not just review. Distinct from Forge (OpenAI-family, GPT-5.4), Cato (auditor), Engineer (Marcus Webb, Claude-family).",
+      "mode": "primary",
+      "color": "#475569",
+      "prompt": "{file:{env:HOME}/.claude/agents/Anvil.md}"
+    },
+    "Architect": {
+      "description": "Elite system design specialist with PhD-level distributed systems knowledge and Fortune 10 architecture experience. Creates constitutional principles, feature specs, and implementation plans using strategic analysis.",
+      "mode": "primary",
+      "permission": {
+        "edit": "deny"
+      },
+      "prompt": "{file:{env:HOME}/.claude/agents/Architect.md}"
+    },
+    "Artist": {
+      "description": "Visual content creator. Called BY Media skill workflows only. Expert at prompt engineering, model selection (Flux 1.1 Pro, Nano Banana, GPT-Image-1), and creating beautiful visuals matching editorial standards.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/Artist.md}"
+    },
+    "BrowserAgent": {
+      "description": "DEPRECATED — legacy built-in agent. Do not invoke for new work. Use the Interceptor skill for all browser automation, web scraping, form filling, data extraction, page interaction, and screenshots. Retained only for reference; its internals cannot be modified.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/BrowserAgent.md}"
+    },
+    "ClaudeResearcher": {
+      "description": "Academic researcher using Claude's WebSearch. Called BY Research skill workflows only. Excels at multi-query decomposition, parallel search execution, and synthesizing scholarly sources.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/ClaudeResearcher.md}"
+    },
+    "ClaudeResearcherContext": {
+      "description": "ClaudeResearcherContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/ClaudeResearcherContext.md}"
+    },
+    "CodexResearcher": {
+      "description": "Remy - Eccentric, curiosity-driven technical archaeologist who treats research like treasure hunting. Powered by OpenAI's flagship model via `codex exec` in deep-reasoning mode (reasoning_effort=high) with live web search; the model ID resolves from CROSS_VENDOR in models.ts. Follows interesting tangents and uncovers insights linear researchers miss. TypeScript-focused.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/CodexResearcher.md}"
+    },
+    "CodexResearcherContext": {
+      "description": "CodexResearcherContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/CodexResearcherContext.md}"
+    },
+    "Designer": {
+      "description": "Elite UX/UI design specialist with design school pedigree and exacting standards. Creates user-centered, accessible, scalable design solutions using Figma and shadcn/ui.",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Designer.md}"
+    },
+    "Engineer": {
+      "description": "Elite principal engineer with Fortune 10 and premier Bay Area company experience. Uses TDD, strategic planning, and constitutional principles for implementation work.",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Engineer.md}"
+    },
+    "ForgeContext": {
+      "description": "ForgeContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/ForgeContext.md}"
+    },
+    "Gemini": {
+      "description": "Google cross-vendor agent running the top Gemini reasoning model via LIFEOS/TOOLS/GeminiSearch.ts --pro — a third vendor's opinion on public material, vendor panels and bake-offs, and grounded takes where Google Search grounding helps. PUBLIC data class only (same Tier-2 egress ceiling as GeminiResearcher). Never Restricted Data, never the reasoning/audit lanes, never a second look. For multi-perspective research sweeps inside Research workflows, GeminiResearcher remains the specialist.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/Gemini.md}"
+    },
+    "GeminiResearcher": {
+      "description": "Multi-perspective researcher using Google Gemini with Search grounding, via LIFEOS/TOOLS/GeminiSearch.ts (NOT the gemini CLI, which cannot authenticate non-interactively here). Called BY Research skill workflows only. Breaks complex queries into 3-10 variations, launches parallel investigations for comprehensive coverage.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/GeminiResearcher.md}"
+    },
+    "GeminiResearcherContext": {
+      "description": "GeminiResearcherContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/GeminiResearcherContext.md}"
+    },
+    "GrokResearcher": {
+      "description": "Johannes - Contrarian, fact-based researcher (xAI Grok stance) via WebSearch/WebFetch — no Grok.ts. Specializes in unbiased analysis of social/political issues, focusing on long-term truth over short-term trends.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/GrokResearcher.md}"
+    },
+    "GrokResearcherContext": {
+      "description": "GrokResearcherContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/GrokResearcherContext.md}"
+    },
+    "PerplexityResearcher": {
+      "description": "Ava - Investigative analyst using Perplexity API for web research. Called BY Research skill workflows only. Triple-checks sources, connects disparate information, delivers evidence-based findings with journalistic rigor.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/PerplexityResearcher.md}"
+    },
+    "PerplexityResearcherContext": {
+      "description": "PerplexityResearcherContext",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/PerplexityResearcherContext.md}"
+    },
+    "QATester": {
+      "description": "DEPRECATED — legacy built-in agent. Do not invoke for new work. Use the Interceptor skill for Gate 4 browser-based QA validation, screenshots, console checks, and user-flow testing. Retained only for reference; its internals cannot be modified.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/QATester.md}"
+    },
+    "Silas": {
+      "description": "Silas Locke — offensive security specialist (\"The Quiet Operator\"). Ex-NSA TAO, methodical, patient, adversarial mindset. Spawned in parallel by security assessment skills (one instance per attack surface) to run specialist sub-assessments, generate attack-chain hypotheses, and write findings to the assessment vault. Performs vulnerability assessments, penetration testing, security audits with professional methodology and ethical boundaries.",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Silas.md}"
+    },
+    "UIReviewer": {
+      "description": "DEPRECATED — legacy built-in agent. Do not invoke for new work. Use the Interceptor skill for user-story validation, step execution, screenshots, and structured PASS/FAIL reports. Retained only for reference; its internals cannot be modified.",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/UIReviewer.md}"
+    },
+    "Grok": {
+      "description": "Grok (Jax) — xAI cross-vendor agent, PUBLIC-data lane only (non-sensitive tasks).",
+      "mode": "subagent",
+      "prompt": "{file:{env:HOME}/.claude/agents/Grok.md}"
+    },
+    "Forge": {
+      "description": "Forge — alias de ForgeContext (fiche Forge.md)",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Forge.md}"
+    },
+    "Max": {
+      "description": "Max — agent FullRun",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Max.md}"
+    },
+    "code-reviewer": {
+      "description": "code-reviewer — agent FullRun",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/code-reviewer.md}"
+    },
+    "Vera": {
+      "description": "Vera — agent FullRun",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Vera.md}"
+    },
+    "Serena": {
+      "description": "Serena — agent FullRun",
+      "mode": "primary",
+      "prompt": "{file:{env:HOME}/.claude/agents/Serena.md}"
+    }
+  }
+}
+--- log tail
+    const lines = t0.split("\n"); const re = new RegExp(`^(\\s*- )\\[([ xX])\\]( (?:\\*\\*)?${escRe(isc)}\\b.*)$`);
+    const idx = lines.findIndex((l) => re.test(l));
+    if (idx < 0) { console.error(`${isc} introuvable`); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    if (!isHumanScoped(lines, idx)) { console.error(`human-tick refusé : ${isc} n'est pas marquée [scope:human — raison] (sur sa ligne ou le titre ### de son bloc). Une claim de build se coche avec \`tick\` sur preuve outil.`); process.exit(HUMAN_TICK_EXIT.NOT_HUMAN); }
+    const m = lines[idx]!.match(re)!;
+    if (m[2] !== " ") { console.error(`${isc} est déjà cochée — rien à signer.`); process.exit(HUMAN_TICK_EXIT.INPUT); }
+    lines[idx] = `${m[1]}[x]${m[3]}`;
+    let t = lines.join("\n"); const at = new Date().toISOString();
+    const payload: HumanTickPayload = { v: 1, op: "human-tick", isa: isaSlug(t, path), isc, claim: lines[idx]!.trim(), evidence, by, at };
+    const line = `- ${isc}: HUMAIN — ${evidence} (par ${by}, ${at}) [human-sig:${humanSig(payload, k)}]`;
+    const re2 = /(^## Verification\s*$)([\s\S]*?)(?=^## |(?![\s\S]))/m;
+    t = re2.test(t) ? t.replace(re2, (_m, h, b) => `${h}${b.replace(/\n+$/, "")}\n${line}\n\n`) : `${t.trimEnd()}\n\n## Verification\n\n${line}\n`;
+    save(path, t, `human-tick:${isc}`);
+  } else if (cmd === "set") { save(path, fmSet(readIsa(), need(opt("field"), "field"), need(opt("value"), "value")), `set:${opt("field")}`);
+  } else if (cmd === "replace") { const t = readIsa(), o = need(opt("old"), "old"); if (t.split(o).length !== 2) { console.error("old doit apparaître exactement une fois"); process.exit(1); } save(path, t.replace(o, need(opt("new"), "new")), "replace");
+  } else if (cmd === "adopt") { save(path, readIsa(), "adopt", true); // empreinte seule : contenu inchangé
+  } else if (cmd === "verify") { const r = verifyStamp(readIsa()); console.log(r.ok ? "✅ provenance ok" : `❌ [${r.code}] ${r.message}`); process.exit(r.ok ? 0 : 2);
+  } else { console.error(`commande inconnue: ${cmd}`); process.exit(1); }
+}
+
+
+$ ls -la ~/.claude 2>/dev/null | head; ls ~/.claude/LIFEOS/TOOLS/ISATool.ts 2>/dev/null; bun --version 2>/dev/null; node --version 2>/dev/null; python3 --version
+total 20
+drwxr-xr-x  5 runner runner 4096 Nov 28 06:17 .
+drwxr-xr-x  7 runner runner 4096 Nov 28 06:17 ..
+drwxr-xr-x 15 runner runner 4096 Nov 28 06:17 LIFEOS
+drwxr-xr-x  2 runner runner 4096 Nov 28 06:17 agents
+drwxr-xr-x  5 runner runner 4096 Nov 28 06:16 hooks
+/home/runner/work/_temp/oc-agent/home/.claude/LIFEOS/TOOLS/ISATool.ts
+1.4.4
+v24.22.3
+Python 3.14.4
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts verify MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+❌ [provenance-key-missing] stamp key absent — cannot verify provenance.
+
+$ grep -n "branch\|main\|planche\|board\|compare\|baseline\|reference" e2e/report.py | head -60; echo '---'; grep -rn "branch\|main\|planche\|compare" e2e/*.py e2e/*.sh | grep -i "planche\|compare\|baseline" | head -30
+44:    # écran Driver : B2 compare offre vs in-ride, pas deux captures in-ride.
+193:    """Normalise un libellé pour comparer deux écrans.
+464:def main(argv=None):
+483:if __name__ == "__main__":
+484:    sys.exit(main())
+---
+e2e/report.py:44:    # écran Driver : B2 compare offre vs in-ride, pas deux captures in-ride.
+e2e/report.py:193:    """Normalise un libellé pour comparer deux écrans.
+e2e/ci-opencode-run.sh:61:# depuis le script. Sans plancher, un step déjà consommé de 12 min gardait un
+e2e/ci-opencode-run.sh:68:PRE_SCRIPT_SRC="plancher"
+e2e/ci-opencode-run.sh:344:# Les DEUX composantes (uptime mesuré ET plancher appliqué) sont journalisées
+e2e/ci-opencode-run.sh:360:    PRE_SCRIPT_SRC="plancher"
+e2e/ci-opencode-run.sh:365:  log "pré-script: uptime=${PRE_SCRIPT_UP_S}s +marge=${PRE_SCRIPT_ALLOW_S}s = mesuré ${PRE_SCRIPT_MEASURED_S}s ; plancher ${PRE_SCRIPT_FLOOR_S}s → retenu ${PRE_SCRIPT_S}s (${PRE_SCRIPT_SRC})"
+e2e/ci-opencode-run.sh:381:  log "budget: step=${STEP_BUDGET_MIN}min pré-script=${PRE_SCRIPT_S}s (uptime=${PRE_SCRIPT_UP_S}s+marge=${PRE_SCRIPT_ALLOW_S}s=${PRE_SCRIPT_MEASURED_S}s, plancher=${PRE_SCRIPT_FLOOR_S}s, source=${PRE_SCRIPT_SRC}) prép=${PREP_ELAPSED_S}s flush=${FLUSH_S}s safety=${SAFETY_S}s → budget harnais=${eff}min (RUN_DEADLINE_MIN=${RUN_DEADLINE_CAP} non dépassé)"
+e2e/ui.sh:251:# Ne relance JAMAIS l'app : comparer le premier plan après le dump, c'est tout.
+
+$ grep -rn "ISC-EMU-2\|planche" goldens/README.md e2e/report.py .github/workflows/*.yml | head -30
+goldens/README.md:10:| `goldens/board.py` | la planche avant/après (`index.html` autonome + `summary.md` + `gaps.json`) |
+goldens/README.md:32:  `Golden "<fichier>": Pixel test failed, X%, Npx diff detected`, et la planche
+goldens/README.md:67:planche). Les contrats d'écran (`test/widget/…contract_test.dart` côté app)
+goldens/README.md:115:1. La porte échoue et publie `golden-diff-board` (planche avant/après).
+goldens/README.md:120:   avec la planche en référence de la revue.
+.github/workflows/golden-diff.yml:18:# explicitement dans `test/goldens/` après revue de la planche. La porte
+.github/workflows/golden-diff.yml:93:      - name: Checkout harnais (porte + planche)
+
