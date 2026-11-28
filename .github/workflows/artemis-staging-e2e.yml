@@ -3,6 +3,13 @@ name: artemis-staging-e2e
 on:
   workflow_dispatch:
     inputs:
+      lane:
+        description: "Lane isolée (a|b) — concurrency + comptes Rider/Driver distincts (>900000)"
+        default: "a"
+        type: choice
+        options:
+          - a
+          - b
       rider_ref:
         description: "Branche Galass_Rider"
         default: "fix/multistop-close"
@@ -20,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: artemis-staging-e2e
+  group: artemis-staging-e2e-${{ inputs.lane }}
   cancel-in-progress: false
 
 jobs:
@@ -29,10 +36,11 @@ jobs:
     timeout-minutes: 150
     env:
       BASE: ${{ secrets.GALASS_STAGING_URL }}
-      # Comptes de test staging (>900000) — jamais 106/23 (canaux Pusher prod).
-      RIDER_ID: "900106"
-      DRIVER_ID: "900023"
-      OUT: e2e-out
+      # Comptes staging >900000, distincts par lane — jamais 106/23 (Pusher prod).
+      # lane a: 900106 / 900023 ; lane b: 900206 / 900123
+      RIDER_ID: ${{ inputs.lane == 'b' && '900206' || '900106' }}
+      DRIVER_ID: ${{ inputs.lane == 'b' && '900123' || '900023' }}
+      OUT: e2e-out-${{ inputs.lane }}
       # Chaîne des échéances (vérifiée par e2e/tests) : watchdog 90 < step 100 < job 150.
       # Le harnais rend son verdict partiel AVANT que le step soit coupé, et le step
       # coupe AVANT que le job meure — les étapes `if: always()` (preuves) survivent.
