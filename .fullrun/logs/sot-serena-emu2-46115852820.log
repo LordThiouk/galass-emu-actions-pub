@@ -2448,3 +2448,147 @@ goldens/README.md:120:   avec la planche en référence de la revue.
 .github/workflows/golden-diff.yml:18:# explicitement dans `test/goldens/` après revue de la planche. La porte
 .github/workflows/golden-diff.yml:93:      - name: Checkout harnais (porte + planche)
 
+$ grep -n "dans Rider/Driver\|non confirmé par Papa\|emplacement (" MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+81:- [x] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Bloqué** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) non confirmé par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
+
+$ grep -n "Blocage résiduel\|à reformuler au prochain passage\|preuve locale\|ISC-EMU-4: preuve" MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+104:- ISC-EMU-4: preuve locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
+113:- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert.
+114:- [ ] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé n'a pas été réécrit (le garde d'écriture ISA refuse les caractères du texte d'origine) — à reformuler au prochain passage.
+
+$ tail -40 e2e/tests/test_markers.py
+assert "check_base(BASE)" in body, body
+    sys.path.insert(0, ROOT)
+    from base_guard import check_base
+    assert check_base("http://example.com") is not None
+    assert check_base("http://192.162.69.113") is not None
+    assert check_base("https://staging.galassapp.com") is not None
+    assert check_base("http://192.162.69.113:8080") is None
+    assert "GALASS_STAGING_URL" in body, body
+    assert "sys.exit(" in body, body
+
+
+@case
+def test_b8_api_composed_ride_cannot_pass():
+    """B8: when the harness composed the ride, no UI claim may close on it."""
+    body = run_text()
+    assert 'mark ride-composed FAIL "api fallback: compose"' in body, body
+    assert 'RIDE_SOURCE' in body, body
+    assert 'ride_source=$RIDE_SOURCE' in body, body
+    flow = open(os.path.join(ROOT, "api_flow.py"), encoding="utf-8").read()
+    assert 'st["ride_source"] = "ui"' in flow, flow
+    assert 'st["ride_source"] = "api"' in flow, flow
+
+
+# ------------------------------------------------------------------- main
+def main():
+    failed = 0
+    for fn in CASES:
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 - test harness
+            failed += 1
+            print(f"FAIL {fn.__name__}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"ok   {fn.__name__}")
+    print(f"\n{len(CASES) - failed}/{len(CASES)} marker cases passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+$ python3 e2e/tests/test_markers.py 2>&1 | tail -30; echo "RC=$?"
+ok   test_notif_probe_is_token_attributed
+ok   test_ui_action_returns_failure_when_confirm_dialog_absent
+ok   test_snap_refuses_empty_screencap
+ok   test_snap_files_capture_under_explicit_point
+ok   test_fixture_requires_opt_in
+ok   test_vision_model_injection_rejected
+ok   test_log_scan_requires_evidence
+ok   test_logcat_is_streamed_and_grepped_safely
+ok   test_out_dir_is_cleaned_at_start
+ok   test_early_exit_flushes_results
+ok   test_snap_refetches_dump_after_screencap
+ok   test_b7_probe_runs_after_accept
+ok   test_b4_decline_count_excludes_retry_window
+ok   test_home_after_proves_no_relaunch
+ok   test_absence_claims_require_evidence
+ok   test_ride_identifier_is_uid_not_token
+ok   test_b1_and_b3_statuses_emitted
+ok   test_write_prefs_pipes_xml_without_temp_file
+ok   test_log_is_file_only_and_mark_echoes_point
+ok   test_gitignore_covers_evidence_artifacts
+ok   test_api_flow_uses_subprocess_for_stop_hook
+ok   test_workflow_hardens_checkouts_and_runs_tests
+ok   test_every_harness_test_runs_in_ci
+ok   test_deadlines_are_ordered_watchdog_step_job
+ok   test_find_is_narrowed
+ok   test_adb_calls_are_timeout_wrapped
+ok   test_api_flow_rejects_non_https_and_wrong_base
+ok   test_b8_api_composed_ride_cannot_pass
+
+75/75 marker cases passed
+RC=0
+
+$ grep -n "contrat exact de la clé\|emplacement (\|non confirmé par Papa\|preuve locale\|Blocage résiduel\|à reformuler au prochain passage\|l'ISC-EMU-4 est cochée\|le contrat de clé/sémantique" MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md
+69:- [ ] ISC-EMU-1: `e2e/run.sh` lit un repère stable (clé/Semantics sur le nœud actif ou l'état course, posé par ISC-F4-22 Rider / ISC-F5-14 Driver) à la place du texte « x/2 arrêt(s) terminé(s) » pour `MARK_rider_stop1_done`, `MARK_rider_stop2_done`, `MARK_driver_stop1_done`, `MARK_driver_stop2_done`. **Bloqué** : le contrat exact de la clé (nom, portée, valeur) doit être fixé avec les ISA Rider/Driver avant d'écrire le marqueur harnais — ne pas deviner le nom de clé côté harnais avant que le code app existe. [app: galass-emu-actions-pub · classe: nouvelle fonctionnalité, dépend d'un contrat app · preuve: 4 marqueurs e2e verts sur une app de test avec repère posé]
+81:- [x] ISC-EMU-4: une porte CI compare les écrans d'une PR Rider/Driver aux goldens officiels (`test/goldens/`), échoue sur tout écart sans seuil caché, et n'accepte une nouvelle référence que par commande/label nommé avec planche avant/après en artefact. **Bloqué** : emplacement (`galass-emu-actions-pub` vs nouveau workflow `galass-ci`) non confirmé par Papa (cf. Decisions) ; infra `test/goldens/` elle-même pas construite dans Rider/Driver. [app: galass-emu-actions-pub (ou galass-ci) · classe: nouvelle fonctionnalité, deux dépendances bloquantes · preuve: 1 PR de test avec écart volontaire → porte rouge ; 1 PR sans écart → porte verte]
+104:- ISC-EMU-4: preuve locale 2026-11-23 (workflow jamais dispatché, aucun jeton Actions) — gate.sh sur base 08cc8cd = VERT 10/10 GATE_RC=0, sur la branche 47a2ee2 = ROUGE 5/10 GATE_RC=1 (plus gros écart 27,33 pour cent), PNG falsifié = ROUGE, harnais void main = ROUGE avec 10 tests rejoués, accept = RC 0 sans toucher la référence, base origin/main sans goldens = RC 2. bash -n et py_compile et parse YAML OK. [@c6a782e]
+113:- [ ] **Dispatch réel du workflow `golden-diff.yml`** : jamais exécuté (aucun jeton Actions dans cet environnement). Tout est vérifié localement (`bash -n`, `python3 -m py_compile board.py`, YAML parsé) mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert.
+114:- [ ] Blocage résiduel — ISC-EMU-4, libellé 2 du texte** : le libellé d'origine dit encore « Bloqué : emplacement non confirmé ». L'emplacement est tranché et la porte existe, mais le libellé n'a pas été réécrit (le garde d'écriture ISA refuse les caractères du texte d'origine) — à reformuler au prochain passage.
+115:- [ ] Bloqué — ISC-EMU-1 reste bloqué** : le contrat de clé/sémantique du repère stable n'est pas écrit, et il dépend d'ISC-F4-22 (code produit Rider, interdit par la garde de ce run) plus de l'équivalent Driver. Ne pas implémenter à l'aveugle.
+
+$ git rev-parse HEAD; git status --short; git show -s --format='%h %ci %s' HEAD
+6f8dba0a258abe41ac00b43c2dfd0e34df2b2279
+6f8dba0 2026-11-27 22:31:56 +0000 fix(artemis): ancre Medina/Fann sur marqueurs Driver stop (anti-generic B2)
+
+$ grep -n "galass\.driver\|galass\.rider" e2e/run.sh e2e/tests/test_markers.py || true; echo '---'; grep -n "MARK_driver_stop1_done\|MARK_driver_stop2_done\|MARK_rider_stop1_done\|MARK_rider_stop2_done" e2e/run.sh
+---
+104:MARK_rider_stop1_done='+E2E Driver&+Arrêt 1&+Arrêt 2|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+105:MARK_rider_stop2_done='+E2E Driver&+Arrêt 1&+Arrêt 2&+Destination|-Ajouter un arrêt|-Confirmer le lieu|-En route vers'
+133:MARK_driver_stop1_done='+Arrêt 1&+Arrêt 2&+Terminer la course&+Medina|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+134:MARK_driver_stop2_done='+Arrêt 1&+Arrêt 2&+Destination&+Terminer la course&+Fann|-Accepter\s+la\s+course|-1/2 arrêt|-2/2 arrêt'
+
+$ cat > /tmp/isa_decisions.md <<'EOF'
+- **2026-11-28 — État réel post-E1 : marqueurs Driver = textes visibles, aucun Semantics `galass.driver.*`.** Lecture au tip `6f8dba0` de `e2e/run.sh` : `MARK_driver_stop1_done` exige `Arrêt 1`, `Arrêt 2`, `Terminer la course` et l'ancre `Medina` ; `MARK_driver_stop2_done` exige `Arrêt 1`, `Arrêt 2`, `Destination`, `Terminer la course` et l'ancre `Fann` ; les deux nient l'offre et les anciens bandeaux `1/2`/`2/2`. Aucun `Semantics`/`ValueKey` `galass.driver.*` n'est posé par l'app. Le leg Vera (`308decf`, branche `feat/multistop-e2e-2026-11-15`) qui fixait le contrat `galass.driver.stops=<done>/<total>` n'est donc pas l'état réel. Conséquence : ISC-EMU-1 reste ouvert (le repère stable invisible exigé n'existe pas) ; les marqueurs actuels survivent au retrait des compteurs x/N mais restent dépendants des libellés visibles. Le tip de #15 (`cursor/artemis-visible-markers-e410`, `68af0c2`) est un delta de 2 fichiers (retrait de `Destination` du marqueur stop2, assertions `galass.driver` absentes) absorbable dans #14 ; il n'a pas été absorbé dans ce tour (scope ISATool).
+- **2026-11-28 — Audit ISC-EMU : 0/4 fermé, aucune preuve CI nommée au tip.** ISC-EMU-4 avait été cochée sur une trace locale (`c6a782e`, puis `b4b0c91`) mais `golden-diff.yml` n'a jamais été dispatché et les goldens ne sont pas sur la base (`exit 2`) : la porte n'a pas tourné en CI sur une PR de test. ISC-EMU-1/2/3 restent ouverts (repère invisible absent, pas de planche e2e branche-vs-main, pas de verdict e2e global). `progress` recalculé par ISATool à 0/4.
+EOF
+cat > /tmp/isa_remaining.md <<'EOF'
+- [ ] ISC-EMU-2 non livré — aucune planche e2e branche-vs-main : `e2e/report.py` agrège un run unique, et `goldens/board.py` est la planche de la porte golden, pas la comparaison des captures e2e de deux runs. À construire après stabilisation des captures.
+- [ ] Absorber #15 (`cursor/artemis-visible-markers-e410`, tip `68af0c2`) dans #14 : delta de 2 fichiers (retrait de `Destination` du marqueur stop2, assertions `galass.driver` absentes). Non fait ce tour (scope ISATool).
+EOF
+cat > /tmp/isa_verification.md <<'EOF'
+- Audit ISC-EMU 2026-11-28: 0/4 fermé ; `python3 e2e/tests/test_markers.py` = 75/75 ; `bash -n e2e/run.sh` OK ; `python3 -m py_compile e2e/report.py goldens/board.py` OK ; marqueurs Driver au tip = textes visibles (Arrêt N, Terminer la course, Medina/Fann), aucun `galass.driver.*`.
+EOF
+wc -l /tmp/isa_decisions.md /tmp/isa_remaining.md /tmp/isa_verification.md
+2 /tmp/isa_decisions.md
+   2 /tmp/isa_remaining.md
+   1 /tmp/isa_verification.md
+   5 total
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "**Bloqué** : le contrat exact de la clé (nom, portée, valeur) doit être fixé avec les ISA Rider/Driver avant d'écrire le marqueur harnais — ne pas deviner le nom de clé côté harnais avant que le code app existe." --new "**Ouvert 2026-11-28 (état réel E1)** : Driver n'expose aucun Semantics galass.driver.* — les marqueurs au tip sont des textes visibles (frise Arrêt N, Terminer la course, ancres Medina/Fann). Les 4 marqueurs survivent au retrait x/N mais restent dépendants du libellé, donc l'ISC (repère stable invisible) reste ouvert. Le tip de #15 (marqueurs visibles) est absorbable dans #14."
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 1/4, hmac-sha256:00a53dfb22e8…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "**Bloqué** : emplacement (" --new "**Ouvert 2026-11-28** : emplacement ("
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 1/4, hmac-sha256:7f561961927c…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "non confirmé par Papa" --new "tranché par Papa"
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 1/4, hmac-sha256:015d41931229…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "dans Rider/Driver." --new "dans Rider/Driver. Preuve locale seulement (c6a782e, b4b0c91), aucun dispatch CI nommé au tip, donc l'ISC reste ouvert."
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 1/4, hmac-sha256:3d3fa7eaf414…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts untick MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --isc ISC-EMU-4 --reason "Preuve locale seulement, aucun dispatch CI golden-diff nommé au tip, et la porte a changé après la preuve c6a782e, donc l'ISC reste ouvert."
+ISATool untick:ISC-EMU-4 ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 0/4, hmac-sha256:7af6a3a51d0d…)
+ISATool reason:ISC-EMU-4 ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 0/4, hmac-sha256:a38e738b2be4…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "- ISC-EMU-4: preuve locale" --new "- ISC-EMU-4: trace locale"
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 0/4, hmac-sha256:abea9fd2c4b2…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "mais l'ISC-EMU-4 est cochée sur la preuve locale, pas sur un run CI vert." --new "et l'ISC-EMU-4 reste ouvert tant qu'aucun run CI vert n'est nommé."
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 0/4, hmac-sha256:54f7cb412ee5…)
+
+$ bun ~/.claude/LIFEOS/TOOLS/ISATool.ts replace MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md --old "- [ ] Blocage résiduel — ISC-EMU-4" --new "- [x] Blocage résiduel — ISC-EMU-4"
+ISATool replace ok → MEMORY/WORK/20261123-galass-emu-golden-anti-regression/ISA.md (progress 0/4, hmac-sha256:105ea142839a…)
+
